@@ -1,7 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
-const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7U";
+const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
 const DATA_FILE = './daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 

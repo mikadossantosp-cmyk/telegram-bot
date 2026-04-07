@@ -647,20 +647,23 @@ for (const lnk of Object.values(d.links)) {
             let buttons = [];
 
             offeneLinks.forEach((item, i) => {
-                const link = "https://google.com";
-                buttons.push([Markup.button.url(`🔗 Link ${i + 1}`, link)]);
+                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
+                buttons.push(Markup.button.url(`🔗 Link ${i + 1}`, link));
             });
-
-            await bot.telegram.sendMessage(uid,
-                '📌 *Kurze Erinnerung*\n\n' +
-                'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
-                'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
-                'Du bekommst später nochmal eine Erinnerung.',
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: Markup.inlineKeyboard(buttons)
-                }
-            );
+            console.log("Buttons:", buttons.length);
+            await bot.telegram.sendMessage(
+    uid,
+    '📌 *Kurze Erinnerung*\n\n' +
+    'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
+    'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
+    'Du bekommst später nochmal eine Erinnerung.',
+    {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: buttons.map(btn => [btn])
+        }
+    }
+);
 
             offeneLinks.forEach(item => {
                 // d.links[item.msgId].reminderSent = true;

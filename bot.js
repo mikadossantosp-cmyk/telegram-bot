@@ -524,10 +524,13 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     if (lnk.likes.has(uid)) return ctx.answerCbQuery('❌ Bereits geliked!', { show_alert: true });
 
     lnk.likes.add(uid);
-    const anz = lnk.likes.size;
-    const poster = user(lnk.user_id, lnk.user_name);
-    poster.totalLikes++;
-    xpAdd(lnk.user_id, 5, lnk.user_name);
+const anz = lnk.likes.size;
+
+const poster = user(lnk.user_id, lnk.user_name);
+poster.totalLikes++;
+
+// XP bekommt jetzt der LIKER
+xpAdd(uid, 5, ctx.from.first_name);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
 
@@ -535,9 +538,8 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
             '🔗 *Link von ' + lnk.user_name + '*\n\n' +
-            '👍 Likes: **+' + anz + '**\n' +
-            '⭐ XP: ' + poster.xp + ' | Lvl ' + poster.level + '\n\n' +
-            '_1 Like pro User erlaubt_',
+            '👍 Likes: **+' + anz + '**\n\n' +
+'_1 Like pro User erlaubt_',
             {
                 parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([

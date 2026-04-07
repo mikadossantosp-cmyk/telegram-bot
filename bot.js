@@ -632,7 +632,7 @@ console.log("Users:", Object.keys(d.users).length);
             if (jetzt - lnk.timestamp < 10000) continue; // TEST 1 MINUTE
 
             if (parseInt(uid) === lnk.user_id) continue;
-            if (lnk.likes.has(parseInt(uid))) continue;
+            // if (lnk.likes.has(parseInt(uid))) continue;
             // if (lnk.reminderSent) continue;
 
             offeneLinks.push({ msgId, lnk });

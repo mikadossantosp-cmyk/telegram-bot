@@ -678,7 +678,7 @@ function zeitCheck() {
     const h = new Date().getHours();
     const m = new Date().getMinutes();
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-    if (!gruppen.length) return;
+// if (!gruppen.length) return;
 
     gruppen.forEach(g => {
         if (h === 6 && m === 0) {
@@ -721,6 +721,10 @@ function zeitCheck() {
 }
 
 setInterval(zeitCheck, 60000);
+setTimeout(() => {
+    console.log("TEST START");
+    sendeGebündelteReminder();
+}, 5000);
 
 // ================================
 // START

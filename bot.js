@@ -521,14 +521,15 @@ bot.on('message', async (ctx) => {
     );
 
     d.links[msgId] = {
-        chat_id: ctx.chat.id,
-        user_id: uid,
-        user_name: ctx.from.first_name,
-        text: text,
-        likes: new Set(),
-        counter_msg_id: reply.message_id,
-        timestamp: Date.now()
-    };
+    chat_id: ctx.chat.id,
+    user_id: uid,
+    user_name: ctx.from.first_name,
+    text: text,
+    likes: new Set(),
+    counter_msg_id: reply.message_id,
+    timestamp: Date.now(),
+    reminderSent: false
+};
 await sendeLinkAnAlle(d.links[msgId], msgId);
     speichern();
 });
@@ -607,6 +608,53 @@ async function sendeLinkAnAlle(linkData, msgId) {
             );
         } catch (e) {}
     }
+}async function sendeGebündelteReminder() {
+    const jetzt = Date.now();
+
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        let offeneLinks = [];
+
+        for (const [msgId, lnk] of Object.entries(d.links)) {
+
+            if (jetzt - lnk.timestamp < 60000) continue; // TEST 1 MINUTE
+
+            if (parseInt(uid) === lnk.user_id) continue;
+            if (lnk.likes.has(parseInt(uid))) continue;
+            if (lnk.reminderSent) continue;
+
+            offeneLinks.push({ msgId, lnk });
+        }
+
+        if (!offeneLinks.length) continue;
+
+        try {
+            let buttons = [];
+
+            offeneLinks.forEach((item, i) => {
+                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
+                buttons.push([Markup.button.url(`🔗 Link ${i + 1}`, link)]);
+            });
+
+            await bot.telegram.sendMessage(uid,
+                '📌 *Kurze Erinnerung*\n\n' +
+                'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
+                'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
+                'Du bekommst später nochmal eine Erinnerung.',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: Markup.inlineKeyboard(buttons)
+                }
+            );
+
+            offeneLinks.forEach(item => {
+                d.links[item.msgId].reminderSent = true;
+            });
+
+        } catch (e) {}
+    }
+
+    speichern();
 }
 // ================================
 // ZEITGESTEUERTE EVENTS
@@ -635,7 +683,9 @@ function zeitCheck() {
             }
         }
         if (h === 7 && m === 5) topLinks(g.id);
-    });
+
+sendeGebündelteReminder();
+});
 
     // Season Reset alle 7 Tage
     if (Date.now() - d.seasonStart > 604800000) {

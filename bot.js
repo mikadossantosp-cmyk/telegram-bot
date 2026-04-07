@@ -617,26 +617,39 @@ async function sendeLinkAnAlle(linkData, msgId) {
             );
         } catch (e) {}
     }
+                    '👑 *Season Ende!*\nGewinner: *' + w.name + '*\nXP: ' + w.xp + '\n\n🔄 Neue Season!',
+                    { parse_mode: 'Markdown' }
+                ).catch(() => {});
+            });
+        }
+        for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
+        d.seasonStart = Date.now();
+        speichern();
+    }
+}
+
 async function sendeGebündelteReminder() {
     console.log("Reminder läuft");
-console.log("Links:", Object.keys(d.links).length);
-console.log("Users:", Object.keys(d.users).length);
+    console.log("Links:", Object.keys(d.links).length);
+    console.log("Users:", Object.keys(d.users).length);
+
     const jetzt = Date.now();
-// 🔥 RESET alte Links für Test
-for (const lnk of Object.values(d.links)) {
-    lnk.reminderSent = false;
-}
+
     for (const [uid, u] of Object.entries(d.users)) {
 
         let offeneLinks = [];
 
         for (const [msgId, lnk] of Object.entries(d.links)) {
 
-            // if (jetzt - lnk.timestamp < 10000) continue;; // TEST 1 MINUTE
+            // 👉 TEST: 1 Minute warten
+            // später ändern auf 24h = 86400000
+            if (jetzt - lnk.timestamp < 60000) continue;
 
+            // eigener Link skippen
             if (parseInt(uid) === lnk.user_id) continue;
-            // if (lnk.likes.has(parseInt(uid))) continue;
-            // if (lnk.reminderSent) continue;
+
+            // schon geliked skippen
+            if (lnk.likes && lnk.likes.has(parseInt(uid))) continue;
 
             offeneLinks.push({ msgId, lnk });
         }
@@ -647,36 +660,38 @@ for (const lnk of Object.values(d.links)) {
             let buttons = [];
 
             offeneLinks.forEach((item, i) => {
-    const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
+                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
 
-    buttons.push({
-        text: `🔗 Link ${i + 1}`,
-        url: link
-    }); 
-            
-        console.log("Buttons:", buttons.length);
-            await bot.telegram.sendMessage(
-    uid,
-    '📌 *Kurze Erinnerung*\n\n' +
-    'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
-    'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
-    'Du bekommst später nochmal eine Erinnerung.',
-    {
-        parse_mode: 'Markdown',
-        reply_markup: {
-    inline_keyboard: buttons.map(btn => [
-        {
-            text: btn.text,
-            url: btn.url
-        }
-    ])
-}
-);
-            offeneLinks.forEach(item => {
-                // d.links[item.msgId].reminderSent = true;
+                buttons.push({
+                    text: `🔗 Link ${i + 1}`,
+                    url: link
+                });
             });
 
-        } catch (e) {}
+            console.log("Buttons:", buttons.length);
+
+            await bot.telegram.sendMessage(
+                uid,
+                '📌 *Kurze Erinnerung*\n\n' +
+                'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
+                'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
+                'Du bekommst später nochmal eine Erinnerung.',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: buttons.map(btn => [
+                            {
+                                text: btn.text,
+                                url: btn.url
+                            }
+                        ])
+                    }
+                }
+            );
+
+        } catch (e) {
+            console.log("Fehler beim Senden:", e);
+        }
     }
 
     speichern();
@@ -719,18 +734,7 @@ function zeitCheck() {
             d.seasonGewinner.push({ name: w.name, xp: w.xp, datum: new Date().toLocaleDateString() });
             gruppen.forEach(g => {
                 bot.telegram.sendMessage(g.id,
-                    '👑 *Season Ende!*\nGewinner: *' + w.name + '*\nXP: ' + w.xp + '\n\n🔄 Neue Season!',
-                    { parse_mode: 'Markdown' }
-                ).catch(() => {});
-            });
-        }
-        for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
-        d.seasonStart = Date.now();
-        speichern();
-    }
-}
-
-setInterval(zeitCheck, 60000);
+tInterval(zeitCheck, 60000);
 setTimeout(() => {
     console.log("TEST START");
     sendeGebündelteReminder();

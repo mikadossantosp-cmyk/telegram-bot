@@ -622,14 +622,17 @@ async function sendeLinkAnAlle(linkData, msgId) {
 console.log("Links:", Object.keys(d.links).length);
 console.log("Users:", Object.keys(d.users).length);
     const jetzt = Date.now();
-
+// 🔥 RESET alte Links für Test
+for (const lnk of Object.values(d.links)) {
+    lnk.reminderSent = false;
+}
     for (const [uid, u] of Object.entries(d.users)) {
 
         let offeneLinks = [];
 
         for (const [msgId, lnk] of Object.entries(d.links)) {
 
-            if (jetzt - lnk.timestamp < 10000) continue; // TEST 1 MINUTE
+            // if (jetzt - lnk.timestamp < 10000) continue;; // TEST 1 MINUTE
 
             if (parseInt(uid) === lnk.user_id) continue;
             // if (lnk.likes.has(parseInt(uid))) continue;

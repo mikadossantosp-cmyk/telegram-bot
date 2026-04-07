@@ -617,7 +617,7 @@ async function sendeLinkAnAlle(linkData, msgId) {
             );
         } catch (e) {}
     }
-}async function sendeGebündelteReminder() {
+async function sendeGebündelteReminder() {
     console.log("Reminder läuft");
 console.log("Links:", Object.keys(d.links).length);
 console.log("Users:", Object.keys(d.users).length);
@@ -647,10 +647,13 @@ for (const lnk of Object.values(d.links)) {
             let buttons = [];
 
             offeneLinks.forEach((item, i) => {
-                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
-                buttons.push(Markup.button.url(`🔗 Link ${i + 1}`, link));
-            });
-            console.log("Buttons:", buttons.length);
+    const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
+
+    buttons.push({
+        text: `🔗 Link ${i + 1}`,
+        url: link
+    });
+        console.log("Buttons:", buttons.length);
             await bot.telegram.sendMessage(
     uid,
     '📌 *Kurze Erinnerung*\n\n' +
@@ -660,11 +663,14 @@ for (const lnk of Object.values(d.links)) {
     {
         parse_mode: 'Markdown',
         reply_markup: {
-            inline_keyboard: buttons.map(btn => [btn])
+    inline_keyboard: buttons.map(btn => [
+        {
+            text: btn.text,
+            url: btn.url
         }
-    }
+    ])
+}
 );
-
             offeneLinks.forEach(item => {
                 // d.links[item.msgId].reminderSent = true;
             });

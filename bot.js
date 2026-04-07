@@ -629,11 +629,11 @@ console.log("Users:", Object.keys(d.users).length);
 
         for (const [msgId, lnk] of Object.entries(d.links)) {
 
-            if (jetzt - lnk.timestamp < 60000) continue; // TEST 1 MINUTE
+            if (jetzt - lnk.timestamp < 10000) continue; // TEST 1 MINUTE
 
             if (parseInt(uid) === lnk.user_id) continue;
             if (lnk.likes.has(parseInt(uid))) continue;
-            if (lnk.reminderSent) continue;
+            // if (lnk.reminderSent) continue;
 
             offeneLinks.push({ msgId, lnk });
         }
@@ -660,7 +660,7 @@ console.log("Users:", Object.keys(d.users).length);
             );
 
             offeneLinks.forEach(item => {
-                d.links[item.msgId].reminderSent = true;
+                // d.links[item.msgId].reminderSent = true;
             });
 
         } catch (e) {}

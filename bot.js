@@ -21,7 +21,16 @@ function laden() {
             const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             d = Object.assign({}, d, geladen);
             for (const k of Object.keys(d.links)) {
-                d.links[k].likes = new Set(d.links[k].likes || []);
+    d.links[k].likes = new Set(d.links[k].likes || []);
+
+    // 🔥 NEU
+    if (!d.links[k].timestamp) {
+        d.links[k].timestamp = 0; // sofort Reminder
+    }
+
+    if (d.links[k].reminderSent === undefined) {
+        d.links[k].reminderSent = false;
+    }
             }
             console.log('Daten geladen');
         }

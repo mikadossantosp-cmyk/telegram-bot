@@ -653,6 +653,8 @@ for (const lnk of Object.values(d.links)) {
         text: `🔗 Link ${i + 1}`,
         url: link
     });
+               }); 
+            
         console.log("Buttons:", buttons.length);
             await bot.telegram.sendMessage(
     uid,

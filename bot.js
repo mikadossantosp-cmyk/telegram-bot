@@ -618,6 +618,9 @@ async function sendeLinkAnAlle(linkData, msgId) {
         } catch (e) {}
     }
 }async function sendeGebündelteReminder() {
+    console.log("Reminder läuft");
+console.log("Links:", Object.keys(d.links).length);
+console.log("Users:", Object.keys(d.users).length);
     const jetzt = Date.now();
 
     for (const [uid, u] of Object.entries(d.users)) {
@@ -692,9 +695,8 @@ function zeitCheck() {
             }
         }
         if (h === 7 && m === 5) topLinks(g.id);
-
-sendeGebündelteReminder();
 });
+    sendeGebündelteReminder();
 
     // Season Reset alle 7 Tage
     if (Date.now() - d.seasonStart > 604800000) {

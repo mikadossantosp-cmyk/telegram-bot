@@ -374,16 +374,27 @@ bot.command('testreward', async (ctx) => {
 });
 bot.command('testsend', async (ctx) => {
 
-    const fake = {
-        chat_id: ctx.chat.id,
-        user_id: ctx.from.id,
-        user_name: ctx.from.first_name,
-        text: 'https://example.com TEST LINK'
-    };
+    const uid = ctx.from.id;
 
-    await sendeLinkAnAlle(fake, ctx.message.message_id);
+    try {
+        await ctx.telegram.sendMessage(uid,
+            '🧪 *TEST LINK*\n\n' +
+            '👤 Von: *Test User*\n\n' +
+            '📎 https://example.com\n\n' +
+            '💬 Bitte liken und kommentieren und in der Gruppe bestätigen 👇',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: Markup.inlineKeyboard([
+                    Markup.button.url('➡️ Zum Beitrag', 'https://t.me/test')
+                ]).reply_markup
+            }
+        );
 
-    await ctx.reply('✅ Test gesendet!');
+        await ctx.reply('✅ Test an dich gesendet!');
+
+    } catch (e) {
+        await ctx.reply('❌ Konnte dir keine DM senden. Hast du den Bot gestartet?');
+    }
 });
 // ================================
 // NEUE MITGLIEDER

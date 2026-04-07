@@ -373,7 +373,6 @@ bot.command('testreward', async (ctx) => {
     await ctx.reply('✅ Reward: Platz 1 bekommt Link-Repost.');
 });
 bot.command('testsend', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return;
 
     const fake = {
         chat_id: ctx.chat.id,

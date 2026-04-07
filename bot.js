@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+7import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
@@ -372,7 +372,20 @@ bot.command('testreward', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await ctx.reply('✅ Reward: Platz 1 bekommt Link-Repost.');
 });
+bot.command('testsend', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
 
+    const fake = {
+        chat_id: ctx.chat.id,
+        user_id: ctx.from.id,
+        user_name: ctx.from.first_name,
+        text: 'https://example.com TEST LINK'
+    };
+
+    await sendeLinkAnAlle(fake, ctx.message.message_id);
+
+    await ctx.reply('✅ Test gesendet!');
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================
@@ -506,7 +519,7 @@ bot.on('message', async (ctx) => {
         counter_msg_id: reply.message_id,
         timestamp: Date.now()
     };
-
+await sendeLinkAnAlle(d.links[msgId], msgId);
     speichern();
 });
 
@@ -562,7 +575,29 @@ async function topLinks(chatId) {
     sorted.forEach((l, i) => { text += (i + 1) + '. ' + l.user_name + ': ' + l.likes.size + ' 👍\n'; });
     try { await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' }); } catch (e) {}
 }
+async function sendeLinkAnAlle(linkData, msgId) {
+    const gruppenLink = `https://t.me/c/${String(linkData.chat_id).replace('-100', '')}/${msgId}`;
 
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        if (parseInt(uid) === linkData.user_id) continue;
+
+        try {
+            await bot.telegram.sendMessage(uid,
+                '🔗 *Neuer Link gepostet!*\n\n' +
+                '👤 Von: *' + linkData.user_name + '*\n\n' +
+                '📎 ' + linkData.text + '\n\n' +
+                '💬 Bitte liken und kommentieren und in der Gruppe bestätigen 👇',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: Markup.inlineKeyboard([
+                        Markup.button.url('➡️ Zum Beitrag', gruppenLink)
+                    ]).reply_markup
+                }
+            );
+        } catch (e) {}
+    }
+}
 // ================================
 // ZEITGESTEUERTE EVENTS
 // ================================

@@ -647,7 +647,7 @@ for (const lnk of Object.values(d.links)) {
             let buttons = [];
 
             offeneLinks.forEach((item, i) => {
-                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
+                const link = "https://google.com";
                 buttons.push([Markup.button.url(`🔗 Link ${i + 1}`, link)]);
             });
 

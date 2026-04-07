@@ -1,4 +1,4 @@
-7import { Telegraf, Markup } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";

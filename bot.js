@@ -579,17 +579,17 @@ async function sendeLinkAnAlle(linkData) {
 
         try {
             await bot.telegram.sendMessage(
-                uid,
-                '📢 *Neuer Booster-Link*\n\n' +
-                '👤 *Member:* ' + linkData.user_name + '\n\n' +
-                '🔗 ' + linkData.text + '\n\n' +
-                '💬 Lieber Booster,\n\n' +
-                'Member *' + linkData.user_name + '* hat gerade diesen Link gepostet.\n' +
-                'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
-                { parse_mode: 'Markdown' }
-            );
-        } catch (e) {}
-    }
+    uid,
+    '📢 Neuer Booster-Link\n\n' +
+    '👤 Member: ' + linkData.user_name + '\n\n' +
+    '🔗 ' + linkData.text + '\n\n' +
+    'Lieber Booster,\n\n' +
+    'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
+    'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍'
+);
+catch (e) {
+    console.log("FEHLER:", uid, e.message);
+}
 }
 
 // ================================

@@ -21,16 +21,7 @@ function laden() {
             const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             d = Object.assign({}, d, geladen);
             for (const k of Object.keys(d.links)) {
-    d.links[k].likes = new Set(d.links[k].likes || []);
-
-    // 🔥 NEU
-    if (!d.links[k].timestamp) {
-        d.links[k].timestamp = 0; // sofort Reminder
-    }
-
-    if (d.links[k].reminderSent === undefined) {
-        d.links[k].reminderSent = false;
-    }
+                d.links[k].likes = new Set(d.links[k].likes || []);
             }
             console.log('Daten geladen');
         }
@@ -381,30 +372,7 @@ bot.command('testreward', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await ctx.reply('✅ Reward: Platz 1 bekommt Link-Repost.');
 });
-bot.command('testsend', async (ctx) => {
 
-    const uid = ctx.from.id;
-
-    try {
-        await ctx.telegram.sendMessage(uid,
-            '🧪 *TEST LINK*\n\n' +
-            '👤 Von: *Test User*\n\n' +
-            '📎 https://example.com\n\n' +
-            '💬 Bitte liken und kommentieren und in der Gruppe bestätigen 👇',
-            {
-                parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
-                    Markup.button.url('➡️ Zum Beitrag', 'https://t.me/test')
-                ]).reply_markup
-            }
-        );
-
-        await ctx.reply('✅ Test an dich gesendet!');
-
-    } catch (e) {
-        await ctx.reply('❌ Konnte dir keine DM senden. Hast du den Bot gestartet?');
-    }
-});
 // ================================
 // NEUE MITGLIEDER
 // ================================
@@ -530,16 +498,15 @@ bot.on('message', async (ctx) => {
     );
 
     d.links[msgId] = {
-    chat_id: ctx.chat.id,
-    user_id: uid,
-    user_name: ctx.from.first_name,
-    text: text,
-    likes: new Set(),
-    counter_msg_id: reply.message_id,
-    timestamp: Date.now(),
-    reminderSent: false
-};
-await sendeLinkAnAlle(d.links[msgId], msgId);
+        chat_id: ctx.chat.id,
+        user_id: uid,
+        user_name: ctx.from.first_name,
+        text: text,
+        likes: new Set(),
+        counter_msg_id: reply.message_id,
+        timestamp: Date.now()
+    };
+
     speichern();
 });
 
@@ -557,13 +524,10 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     if (lnk.likes.has(uid)) return ctx.answerCbQuery('❌ Bereits geliked!', { show_alert: true });
 
     lnk.likes.add(uid);
-const anz = lnk.likes.size;
-
-const poster = user(lnk.user_id, lnk.user_name);
-poster.totalLikes++;
-
-// XP bekommt jetzt der LIKER
-xpAdd(uid, 5, ctx.from.first_name);
+    const anz = lnk.likes.size;
+    const poster = user(lnk.user_id, lnk.user_name);
+    poster.totalLikes++;
+    xpAdd(lnk.user_id, 5, lnk.user_name);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
 
@@ -571,8 +535,9 @@ xpAdd(uid, 5, ctx.from.first_name);
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
             '🔗 *Link von ' + lnk.user_name + '*\n\n' +
-            '👍 Likes: **+' + anz + '**\n\n' +
-'_1 Like pro User erlaubt_',
+            '👍 Likes: **+' + anz + '**\n' +
+            '⭐ XP: ' + poster.xp + ' | Lvl ' + poster.level + '\n\n' +
+            '_1 Like pro User erlaubt_',
             {
                 parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([
@@ -595,160 +560,60 @@ async function topLinks(chatId) {
     sorted.forEach((l, i) => { text += (i + 1) + '. ' + l.user_name + ': ' + l.likes.size + ' 👍\n'; });
     try { await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' }); } catch (e) {}
 }
-async function sendeLinkAnAlle(linkData, msgId) {
-    const gruppenLink = `https://t.me/c/${String(linkData.chat_id).replace('-100', '')}/${msgId}`;
 
-    for (const [uid, u] of Object.entries(d.users)) {
-
-        if (parseInt(uid) === linkData.user_id) continue;
-
-        try {
-            await bot.telegram.sendMessage(uid,
-                '🔗 *Neuer Link gepostet!*\n\n' +
-                '👤 Von: *' + linkData.user_name + '*\n\n' +
-                '📎 ' + linkData.text + '\n\n' +
-                '💬 Bitte liken und kommentieren und in der Gruppe bestätigen 👇',
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: Markup.inlineKeyboard([
-                        Markup.button.url('➡️ Zum Beitrag', gruppenLink)
-                    ]).reply_markup
-                }
-            );
-        } catch (e) {}
-        for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
-        d.seasonStart = Date.now();
-        speichern();
-
-async function sendeGebündelteReminder() {
-    console.log("Reminder läuft");
-    console.log("Links:", Object.keys(d.links).length);
-    console.log("Users:", Object.keys(d.users).length);
-
-    const jetzt = Date.now();
-
-    for (const [uid, u] of Object.entries(d.users)) {
-
-        let offeneLinks = [];
-
-        for (const [msgId, lnk] of Object.entries(d.links)) {
-
-            // 👉 TEST: 1 Minute warten
-            // später ändern auf 24h = 86400000
-            if (jetzt - lnk.timestamp < 60000) continue;
-
-            // eigener Link skippen
-            if (parseInt(uid) === lnk.user_id) continue;
-
-            // schon geliked skippen
-            if (lnk.likes && lnk.likes.has(parseInt(uid))) continue;
-
-            offeneLinks.push({ msgId, lnk });
-        }
-
-        if (!offeneLinks.length) continue;
-
-        try {
-            let buttons = [];
-
-            offeneLinks.forEach((item, i) => {
-                const link = `https://t.me/c/${String(item.lnk.chat_id).replace('-100', '')}/${item.msgId}`;
-
-                buttons.push({
-                    text: `🔗 Link ${i + 1}`,
-                    url: link
-                });
-            });
-
-            console.log("Buttons:", buttons.length);
-
-            await bot.telegram.sendMessage(
-uid,
-'📌 *Kurze Erinnerung*\n\n' +
-'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
-'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
-'Du bekommst später nochmal eine Erinnerung.',
-{
-    parse_mode: 'Markdown',
-    reply_markup: {
-        inline_keyboard: buttons.map(btn => [
-            {
-                text: btn.text,
-                url: btn.url
-            }
-        ])
-    }
-}
-);
-} catch (e) {
-    console.log("Fehler beim Senden:", e);
-}
-
-speichern();
 // ================================
 // ZEITGESTEUERTE EVENTS
 // ================================
 function zeitCheck() {
-  const h = new Date().getHours();
-  const m = new Date().getMinutes();
-  const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+    const h = new Date().getHours();
+    const m = new Date().getMinutes();
+    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+    if (!gruppen.length) return;
 
-  gruppen.forEach(g => {
-    if (h === 6 && m === 0) {
-      bot.telegram.sendMessage(g.id, "Regeln...");
+    gruppen.forEach(g => {
+        if (h === 6 && m === 0) {
+            bot.telegram.sendMessage(g.id,
+                '📜 *Regeln*\n\n1️⃣ 1 Link pro 24h\n2️⃣ Keine Duplikate\n' +
+                '3️⃣ Bot starten Pflicht\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt',
+                { parse_mode: 'Markdown' }
+            ).catch(() => {});
+        }
+        if (h === 7 && m === 0) {
+            const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 3);
+            if (s.length) {
+                const badges = ['🥇', '🥈', '🥉'];
+                let text = '🏆 *Tages-Ranking*\n\n';
+                s.forEach(([, u], i) => { text += badges[i] + ' ' + u.name + ': ' + u.xp + ' XP\n'; });
+                bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
+            }
+        }
+        if (h === 7 && m === 5) topLinks(g.id);
+    });
+
+    // Season Reset alle 7 Tage
+    if (Date.now() - d.seasonStart > 604800000) {
+        const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
+        if (s.length) {
+            const w = d.users[s[0][0]];
+            d.seasonGewinner.push({ name: w.name, xp: w.xp, datum: new Date().toLocaleDateString() });
+            gruppen.forEach(g => {
+                bot.telegram.sendMessage(g.id,
+                    '👑 *Season Ende!*\nGewinner: *' + w.name + '*\nXP: ' + w.xp + '\n\n🔄 Neue Season!',
+                    { parse_mode: 'Markdown' }
+                ).catch(() => {});
+            });
+        }
+        for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
+        d.seasonStart = Date.now();
+        speichern();
     }
-
-    if (h === 7 && m === 0) {
-      const s = Object.entries(d.users)
-        .sort((a, b) => b[1].xp - a[1].xp)
-        .slice(0, 3);
-
-      if (s.length) {
-        let text = "🏆 Tages-Ranking\n\n";
-        s.forEach(([_, u], i) => {
-          text += `${i + 1}. ${u.name} (${u.xp} XP)\n`;
-        });
-
-        bot.telegram.sendMessage(g.id, text);
-      }
-    }
-
-    if (h === 7 && m === 5) {
-      topLinks(g.id);
-    }
-  });
-
-  sendeGebündelteReminder();
-
-  if (Date.now() - d.seasonStart > 604800000) {
-    const s = Object.entries(d.users)
-      .sort((a, b) => b[1].xp - a[1].xp);
-
-    if (s.length) {
-      const w = d.users[s[0][0]];
-
-      d.seasonGewinner.push({
-        name: w.name,
-        xp: w.xp,
-        datum: new Date().toLocaleDateString()
-      });
-
-      gruppen.forEach(g => {
-        bot.telegram.sendMessage(g.id, "Season Gewinner 🎉");
-      });
-    }
-  }
 }
+
 setInterval(zeitCheck, 60000);
-setTimeout(() => {
-    console.log("TEST START");
-    sendeGebündelteReminder();
-}, 5000);
-}
+
 // ================================
 // START
 // ================================
 bot.launch().then(() => console.log('🤖 Bot läuft!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-}

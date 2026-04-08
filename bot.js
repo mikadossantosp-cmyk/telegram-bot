@@ -539,6 +539,18 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
     xpAdd(uid, 5, ctx.from.first_name);
+    const feedbackMsg = await ctx.reply(
+    '🎉 +' + 5 + ' XP erhalten!\n\n' +
+    'Danke für deine Unterstützung 💪\n' +
+    'Dein Engagement wird überprüft.'
+);
+
+// nach 5 Sekunden löschen
+setTimeout(async () => {
+    try {
+        await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id);
+    } catch (e) {}
+}, 5000);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
 

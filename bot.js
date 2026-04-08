@@ -689,52 +689,53 @@ speichern();
 // ZEITGESTEUERTE EVENTS
 // ================================
 function zeitCheck() {
-    const h = new Date().getHours();
-    const m = new Date().getMinutes();
-    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-// if (!gruppen.length) return;
+  const h = new Date().getHours();
+  const m = new Date().getMinutes();
+  const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
-    gruppen.forEach(g => {
-        if (h === 6 && m === 0) {
-            bot.telegram.sendMessage(g.id,
-                '📜 *Regeln*\n\n1️⃣ 1 Link pro 24h\n2️⃣ Keine Duplikate\n' +
-                '3️⃣ Bot starten Pflicht\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt',
-                { parse_mode: 'Markdown' }
-            ).catch(() => {});
-        }
-        if (h === 7 && m === 0) {
-            const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 3);
-            if (s.length) {
-                const badges = ['🥇', '🥈', '🥉'];
-                let text = '🏆 *Tages-Ranking*\n\n';
-                s.forEach(([, u], i) => { text += badges[i] + ' ' + u.name + ': ' + u.xp + ' XP\n'; });
-                bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
-            }
-        }
-        if (h === 7 && m === 5) topLinks(g.id);
-});
-    sendeGebündelteReminder();
-
-    // Season Reset alle 7 Tage
-    if (Date.now() - d.seasonStart > 604800000) {
-    const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
-    
-    if (s.length) {
-        const w = d.users[s[0][0]];
-
-        d.seasonGewinner.push({
-            name: w.name,
-            xp: w.xp,
-            datum: new Date().toLocaleDateString()
-        });
-
-        gruppen.forEach(g => {
-            bot.telegram.sendMessage(
-                g.id,
-                "Season Gewinner 🎉"
-            );
-        });
+  gruppen.forEach(g => {
+    if (h === 6 && m === 0) {
+      bot.telegram.sendMessage(g.id, "Regeln...");
     }
+
+    if (h === 7 && m === 0) {
+      const s = Object.entries(d.users)
+        .sort((a, b) => b[1].xp - a[1].xp)
+        .slice(0, 3);
+
+      if (s.length) {
+        let text = "🏆 Tages-Ranking\n\n";
+        s.forEach(([_, u], i) => {
+          text += `${i + 1}. ${u.name} (${u.xp} XP)\n`;
+        });
+
+        bot.telegram.sendMessage(g.id, text);
+      }
+    }
+
+    if (h === 7 && m === 5) topLinks(g.id);
+  });
+
+  sendeGebündelteReminder();
+
+  if (Date.now() - d.seasonStart > 604800000) {
+    const s = Object.entries(d.users)
+      .sort((a, b) => b[1].xp - a[1].xp);
+
+    if (s.length) {
+      const w = d.users[s[0][0]];
+
+      d.seasonGewinner.push({
+        name: w.name,
+        xp: w.xp,
+        datum: new Date().toLocaleDateString()
+      });
+
+      gruppen.forEach(g => {
+        bot.telegram.sendMessage(g.id, "Season Gewinner 🎉");
+      });
+    }
+  }
 }
 setInterval(zeitCheck, 60000);
 setTimeout(() => {

@@ -594,12 +594,16 @@ async function sendeLinkAnAlle(linkData) {
     'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
     'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
     {
-        reply_markup: Markup.inlineKeyboard([
-            Markup.button.url(
-                '👉 Zum Beitrag',
-                `https://t.me/c/${String(linkData.chat_id).replace('-100','')}/${linkData.counter_msg_id}`
-            )
-        ])
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    {
+                        text: '👉 Zum Beitrag',
+                        url: `https://t.me/c/${String(linkData.chat_id).replace('-100','')}/${linkData.counter_msg_id}`
+                    }
+                ]
+            ]
+        }
     }
 );
         } catch (e) {

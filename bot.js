@@ -25,7 +25,20 @@ for (const uid in d.users) {
     d.users[uid].started = true;
 }
             for (const k of Object.keys(d.links)) {
-                d.links[k].likes = new Set(d.links[k].likes || []);
+    const link = d.links[k];
+
+    // Likes wiederherstellen
+    link.likes = new Set(link.likes || []);
+
+    // Falls Daten fehlen → fixen
+    if (!link.counter_msg_id) {
+        link.counter_msg_id = null;
+    }
+
+    if (!link.chat_id) {
+        delete d.links[k]; // kaputte Daten entfernen
+        continue;
+    }
             }
             console.log('Daten geladen');
         }

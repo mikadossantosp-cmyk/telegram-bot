@@ -718,10 +718,10 @@ function zeitCheck() {
     // Season Reset alle 7 Tage
     if (Date.now() - d.seasonStart > 604800000) {
     const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
-    }
+    
     if (s.length) {
         const w = d.users[s[0][0]];
-}
+
         d.seasonGewinner.push({
             name: w.name,
             xp: w.xp,
@@ -741,7 +741,7 @@ setTimeout(() => {
     console.log("TEST START");
     sendeGebündelteReminder();
 }, 5000);
-
+}
 // ================================
 // START
 // ================================

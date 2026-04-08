@@ -717,13 +717,26 @@ function zeitCheck() {
 
     // Season Reset alle 7 Tage
     if (Date.now() - d.seasonStart > 604800000) {
-        const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
-        if (s.length) {
-            const w = d.users[s[0][0]];
-            d.seasonGewinner.push({ name: w.name, xp: w.xp, datum: new Date().toLocaleDateString() });
-            gruppen.forEach(g => {
-                bot.telegram.sendMessage(g.id,
-tInterval(zeitCheck, 60000);
+    const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
+
+    if (s.length) {
+        const w = d.users[s[0][0]];
+
+        d.seasonGewinner.push({
+            name: w.name,
+            xp: w.xp,
+            datum: new Date().toLocaleDateString()
+        });
+
+        gruppen.forEach(g => {
+            bot.telegram.sendMessage(
+                g.id,
+                "Season Gewinner 🎉"
+            );
+        });
+    }
+}
+setInterval(zeitCheck, 60000);
 setTimeout(() => {
     console.log("TEST START");
     sendeGebündelteReminder();

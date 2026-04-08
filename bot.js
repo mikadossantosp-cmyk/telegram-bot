@@ -516,8 +516,9 @@ bot.on('message', async (ctx) => {
         counter_msg_id: reply.message_id,
         timestamp: Date.now()
     };
+await sendeLinkAnAlle(d.links[msgId]);
 
-    speichern();
+speichern();
 });
 
 // ================================
@@ -569,6 +570,26 @@ async function topLinks(chatId) {
     let text = '🔥 *Trending Links*\n\n';
     sorted.forEach((l, i) => { text += (i + 1) + '. ' + l.user_name + ': ' + l.likes.size + ' 👍\n'; });
     try { await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' }); } catch (e) {}
+}
+async function sendeLinkAnAlle(linkData) {
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        // nicht an den Poster senden
+        if (parseInt(uid) === linkData.user_id) continue;
+
+        try {
+            await bot.telegram.sendMessage(
+                uid,
+                '📢 *Neuer Booster-Link*\n\n' +
+                '👤 *Member:* ' + linkData.user_name + '\n\n' +
+                '🔗 ' + linkData.text + '\n\n' +
+                '💬 Lieber Booster,\n\n' +
+                'Member *' + linkData.user_name + '* hat gerade diesen Link gepostet.\n' +
+                'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {}
+    }
 }
 
 // ================================

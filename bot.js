@@ -663,22 +663,22 @@ async function sendeGebündelteReminder() {
             console.log("Buttons:", buttons.length);
 
             await bot.telegram.sendMessage(
-    uid,
-    '📌 *Kurze Erinnerung*\n\n' +
-    'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
-    'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
-    'Du bekommst später nochmal eine Erinnerung.',
-    {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: buttons.map(btn => [
-                {
-                    text: btn.text,
-                    url: btn.url
-                }
-            ])
-        }
+uid,
+'📌 *Kurze Erinnerung*\n\n' +
+'Du hast dich bei einigen Beiträgen noch nicht beteiligt.\n' +
+'Bitte kurz liken und in der Gruppe bestätigen 👍\n\n' +
+'Du bekommst später nochmal eine Erinnerung.',
+{
+    parse_mode: 'Markdown',
+    reply_markup: {
+        inline_keyboard: buttons.map(btn => [
+            {
+                text: btn.text,
+                url: btn.url
+            }
+        ])
     }
+}
 );
 } catch (e) {
     console.log("Fehler beim Senden:", e);

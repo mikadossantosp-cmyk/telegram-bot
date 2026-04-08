@@ -616,17 +616,9 @@ async function sendeLinkAnAlle(linkData, msgId) {
                 }
             );
         } catch (e) {}
-    }
-                    '👑 *Season Ende!*\nGewinner: *' + w.name + '*\nXP: ' + w.xp + '\n\n🔄 Neue Season!',
-                    { parse_mode: 'Markdown' }
-                ).catch(() => {});
-            });
-        }
         for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
         d.seasonStart = Date.now();
         speichern();
-    }
-}
 
 async function sendeGebündelteReminder() {
     console.log("Reminder läuft");

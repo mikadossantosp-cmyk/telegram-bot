@@ -20,6 +20,12 @@ function laden() {
         if (fs.existsSync(DATA_FILE)) {
             const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             d = Object.assign({}, d, geladen);
+
+for (const uid in d.users) {
+    if (d.users[uid].started === undefined) {
+        d.users[uid].started = true;
+    }
+}
             for (const k of Object.keys(d.links)) {
                 d.links[k].likes = new Set(d.links[k].likes || []);
             }

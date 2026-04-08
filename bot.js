@@ -587,7 +587,7 @@ async function sendeLinkAnAlle(linkData) {
     'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
     'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍'
 );
-catch (e) {
+        } catch (e) {
     console.log("FEHLER:", uid, e.message);
 }
 }

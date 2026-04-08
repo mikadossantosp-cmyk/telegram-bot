@@ -411,6 +411,10 @@ bot.on('message', async (ctx) => {
 
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
+    if (!u.started) {
+    u.started = true;
+    speichern();
+}
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 

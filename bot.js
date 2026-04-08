@@ -713,7 +713,9 @@ function zeitCheck() {
       }
     }
 
-    if (h === 7 && m === 5) topLinks(g.id);
+    if (h === 7 && m === 5) {
+      topLinks(g.id);
+    }
   });
 
   sendeGebündelteReminder();

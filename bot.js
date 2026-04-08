@@ -591,7 +591,7 @@ async function sendeLinkAnAlle(linkData) {
     console.log("FEHLER:", uid, e.message);
 }
 }
-
+}
 // ================================
 // ZEITGESTEUERTE EVENTS
 // ================================

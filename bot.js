@@ -671,12 +671,12 @@ async function sendeGebündelteReminder() {
     {
         parse_mode: 'Markdown',
         reply_markup: {
-            inline_keyboard: buttons.map(btn => ([
+            inline_keyboard: buttons.map(btn => [
                 {
                     text: btn.text,
                     url: btn.url
                 }
-            ]))
+            ])
         }
     }
 );

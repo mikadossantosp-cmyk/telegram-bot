@@ -2,7 +2,7 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
-const DATA_FILE = './daten.json';
+const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
 // ================================
@@ -22,9 +22,7 @@ function laden() {
             d = Object.assign({}, d, geladen);
 
 for (const uid in d.users) {
-    if (d.users[uid].started === undefined) {
-        d.users[uid].started = true;
-    }
+    d.users[uid].started = true;
 }
             for (const k of Object.keys(d.links)) {
                 d.links[k].likes = new Set(d.links[k].likes || []);
@@ -411,10 +409,7 @@ bot.on('message', async (ctx) => {
 
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    if (!u.started) {
-    u.started = true;
-    speichern();
-}
+    
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 
@@ -538,7 +533,19 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
-    xpAdd(lnk.user_id, 5, lnk.user_name);
+    xpAdd(uid, 5, ctx.from.first_name);
+    const feedbackMsg = await ctx.reply(
+    '🎉 +' + 5 + ' XP erhalten!\n\n' +
+    'Danke für deine Unterstützung 💪\n' +
+    'Dein Engagement wird überprüft.'
+);
+
+// nach 5 Sekunden löschen
+setTimeout(async () => {
+    try {
+        await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id);
+    } catch (e) {}
+}, 5000);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
 
@@ -579,7 +586,7 @@ async function sendeLinkAnAlle(linkData) {
 
         try {
             await bot.telegram.sendMessage(
-    uid,
+                uid,
     '📢 Neuer Booster-Link\n\n' +
     '👤 Member: ' + linkData.user_name + '\n\n' +
     '🔗 ' + linkData.text + '\n\n' +

@@ -22,9 +22,7 @@ function laden() {
             d = Object.assign({}, d, geladen);
 
 for (const uid in d.users) {
-    if (d.users[uid].started === undefined) {
-        d.users[uid].started = true;
-    }
+    d.users[uid].started = true;
 }
             for (const k of Object.keys(d.links)) {
                 d.links[k].likes = new Set(d.links[k].likes || []);
@@ -411,10 +409,7 @@ bot.on('message', async (ctx) => {
 
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    if (!u.started) {
-    u.started = true;
-    speichern();
-}
+    
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 
@@ -591,7 +586,7 @@ async function sendeLinkAnAlle(linkData) {
 
         try {
             await bot.telegram.sendMessage(
-    uid,
+                uid,
     '📢 Neuer Booster-Link\n\n' +
     '👤 Member: ' + linkData.user_name + '\n\n' +
     '🔗 ' + linkData.text + '\n\n' +

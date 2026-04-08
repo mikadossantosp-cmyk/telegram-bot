@@ -586,13 +586,25 @@ async function sendeLinkAnAlle(linkData) {
 
         try {
             await bot.telegram.sendMessage(
-                uid,
+    uid,
     '📢 Neuer Booster-Link\n\n' +
     '👤 Member: ' + linkData.user_name + '\n\n' +
     '🔗 ' + linkData.text + '\n\n' +
     'Lieber Booster,\n\n' +
     'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
-    'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍'
+    'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
+    {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    {
+                        text: '👉 Zum Beitrag',
+                        url: `https://t.me/c/${String(linkData.chat_id).replace('-100','')}/${linkData.counter_msg_id}`
+                    }
+                ]
+            ]
+        }
+    }
 );
         } catch (e) {
     console.log("FEHLER:", uid, e.message);

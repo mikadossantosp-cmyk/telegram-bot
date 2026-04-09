@@ -443,10 +443,7 @@ bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
-    // ❌ Threads komplett ignorieren
-    if (ctx.message.message_thread_id) return;
-
-    // ❌ Andere Gruppen → NUR weiterleiten
+ // ❌ Andere Gruppen → NUR weiterleiten
     if (ctx.chat.id !== MAIN_CHAT_ID) {
 
         const msgText = ctx.message.text || ctx.message.caption || '';

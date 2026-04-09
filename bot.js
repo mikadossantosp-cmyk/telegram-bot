@@ -456,29 +456,24 @@ bot.on('message', async (ctx) => {
     
     const text = ctx.message.text || ctx.message.caption || '';
     if (!hatLink(text)) {
-    try {
-        // Nachricht weiterleiten
-        await ctx.forwardMessage(-1003906557227);
-        
-        // Original löschen
-        await ctx.deleteMessage();
-        
-        // Hinweis 30 Sekunden anzeigen
-        const hinweis = await ctx.reply(
-            '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
-            '👉 [Hier klicken](https://t.me/c/3906557227/1)',
-            { parse_mode: 'Markdown' }
-        );
-        
-        // Nach 30 Sekunden Hinweis löschen
-        setTimeout(async () => {
-            try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id);
-            } catch (e) {}
-        }, 30000);
-        
-    } catch (e) {}
+    if (ctx.chat.id === -1003800312818) {
+        try {
+            await ctx.forwardMessage(-1003906557227);
+            await ctx.deleteMessage();
+            const hinweis = await ctx.reply(
+                '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
+                '👉 [Hier klicken](https://t.me/c/3906557227/1)',
+                { parse_mode: 'Markdown' }
+            );
+            setTimeout(async () => {
+                try {
+                    await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id);
+                } catch (e) {}
+            }, 30000);
+        } catch (e) {}
+    }
     return;
+}
 }
     const admin = await istAdmin(ctx, uid);
 

@@ -2,6 +2,8 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
+const LOG_CHAT_ID = -1003696077095; // 👈 deine Zielgruppe
+const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -446,7 +448,43 @@ bot.on('message', async (ctx) => {
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 
-    if (!hatLink(text)) return;
+    // ================================
+// TEXT OHNE LINK → VERSCHIEBEN
+// ================================
+if (!hatLink(text)) {
+
+    // Nachricht in andere Gruppe senden
+    try {
+        await ctx.telegram.sendMessage(
+            LOG_CHAT_ID,
+            '📥 *Verschobene Nachricht*\n\n' +
+            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein username') + ')\n' +
+            '🆔 ' + ctx.from.id + '\n\n' +
+            '💬 ' + text,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) {
+        console.log("FEHLER WEITERLEITUNG:", e.message);
+    }
+
+    // Original löschen
+    try { await ctx.deleteMessage(); } catch (e) {}
+
+    // Info anzeigen
+    const infoMsg = await ctx.reply(
+        '📦 Deine Nachricht wurde in eine andere Gruppe weitergeleitet um Spam zu vermeiden.\n\n' +
+        '👉 Hier ansehen:\n' + LOG_GROUP_LINK
+    );
+
+    // nach 30 Sekunden löschen
+    setTimeout(async () => {
+        try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
+        } catch (e) {}
+    }, 30000);
+
+    return;
+}
 
     // Admins + aktive User = automatisch gestartet
     if (admin || u.links > 0 || u.xp > 0) u.started = true;

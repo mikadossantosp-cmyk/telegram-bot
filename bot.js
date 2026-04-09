@@ -412,6 +412,14 @@ bot.command('unban', async (ctx) => {
         await ctx.reply('❌ Fehler beim Entbannen.');
     }
 });
+bot.command('testsend', async (ctx) => {
+    try {
+        await ctx.telegram.sendMessage(LOG_CHAT_ID, '✅ TEST NACHRICHT');
+        await ctx.reply('✅ Erfolgreich gesendet!');
+    } catch (e) {
+        await ctx.reply('❌ Fehler: ' + e.message);
+    }
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================

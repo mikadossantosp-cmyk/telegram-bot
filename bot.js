@@ -450,12 +450,11 @@ bot.on('new_chat_members', async (ctx) => {
 // ================================
 // NACHRICHTEN HANDLER
 // ================================
-// 👉 Bot arbeitet NUR in Hauptgruppe
-if (ctx.chat.id !== MAIN_CHAT_ID) return;
 bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
-
+// 👉 Bot arbeitet NUR in Hauptgruppe
+if (ctx.chat.id !== MAIN_CHAT_ID) return;
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
     

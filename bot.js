@@ -123,9 +123,11 @@ async function istAdmin(ctx, uid) {
 }
 
 function hatLink(text) {
-    if (!text) return false;
+    if (!text || typeof text !== 'string') return false;
 
-    return /(https?:\/\/[^\s]+|www\.[^\s]+|t\.me\/[^\s]+)/i.test(text);
+    const clean = text.trim();
+
+    return /https?:\/\/\S+|www\.\S+|t\.me\/\S+/i.test(clean);
 }
 
 function linkUrl(text) {
@@ -441,11 +443,14 @@ bot.on('new_chat_members', async (ctx) => {
 // NACHRICHTEN HANDLER
 // ================================
 bot.on('message', async (ctx) => {
+
     if (!ctx.message || !ctx.from) return;
-if (!istGruppe(ctx.chat.type)) return;
+    if (!istGruppe(ctx.chat.type)) return;
 
-const text = ctx.message.text || ctx.message.caption || '';
+    // 👉 NUR TEXT erlauben
+    if (!ctx.message.text && !ctx.message.caption) return;
 
+    const text = ctx.message.text || ctx.message.caption || '';
 // ================================
 // ❌ THREADS IGNORIEREN (überall)
 // ================================

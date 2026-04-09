@@ -457,26 +457,24 @@ bot.on('message', async (ctx) => {
     const text = ctx.message.text || ctx.message.caption || '';
 
 // ================================
-// 🔴 ANDERE GRUPPEN
+// 🔴 ANDERE GRUPPEN → IMMER VERSCHIEBEN
 // ================================
 if (ctx.chat.id !== MAIN_CHAT_ID) {
 
-    if (!hatLink(text)) {
-        try {
-            await ctx.telegram.sendMessage(
-                LOG_CHAT_ID,
-                '📦 *Verschobene Nachricht*\n\n' +
-                '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein Username') + ')\n' +
-                '🆔 ' + ctx.from.id + '\n\n' +
-                '💬 ' + text,
-                { parse_mode: 'Markdown' }
-            );
-        } catch (e) {
-            console.log("FEHLER WEITERLEITUNG:", e.message);
-        }
-
-        try { await ctx.deleteMessage(); } catch (e) {}
+    try {
+        await ctx.telegram.sendMessage(
+            LOG_CHAT_ID,
+            '📦 *Verschobene Nachricht*\n\n' +
+            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein Username') + ')\n' +
+            '🆔 ' + ctx.from.id + '\n\n' +
+            '💬 ' + text,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) {
+        console.log("FEHLER WEITERLEITUNG:", e.message);
     }
+
+    try { await ctx.deleteMessage(); } catch (e) {}
 
     return;
 }

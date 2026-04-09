@@ -2,6 +2,7 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
+const MAIN_CHAT_ID = -1003800312818; // 👈 DEINE HAUPTGRUPPE
 const LOG_CHAT_ID = -1003906557227; // 👈 deine Zielgruppe
 const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
@@ -442,9 +443,35 @@ bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
+    // ❌ Threads komplett ignorieren
+    if (ctx.message.message_thread_id) return;
+
+    // ❌ Andere Gruppen → NUR weiterleiten
+    if (ctx.chat.id !== MAIN_CHAT_ID) {
+
+        const msgText = ctx.message.text || ctx.message.caption || '';
+
+        try {
+            await ctx.telegram.sendMessage(
+                LOG_CHAT_ID,
+                '📥 *Weitergeleitet*\n\n' +
+                '👤 ' + ctx.from.first_name + '\n' +
+                '🆔 ' + ctx.from.id + '\n\n' +
+                '💬 ' + msgText,
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {
+            console.log("FEHLER:", e.message);
+        }
+
+        return;
+    }
+
+    // 👉 AB HIER NUR HAUPTGRUPPE
+
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    
+
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 

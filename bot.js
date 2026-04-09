@@ -2,9 +2,8 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
-const MAIN_CHAT_ID = -1003800312818; // 👈 DEINE HAUPTGRUPPE
-const LOG_CHAT_ID = -1003906557227_1; // 👈 deine Zielgruppe
-const LOG_GROUP_LINK = 'https://t.me/c/3906557227/1'
+const LOG_CHAT_ID = -1003696077095; // 👈 deine Zielgruppe
+const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -443,32 +442,9 @@ bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
- // ❌ Andere Gruppen → NUR weiterleiten
-    if (ctx.chat.id !== MAIN_CHAT_ID) {
-
-        const msgText = ctx.message.text || ctx.message.caption || '';
-
-        try {
-            await ctx.telegram.sendMessage(
-                LOG_CHAT_ID,
-                '📥 *Weitergeleitet*\n\n' +
-                '👤 ' + ctx.from.first_name + '\n' +
-                '🆔 ' + ctx.from.id + '\n\n' +
-                '💬 ' + msgText,
-                { parse_mode: 'Markdown' }
-            );
-        } catch (e) {
-            console.log("FEHLER:", e.message);
-        }
-
-        return;
-    }
-
-    // 👉 AB HIER NUR HAUPTGRUPPE
-
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-
+    
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 

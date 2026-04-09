@@ -457,7 +457,26 @@ bot.on('message', async (ctx) => {
     const text = ctx.message.text || ctx.message.caption || '';
     if (!hatLink(text)) {
     try {
+        // Nachricht weiterleiten
         await ctx.forwardMessage(-1003906557227);
+        
+        // Original löschen
+        await ctx.deleteMessage();
+        
+        // Hinweis 30 Sekunden anzeigen
+        const hinweis = await ctx.reply(
+            '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
+            '👉 [Hier klicken](https://t.me/+DEIN_GRUPPEN_LINK)',
+            { parse_mode: 'Markdown' }
+        );
+        
+        // Nach 30 Sekunden Hinweis löschen
+        setTimeout(async () => {
+            try {
+                await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id);
+            } catch (e) {}
+        }, 30000);
+        
     } catch (e) {}
     return;
 }

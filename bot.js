@@ -130,8 +130,15 @@ function hatLink(text) {
            t.includes('t.me/');
 }
 function linkUrl(text) {
-    const m = text.match(/(https?:\/\/[^\s]+|www\.[^\s]+)/i);
-    return m ? m[0] : null;
+    if (!text || typeof text !== 'string') return null;
+
+    const t = text.trim();
+
+    if (t.includes('http://') || t.includes('https://') || t.includes('www.') || t.includes('t.me/')) {
+        return t;
+    }
+
+    return null;
 }
 
 // ================================

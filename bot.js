@@ -420,6 +420,9 @@ bot.command('testsend', async (ctx) => {
         await ctx.reply('❌ Fehler: ' + e.message);
     }
 });
+bot.command('id', async (ctx) => {
+    await ctx.reply('Chat ID:\n' + ctx.chat.id);
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================

@@ -468,31 +468,34 @@ bot.on('message', async (ctx) => {
 
     // 24h Limit
     if (!d.counter[uid]) d.counter[uid] = 0;
-    if (!admin && d.tracker[uid]) {
-        const diff = Date.now() - d.tracker[uid];
-        if (diff < 86400000) {
-            try { await ctx.deleteMessage(); } catch (e) {}
-            const left = 86400000 - diff;
-            const h = Math.floor(left / 3600000);
-            const m = Math.floor((left % 3600000) / 60000);
-            d.counter[uid]++;
-            u.warnings++;
-            if (u.warnings >= 5) {
-                try { await ctx.telegram.banChatMember(ctx.chat.id, uid); } catch (e) {}
-                await ctx.reply('🔨 *' + ctx.from.first_name + '* gebannt!', { parse_mode: 'Markdown' });
-            } else {
-                await ctx.reply(
-                    '❌ Nur 1 Link pro 24h!\n⏳ Noch ' + h + 'h ' + m + 'min\n⚠️ Warn ' + u.warnings + '/5',
-                    { parse_mode: 'Markdown' }
-                );
-                if (u.started) {
-                    try { await ctx.telegram.sendMessage(uid, '⚠️ Link gelöscht!\n⏳ Noch ' + h + 'h ' + m + 'min'); } catch (e) {}
-                }
-            }
-            speichern();
-            return;
+
+const heute = new Date().toDateString();
+
+if (!admin && d.tracker[uid] === heute) {
+    try { await ctx.deleteMessage(); } catch (e) {}
+
+    d.counter[uid]++;
+    u.warnings++;
+
+    if (u.warnings >= 5) {
+        try { await ctx.telegram.banChatMember(ctx.chat.id, uid); } catch (e) {}
+        await ctx.reply('🔨 *' + ctx.from.first_name + '* gebannt!', { parse_mode: 'Markdown' });
+    } else {
+        await ctx.reply(
+            '❌ Nur 1 Link pro Tag erlaubt!\n🕛 Ab Mitternacht kannst du wieder posten.\n⚠️ Warn ' + u.warnings + '/5',
+            { parse_mode: 'Markdown' }
+        );
+
+        if (u.started) {
+            try {
+                await ctx.telegram.sendMessage(uid, '⚠️ Link gelöscht!\n🕛 Du kannst morgen wieder posten.');
+            } catch (e) {}
         }
     }
+
+    speichern();
+    return;
+}
 
     // Link erlaubt
     d.tracker[uid] = Date.now();

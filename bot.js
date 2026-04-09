@@ -456,6 +456,7 @@ bot.on('message', async (ctx) => {
     const u = user(uid, ctx.from.first_name);
     
     const text = ctx.message.text || ctx.message.caption || '';
+    if (!hatLink(text)) return;
     const admin = await istAdmin(ctx, uid);
 
   // Admins + aktive User = automatisch gestartet

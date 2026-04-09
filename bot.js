@@ -3,7 +3,7 @@ import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 const MAIN_CHAT_ID = -1003800312818; // 👈 DEINE HAUPTGRUPPE
-const LOG_CHAT_ID = -1003906557227; // 👈 deine Zielgruppe
+const LOG_CHAT_ID = -1003906557227_1; // 👈 deine Zielgruppe
 const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);

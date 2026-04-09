@@ -443,7 +443,12 @@ bot.on('message', async (ctx) => {
     const u = user(uid, ctx.from.first_name);
     
     const text = ctx.message.text || ctx.message.caption || '';
-    if (!hatLink(text)) return;
+    if (!hatLink(text)) {
+    try {
+        await ctx.forwardMessage(-1003906557227);
+    } catch (e) {}
+    return;
+}
     const admin = await istAdmin(ctx, uid);
 
     // Admins + aktive User = automatisch gestartet

@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+iimport { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
@@ -122,9 +122,13 @@ async function istAdmin(ctx, uid) {
 function hatLink(text) {
     if (!text) return false;
 
-    return /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(t\.me\/[^\s]+)/i.test(text);
-}
+    const t = text.toLowerCase().trim();
 
+    return t.includes('http://') ||
+           t.includes('https://') ||
+           t.includes('www.') ||
+           t.includes('t.me/');
+}
 function linkUrl(text) {
     const m = text.match(/(https?:\/\/[^\s]+|www\.[^\s]+)/i);
     return m ? m[0] : null;

@@ -2,9 +2,8 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
-const MAIN_CHAT_ID = -1003800312818; // Hauptgruppe (mit Regeln)
-const LOG_CHAT_ID = -1003906557227_1;  // Zielgruppe (nur Empfang)
-const LOG_GROUP_LINK = 'https://t.me/+yjFNBbr_dDpkNzhk';
+const LOG_CHAT_ID = -1003696077095; // 👈 deine Zielgruppe
+const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -413,17 +412,6 @@ bot.command('unban', async (ctx) => {
         await ctx.reply('❌ Fehler beim Entbannen.');
     }
 });
-bot.command('testsend', async (ctx) => {
-    try {
-        await ctx.telegram.sendMessage(LOG_CHAT_ID, '✅ TEST NACHRICHT');
-        await ctx.reply('✅ Erfolgreich gesendet!');
-    } catch (e) {
-        await ctx.reply('❌ Fehler: ' + e.message);
-    }
-});
-bot.command('id', async (ctx) => {
-    await ctx.reply('Chat ID:\n' + ctx.chat.id);
-});
 // ================================
 // NEUE MITGLIEDER
 // ================================
@@ -454,42 +442,16 @@ bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
+    const uid = ctx.from.id;
+    const u = user(uid, ctx.from.first_name);
+    
     const text = ctx.message.text || ctx.message.caption || '';
-
-// ================================
-// 🔴 ANDERE GRUPPEN → IMMER VERSCHIEBEN
-// ================================
-if (ctx.chat.id !== MAIN_CHAT_ID) {
-
-    try {
-        await ctx.telegram.sendMessage(
-            LOG_CHAT_ID,
-            '📦 *Verschobene Nachricht*\n\n' +
-            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein Username') + ')\n' +
-            '🆔 ' + ctx.from.id + '\n\n' +
-            '💬 ' + text,
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) {
-        console.log("FEHLER WEITERLEITUNG:", e.message);
-    }
-
-    try { await ctx.deleteMessage(); } catch (e) {}
-
-    return;
-}
-
-// ================================
-// 🟢 HAUPTGRUPPE
-// ================================
-const uid = ctx.from.id;
-const u = user(uid, ctx.from.first_name);
-const admin = await istAdmin(ctx, uid);
+    const admin = await istAdmin(ctx, uid);
 
     // ================================
 // TEXT OHNE LINK → VERSCHIEBEN
 // ================================
-if (!hatLink(text) && ctx.chat.id === MAIN_CHAT_ID) {
+if (!hatLink(text)) {
 
     // Nachricht in andere Gruppe senden
     try {

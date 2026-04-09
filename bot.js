@@ -1,10 +1,9 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
-const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
-const MAIN_CHAT_ID = -1003800312818;
-const LOG_CHAT_ID = -1003906557227; // 👈 deine Zielgruppe
-const LOG_GROUP_LINK = 'https://t.me/+yjFNBbr_dDpkNzhk'
+const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
+const LOG_CHAT_ID = -1003696077095; // 👈 deine Zielgruppe
+const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -123,11 +122,8 @@ async function istAdmin(ctx, uid) {
 }
 
 function hatLink(text) {
-    if (!text || typeof text !== 'string') return false;
-
-    const clean = text.trim();
-
-    return /(https?:\/\/\S+|www\.\S+|t\.me\/\S+)/i.test(clean);
+    if (!text) return false;
+    return /(https?:\/\/|www\.|t\.me\/)|(\b\w+\.(com|de|net|org|io|me|gg|tv)\b)/i.test(text);
 }
 
 function linkUrl(text) {
@@ -443,30 +439,26 @@ bot.on('new_chat_members', async (ctx) => {
 // NACHRICHTEN HANDLER
 // ================================
 bot.on('message', async (ctx) => {
-
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
-    // 👉 NUR TEXT erlauben
-    if (!ctx.message.text && !ctx.message.caption) return;
-
+    const uid = ctx.from.id;
+    const u = user(uid, ctx.from.first_name);
+    
     const text = ctx.message.text || ctx.message.caption || '';
-// ================================
-// ❌ THREADS IGNORIEREN (überall)
-// ================================
-if (ctx.message.message_thread_id) return;
+    const admin = await istAdmin(ctx, uid);
 
+    // ================================
+// TEXT OHNE LINK → VERSCHIEBEN
 // ================================
-// 🔴 ANDERE GRUPPEN → NUR VERSCHIEBEN
-// ================================
-if (ctx.chat.id !== MAIN_CHAT_ID) {
+if (!hatLink(text)) {
 
-    // Nachricht weiterleiten
+    // Nachricht in andere Gruppe senden
     try {
         await ctx.telegram.sendMessage(
             LOG_CHAT_ID,
-            '📦 *Verschobene Nachricht*\n\n' +
-            '👤 ' + ctx.from.first_name + '\n' +
+            '📥 *Verschobene Nachricht*\n\n' +
+            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein username') + ')\n' +
             '🆔 ' + ctx.from.id + '\n\n' +
             '💬 ' + text,
             { parse_mode: 'Markdown' }
@@ -476,42 +468,23 @@ if (ctx.chat.id !== MAIN_CHAT_ID) {
     }
 
     // Original löschen
-    try {
-        await ctx.deleteMessage();
-    } catch (e) {}
+    try { await ctx.deleteMessage(); } catch (e) {}
 
-    // Info Nachricht
+    // Info anzeigen
     const infoMsg = await ctx.reply(
-        '📦 *Nachricht verschoben*\n\n' +
-        'Deine Nachricht wurde weitergeleitet.\n\n' +
-        '👉 Klicke unten:',
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        {
-                            text: '🔎 Öffnen',
-                            url: LOG_GROUP_LINK
-                        }
-                    ]
-                ]
-            }
-        }
+        '📦 Deine Nachricht wurde in eine andere Gruppe weitergeleitet um Spam zu vermeiden.\n\n' +
+        '👉 Hier ansehen:\n' + LOG_GROUP_LINK
     );
 
-    // Auto löschen
+    // nach 30 Sekunden löschen
     setTimeout(async () => {
         try {
             await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
         } catch (e) {}
-    }, 20000);
+    }, 30000);
 
     return;
-} 
-    const uid = ctx.from.id;
-    const u = user(uid, ctx.from.first_name);
-    const admin = await istAdmin(ctx, uid);
+}
 
     // Admins + aktive User = automatisch gestartet
     if (admin || u.links > 0 || u.xp > 0) u.started = true;

@@ -2,7 +2,7 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
 const BOT_TOKEN = "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
-const LOG_CHAT_ID = -1003696077095; // 👈 deine Zielgruppe
+const LOG_CHAT_ID = -1003906557227; // 👈 deine Zielgruppe
 const LOG_GROUP_LINK = 'https://t.me/+3rkLZTn9EQcxMDY0'
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);

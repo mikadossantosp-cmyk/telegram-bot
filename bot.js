@@ -124,7 +124,8 @@ async function istAdmin(ctx, uid) {
 
 function hatLink(text) {
     if (!text) return false;
-    return /(https?:\/\/|www\.|t\.me\/)|(\b\w+\.(com|de|net|org|io|me|gg|tv)\b)/i.test(text);
+
+    return /(https?:\/\/[^\s]+|www\.[^\s]+|t\.me\/[^\s]+)/i.test(text);
 }
 
 function linkUrl(text) {

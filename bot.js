@@ -127,7 +127,7 @@ function hatLink(text) {
 
     const clean = text.trim();
 
-    return /https?:\/\/\S+|www\.\S+|t\.me\/\S+/i.test(clean);
+    return /(https?:\/\/\S+|www\.\S+|t\.me\/\S+)/i.test(clean);
 }
 
 function linkUrl(text) {

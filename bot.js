@@ -454,16 +454,39 @@ bot.on('message', async (ctx) => {
     if (!ctx.message || !ctx.from) return;
     if (!istGruppe(ctx.chat.type)) return;
 
-    // ❌ Threads ignorieren
-    if (ctx.message.message_thread_id) return;
-
-    // ❌ nur Hauptgruppe erlauben
-    if (ctx.chat.id !== MAIN_CHAT_ID) return;
-    const uid = ctx.from.id;
-    const u = user(uid, ctx.from.first_name);
-    
     const text = ctx.message.text || ctx.message.caption || '';
-    const admin = await istAdmin(ctx, uid);
+
+// ================================
+// 🔴 ANDERE GRUPPEN
+// ================================
+if (ctx.chat.id !== MAIN_CHAT_ID) {
+
+    if (!hatLink(text)) {
+        try {
+            await ctx.telegram.sendMessage(
+                LOG_CHAT_ID,
+                '📦 *Verschobene Nachricht*\n\n' +
+                '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein Username') + ')\n' +
+                '🆔 ' + ctx.from.id + '\n\n' +
+                '💬 ' + text,
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {
+            console.log("FEHLER WEITERLEITUNG:", e.message);
+        }
+
+        try { await ctx.deleteMessage(); } catch (e) {}
+    }
+
+    return;
+}
+
+// ================================
+// 🟢 HAUPTGRUPPE
+// ================================
+const uid = ctx.from.id;
+const u = user(uid, ctx.from.first_name);
+const admin = await istAdmin(ctx, uid);
 
     // ================================
 // TEXT OHNE LINK → VERSCHIEBEN

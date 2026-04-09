@@ -466,7 +466,7 @@ bot.on('message', async (ctx) => {
         // Hinweis 30 Sekunden anzeigen
         const hinweis = await ctx.reply(
             '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
-            '👉 [Hier klicken](https://t.me/+DEIN_GRUPPEN_LINK)',
+            '👉 [Hier klicken](https://t.me/c/3906557227/1)',
             { parse_mode: 'Markdown' }
         );
         

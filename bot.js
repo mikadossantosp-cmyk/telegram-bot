@@ -389,7 +389,27 @@ bot.command('testreward', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await ctx.reply('✅ Reward: Platz 1 bekommt Link-Repost.');
 });
+bot.command('unban', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
 
+    if (!ctx.message.reply_to_message) {
+        return ctx.reply('❌ Antworte auf die Nachricht vom User, den du entbannen willst.');
+    }
+
+    const userId = ctx.message.reply_to_message.from.id;
+
+    try {
+        await ctx.telegram.unbanChatMember(ctx.chat.id, userId);
+
+        if (d.users[userId]) {
+            d.users[userId].warnings = 0;
+        }
+
+        await ctx.reply('✅ User wurde entbannt!');
+    } catch (e) {
+        await ctx.reply('❌ Fehler beim Entbannen.');
+    }
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================

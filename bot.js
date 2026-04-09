@@ -468,7 +468,31 @@ if (ctx.chat.id !== MAIN_CHAT_ID) {
     }
 
     try { await ctx.deleteMessage(); } catch (e) {}
+const infoMsg = await ctx.reply(
+    '📦 *Nachricht verschoben*\n\n' +
+    'Deine Nachricht wurde automatisch weitergeleitet.\n\n' +
+    '👉 Klicke unten, um sie anzusehen:',
+    {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    {
+                        text: '🔎 Zur Nachricht',
+                        url: LOG_GROUP_LINK
+                    }
+                ]
+            ]
+        }
+    }
+);
 
+// nach 20 Sekunden löschen
+setTimeout(async () => {
+    try {
+        await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
+    } catch (e) {}
+}, 20000);
     return; // ❗ STOP → nichts anderes läuft
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);

@@ -474,7 +474,7 @@ bot.on('message', async (ctx) => {
     }
     return;
 }
-}
+
     const admin = await istAdmin(ctx, uid);
 
   // Admins + aktive User = automatisch gestartet

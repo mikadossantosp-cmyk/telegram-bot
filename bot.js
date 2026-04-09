@@ -448,45 +448,7 @@ bot.on('message', async (ctx) => {
     const text = ctx.message.text || ctx.message.caption || '';
     const admin = await istAdmin(ctx, uid);
 
-    // ================================
-// TEXT OHNE LINK → VERSCHIEBEN
-// ================================
-if (!hatLink(text)) {
-
-    // Nachricht in andere Gruppe senden
-    try {
-        await ctx.telegram.sendMessage(
-            LOG_CHAT_ID,
-            '📥 *Verschobene Nachricht*\n\n' +
-            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein username') + ')\n' +
-            '🆔 ' + ctx.from.id + '\n\n' +
-            '💬 ' + text,
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) {
-        console.log("FEHLER WEITERLEITUNG:", e.message);
-    }
-
-    // Original löschen
-    try { await ctx.deleteMessage(); } catch (e) {}
-
-    // Info anzeigen
-    const infoMsg = await ctx.reply(
-        '📦 Deine Nachricht wurde in eine andere Gruppe weitergeleitet um Spam zu vermeiden.\n\n' +
-        '👉 Hier ansehen:\n' + LOG_GROUP_LINK
-    );
-
-    // nach 30 Sekunden löschen
-    setTimeout(async () => {
-        try {
-            await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
-        } catch (e) {}
-    }, 30000);
-
-    return;
-}
-
-    // Admins + aktive User = automatisch gestartet
+  // Admins + aktive User = automatisch gestartet
     if (admin || u.links > 0 || u.xp > 0) u.started = true;
 
     // Force Start

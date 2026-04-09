@@ -28,17 +28,16 @@ for (const uid in d.users) {
     const link = d.links[k];
 
     // Likes wiederherstellen
-    link.likes = new Set(link.likes || []);
+link.likes = new Set(link.likes || []);
 
-    // Falls Daten fehlen → fixen
-    if (!link.counter_msg_id) {
-        link.counter_msg_id = null;
-    }
+// 🔥 WICHTIG: msgId wiederherstellen
+link.msgId = Number(k);
 
-    if (!link.chat_id) {
-        delete d.links[k]; // kaputte Daten entfernen
-        continue;
-    }
+// Safety Fix
+if (!link.counter_msg_id || !link.chat_id) {
+    delete d.links[k];
+    continue;
+}
 }
             console.log('Daten geladen');
         }

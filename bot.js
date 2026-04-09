@@ -463,7 +463,7 @@ bot.on('message', async (ctx) => {
     // ================================
 // TEXT OHNE LINK → VERSCHIEBEN
 // ================================
-if (!hatLink(text)) {
+if (!hatLink(text) && ctx.chat.id === MAIN_CHAT_ID) {
 
     // Nachricht in andere Gruppe senden
     try {

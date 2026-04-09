@@ -493,7 +493,8 @@ setTimeout(async () => {
         await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
     } catch (e) {}
 }, 20000);
-    return; // ❗ STOP → nichts anderes läuft
+    return;
+} 
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
     

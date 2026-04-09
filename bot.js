@@ -454,11 +454,12 @@ if (ctx.message.message_thread_id) return;
 // ================================
 if (ctx.chat.id !== MAIN_CHAT_ID) {
 
+    // Nachricht weiterleiten
     try {
         await ctx.telegram.sendMessage(
             LOG_CHAT_ID,
             '📦 *Verschobene Nachricht*\n\n' +
-            '👤 ' + ctx.from.first_name + ' (@' + (ctx.from.username || 'kein username') + ')\n' +
+            '👤 ' + ctx.from.first_name + '\n' +
             '🆔 ' + ctx.from.id + '\n\n' +
             '💬 ' + text,
             { parse_mode: 'Markdown' }
@@ -467,32 +468,38 @@ if (ctx.chat.id !== MAIN_CHAT_ID) {
         console.log("FEHLER WEITERLEITUNG:", e.message);
     }
 
-    try { await ctx.deleteMessage(); } catch (e) {}
-const infoMsg = await ctx.reply(
-    '📦 *Nachricht verschoben*\n\n' +
-    'Deine Nachricht wurde automatisch weitergeleitet.\n\n' +
-    '👉 Klicke unten, um sie anzusehen:',
-    {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    {
-                        text: '🔎 Zur Nachricht',
-                        url: LOG_GROUP_LINK
-                    }
-                ]
-            ]
-        }
-    }
-);
-
-// nach 20 Sekunden löschen
-setTimeout(async () => {
+    // Original löschen
     try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
+        await ctx.deleteMessage();
     } catch (e) {}
-}, 20000);
+
+    // Info Nachricht
+    const infoMsg = await ctx.reply(
+        '📦 *Nachricht verschoben*\n\n' +
+        'Deine Nachricht wurde weitergeleitet.\n\n' +
+        '👉 Klicke unten:',
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        {
+                            text: '🔎 Öffnen',
+                            url: LOG_GROUP_LINK
+                        }
+                    ]
+                ]
+            }
+        }
+    );
+
+    // Auto löschen
+    setTimeout(async () => {
+        try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, infoMsg.message_id);
+        } catch (e) {}
+    }, 20000);
+
     return;
 } 
     const uid = ctx.from.id;

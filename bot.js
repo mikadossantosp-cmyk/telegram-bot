@@ -498,7 +498,7 @@ if (!admin && d.tracker[uid] === heute) {
 }
 
     // Link erlaubt
-    d.tracker[uid] = Date.now();
+    d.tracker[uid] = new Date().toDateString();
     d.counter[uid] = 0;
     u.links++;
     xpAdd(uid, 1, ctx.from.first_name);

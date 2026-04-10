@@ -666,6 +666,55 @@ async function sendeLinkAnAlle(linkData) {
 // ================================
 // ZEITGESTEUERTE EVENTS
 // ================================
+async function likeErinnerung() {
+    const jetzt = Date.now();
+    const heute = new Date().setHours(0, 0, 0, 0);
+
+    // Alle Links von heute holen
+    const heutigeLinks = Object.entries(d.links).filter(([, l]) => {
+        return l.timestamp >= heute;
+    });
+
+    if (!heutigeLinks.length) return;
+
+    // Für jeden User prüfen
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u.started) continue;
+
+        // Links die dieser User NICHT geliked hat
+        const nichtGeliked = heutigeLinks.filter(([msgId, l]) => {
+            return l.user_id != uid && !l.likes.has(Number(uid));
+        });
+
+        if (!nichtGeliked.length) continue;
+
+        // Nachricht zusammenbauen
+        let text = '👋 *Hallo ' + u.name + '!*\n\n';
+        text += '⚠️ Du hast heute noch diese Links nicht geliked:\n\n';
+
+        const buttons = [];
+
+        for (const [msgId, l] of nichtGeliked) {
+            text += '🔗 Link von *' + l.user_name + '*\n';
+            buttons.push([
+                Markup.button.url(
+                    '👍 Liken - ' + l.user_name,
+                    'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + msgId
+                )
+            ]);
+        }
+
+        text += '\n_Klick auf die Buttons um die Links zu liken!_';
+
+        // DM senden
+        try {
+            await bot.telegram.sendMessage(Number(uid), text, {
+                parse_mode: 'Markdown',
+                reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+            });
+        } catch (e) {}
+    }
+}
 function zeitCheck() {
     const h = new Date().getHours();
     const m = new Date().getMinutes();
@@ -690,6 +739,9 @@ function zeitCheck() {
             }
         }
         if (h === 7 && m === 5) topLinks(g.id);
+        if (h === 23 && m === 0) {
+            likeErinnerung();
+        }
     });
 
     // Season Reset alle 7 Tage

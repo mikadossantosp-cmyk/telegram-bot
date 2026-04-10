@@ -34,10 +34,8 @@ link.likes = new Set(link.likes || []);
 link.msgId = Number(k);
 
 // Safety Fix
-if (!link.counter_msg_id || !link.chat_id) {
-    delete d.links[k];
-    continue;
-}
+if (!link.counter_msg_id) link.counter_msg_id = Number(k);
+if (!link.chat_id) link.chat_id = 0;
 }
             console.log('Daten geladen');
         }

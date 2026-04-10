@@ -409,6 +409,26 @@ bot.command('unban', async (ctx) => {
         await ctx.reply('❌ Fehler beim Entbannen.');
     }
 });
+bot.command('ankuendigung', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await ctx.reply(
+        '📢 *Wichtige Bot-Updates!*\n\n' +
+        '1️⃣ *Text-Weiterleitung*\n' +
+        'Alle normalen Textnachrichten werden ab sofort automatisch in den Chat-Ordner weitergeleitet!\n\n' +
+        '2️⃣ *Einmaliger /start erforderlich*\n' +
+        'Aufgrund eines Fehlers im Code bitten wir alle User einmalig den Bot neu zu starten.\n' +
+        'Bitte klickt auf den Button unten! 👇\n\n' +
+        '3️⃣ *Automatische Like-Kontrolle*\n' +
+        'Jeden Tag um 23:00 Uhr erhaltet ihr eine DM mit allen Links die ihr noch nicht geliked habt!\n\n' +
+        '4️⃣ *XP wird jetzt dauerhaft gespeichert!*\n' +
+        'Eure gesammelten XP Punkte bleiben ab sofort auch nach Bot-Updates erhalten! 🎉\n\n' +
+        '5️⃣ *Ranking System mit Belohnungen kommt!*\n' +
+        'Ab morgen arbeite ich am neuen Ranking System mit Belohnungen für die fleißigsten User! 🏆\n' +
+        'Lohnt sich also aktiv zu bleiben! 💪\n\n' +
+        '✅ Danke für eure Geduld und euer Vertrauen!',
+        { parse_mode: 'Markdown' }
+    );
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================

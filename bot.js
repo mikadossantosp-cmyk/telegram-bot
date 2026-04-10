@@ -444,9 +444,22 @@ bot.on('message', async (ctx) => {
     
     const text = ctx.message.text || ctx.message.caption || '';
     if (!hatLink(text)) {
-    try {
-        await ctx.forwardMessage(-1003906557227);
-    } catch (e) {}
+    if (ctx.chat.id === -1003749606263) {
+        try {
+            await ctx.forwardMessage(-1003696077095);
+            await ctx.deleteMessage();
+            const hinweis = await ctx.reply(
+                '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
+                '👉 [Hier klicken](https://t.me/+3rkLZTn9EQcxMDY0)',
+                { parse_mode: 'Markdown' }
+            );
+            setTimeout(async () => {
+                try {
+                    await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id);
+                } catch (e) {}
+            }, 30000);
+        } catch (e) {}
+    }
     return;
 }
     const admin = await istAdmin(ctx, uid);

@@ -233,7 +233,7 @@ bot.command('profile', async (ctx) => {
 });
 
 // ================================
-// /ranking
+/ /ranking
 // ================================
 bot.command('ranking', async (ctx) => {
     const sorted = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);

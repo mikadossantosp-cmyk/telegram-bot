@@ -421,6 +421,11 @@ bot.command('unban', async (ctx) => {
         await ctx.reply('❌ Fehler beim Entbannen.');
     }
 });
+bot.command('testliked', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await likeErinnerung();
+    await ctx.reply('✅ Like Erinnerung gesendet!');
+});
 // ================================
 // NEUE MITGLIEDER
 // ================================

@@ -1,5 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
+
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
@@ -460,34 +461,19 @@ bot.command('stats', async (ctx) => {
 // /dashboard - Admin Dashboard
 // ================================
 bot.command('dashboard', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('Nur Admins!');
 
     const heute = new Date().toDateString();
-    const jetzt = Date.now();
-    const h24 = 86400000;
-
-    // Heutige Links
     const heutigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === heute);
     const gesamtLinksHeute = heutigeLinks.length;
-
-    // User Analyse
     const alleUser = Object.entries(d.users);
     const gestarteteUser = alleUser.filter(([, u]) => u.started);
-
-    // Aktive User heute (haben XP gesammelt)
     const aktiveHeute = alleUser.filter(([uid]) => d.dailyXP[uid] && d.dailyXP[uid] > 0);
-
-    // User die heute geliked haben
     const habenGeliked = new Set();
     heutigeLinks.forEach(l => l.likes.forEach(uid => habenGeliked.add(uid)));
-
-    // User die NICHT geliked haben (aber gestartet)
     const nichtGeliked = gestarteteUser.filter(([uid]) => !habenGeliked.has(Number(uid)));
-
-    // User mit Verwarnungen
     const mitWarns = alleUser.filter(([, u]) => u.warnings > 0);
 
-    // Missionen heute
     let m1Heute = 0, m2Heute = 0, m3Heute = 0;
     for (const [uid] of alleUser) {
         if (d.missionen[uid] && d.missionen[uid].date === heute) {
@@ -497,157 +483,69 @@ bot.command('dashboard', async (ctx) => {
         }
     }
 
-    // Top 3 heute
-    const top3 = Object.entries(d.dailyXP)
-        .filter(([uid]) => d.users[uid])
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3);
-
-    // Like Rate
+    const top3 = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid]).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const gesamtLikes = heutigeLinks.reduce((sum, l) => sum + l.likes.size, 0);
     const maxMoeglicheLikes = gesamtLinksHeute * gestarteteUser.length;
     const likeRate = maxMoeglicheLikes > 0 ? Math.round(gesamtLikes / maxMoeglicheLikes * 100) : 0;
-
-    // Badge Verteilung
-    const badgeCount = { '🆕 New': 0, '📘 Anfänger': 0, '⬆️ Aufsteiger': 0, '🏅 Erfahrener': 0 };
-    alleUser.forEach(([, u]) => { if (badgeCount[u.role] !== undefined) badgeCount[u.role]++; });
-
-    // Dashboard Text Part 1 - Übersicht
-    let text1 = '📊 *ADMIN DASHBOARD*
-';
-    text1 += '🕐 ' + new Date().toLocaleString('de-DE') + '
-
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '👥 *USER ÜBERSICHT*
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '• Gesamt User: ' + alleUser.length + '
-';
-    text1 += '• Bot gestartet: ' + gestarteteUser.length + '
-';
-    text1 += '• Aktiv heute: ' + aktiveHeute.length + '
-';
-    text1 += '• Nicht geliked: ' + nichtGeliked.length + '
-';
-    text1 += '• Mit Warns: ' + mitWarns.length + '
-
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '🔗 *LINKS HEUTE*
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '• Links heute: ' + gesamtLinksHeute + '
-';
-    text1 += '• Gesamt Likes: ' + gesamtLikes + '
-';
-    text1 += '• Like Rate: ' + likeRate + '%
-
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '🎯 *MISSIONEN HEUTE*
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '• M1 (5 Likes): ' + m1Heute + ' User
-';
-    text1 += '• M2 (80%): ' + m2Heute + ' User
-';
-    text1 += '• M3 (Alle): ' + m3Heute + ' User
-
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '🏅 *BADGE VERTEILUNG*
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '• 🆕 New: ' + badgeCount['🆕 New'] + '
-';
-    text1 += '• 📘 Anfänger: ' + badgeCount['📘 Anfänger'] + '
-';
-    text1 += '• ⬆️ Aufsteiger: ' + badgeCount['⬆️ Aufsteiger'] + '
-';
-    text1 += '• 🏅 Erfahrener: ' + badgeCount['🏅 Erfahrener'] + '
-
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    text1 += '🏆 *TOP 3 HEUTE*
-';
-    text1 += '━━━━━━━━━━━━━━━
-';
-    const badges = ['🥇', '🥈', '🥉'];
-    top3.forEach(([uid, xp], i) => {
-        text1 += badges[i] + ' ' + d.users[uid].name + ': ' + xp + ' XP
-';
+    const badgeCount = { 'New': 0, 'Anfanger': 0, 'Aufsteiger': 0, 'Erfahrener': 0 };
+    alleUser.forEach(([, u]) => {
+        if (u.xp >= 1000) badgeCount['Erfahrener']++;
+        else if (u.xp >= 500) badgeCount['Aufsteiger']++;
+        else if (u.xp >= 50) badgeCount['Anfanger']++;
+        else badgeCount['New']++;
     });
 
-    await ctx.telegram.sendMessage(ctx.from.id, text1, { parse_mode: 'Markdown' });
+    const badges = ['1.', '2.', '3.'];
+    let t1 = 'ADMIN DASHBOARD\n';
+    t1 += new Date().toLocaleString('de-DE') + '\n\n';
+    t1 += 'USER UBERSICHT\n';
+    t1 += 'Gesamt User: ' + alleUser.length + '\n';
+    t1 += 'Bot gestartet: ' + gestarteteUser.length + '\n';
+    t1 += 'Aktiv heute: ' + aktiveHeute.length + '\n';
+    t1 += 'Nicht geliked: ' + nichtGeliked.length + '\n';
+    t1 += 'Mit Warns: ' + mitWarns.length + '\n\n';
+    t1 += 'LINKS HEUTE\n';
+    t1 += 'Links heute: ' + gesamtLinksHeute + '\n';
+    t1 += 'Gesamt Likes: ' + gesamtLikes + '\n';
+    t1 += 'Like Rate: ' + likeRate + '%\n\n';
+    t1 += 'MISSIONEN HEUTE\n';
+    t1 += 'M1 (5 Likes): ' + m1Heute + ' User\n';
+    t1 += 'M2 (80%): ' + m2Heute + ' User\n';
+    t1 += 'M3 (Alle): ' + m3Heute + ' User\n\n';
+    t1 += 'BADGES\n';
+    t1 += 'New: ' + badgeCount['New'] + '\n';
+    t1 += 'Anfanger: ' + badgeCount['Anfanger'] + '\n';
+    t1 += 'Aufsteiger: ' + badgeCount['Aufsteiger'] + '\n';
+    t1 += 'Erfahrener: ' + badgeCount['Erfahrener'] + '\n\n';
+    t1 += 'TOP 3 HEUTE\n';
+    top3.forEach(([uid, xp], i) => { t1 += badges[i] + ' ' + d.users[uid].name + ': ' + xp + ' XP\n'; });
 
-    // Dashboard Text Part 2 - Alle User Details
-    let text2 = '👤 *ALLE USER DETAILS*
-';
-    text2 += '━━━━━━━━━━━━━━━
+    await ctx.telegram.sendMessage(ctx.from.id, t1);
 
-';
-
+    // User Details
     const sortedUsers = alleUser.sort((a, b) => b[1].xp - a[1].xp);
+    let t2 = 'ALLE USER DETAILS\n\n';
 
     for (const [uid, u] of sortedUsers) {
         const mission = d.missionen[uid] && d.missionen[uid].date === heute ? d.missionen[uid] : null;
-        const hatGelikedHeute = habenGeliked.has(Number(uid));
-        const hatLinkGepostet = d.tracker[uid] === heute;
+        const hatGelikedH = habenGeliked.has(Number(uid));
+        const hatLinkH = d.tracker[uid] === heute;
+        t2 += u.name + (u.username ? ' @' + u.username : '') + '\n';
+        t2 += '  Badge: ' + u.role + ' | XP: ' + u.xp + '\n';
+        t2 += '  Heute XP: ' + (d.dailyXP[uid] || 0) + '\n';
+        t2 += '  Geliked: ' + (hatGelikedH ? 'Ja' : 'Nein') + '\n';
+        t2 += '  Link: ' + (hatLinkH ? 'Ja' : 'Nein') + '\n';
+        t2 += '  Warns: ' + u.warnings + '/5\n';
+        if (mission) t2 += '  M1:' + (mission.m1 ? 'OK' : 'X') + ' M2:' + (mission.m2 ? 'OK' : 'X') + ' M3:' + (mission.m3 ? 'OK' : 'X') + '\n';
+        t2 += '\n';
 
-        text2 += '*' + u.name + '*';
-        if (u.username) text2 += ' @' + u.username;
-        text2 += '
-';
-        text2 += '   🏅 ' + u.role + ' | ⭐ ' + u.xp + ' XP
-';
-        text2 += '   📅 Heute: ' + (d.dailyXP[uid] || 0) + ' XP
-';
-        text2 += '   👍 Geliked heute: ' + (hatGelikedHeute ? '✅' : '❌') + '
-';
-        text2 += '   🔗 Link gepostet: ' + (hatLinkGepostet ? '✅' : '❌') + '
-';
-        text2 += '   ⚠️ Warns: ' + u.warnings + '/5
-';
-
-        if (mission) {
-            text2 += '   🎯 M1:' + (mission.m1 ? '✅' : '❌') + ' M2:' + (mission.m2 ? '✅' : '❌') + ' M3:' + (mission.m3 ? '✅' : '❌') + '
-';
-        } else {
-            text2 += '   🎯 Keine Missionen heute
-';
-        }
-
-        const bonusL = d.bonusLinks[uid] || 0;
-        if (bonusL > 0) text2 += '   🎁 Bonus Links: ' + bonusL + '
-';
-        text2 += '
-';
-
-        // Telegram Limit vermeiden - aufteilen bei zu langer Nachricht
-        if (text2.length > 3500) {
-            await ctx.telegram.sendMessage(ctx.from.id, text2, { parse_mode: 'Markdown' });
-            text2 = '';
+        if (t2.length > 3500) {
+            await ctx.telegram.sendMessage(ctx.from.id, t2);
+            t2 = '';
         }
     }
-
-    if (text2.length > 0) {
-        await ctx.telegram.sendMessage(ctx.from.id, text2, { parse_mode: 'Markdown' });
-    }
-
-    // Bestätigung in Gruppe
-    if (!istPrivat(ctx.chat.type)) {
-        await ctx.reply('📊 Dashboard per DM geschickt!');
-    }
+    if (t2.length > 0) await ctx.telegram.sendMessage(ctx.from.id, t2);
+    if (!istPrivat(ctx.chat.type)) await ctx.reply('Dashboard per DM geschickt!');
 });
 
 // ================================

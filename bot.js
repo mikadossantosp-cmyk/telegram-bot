@@ -712,7 +712,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
-    xpAdd(lnk.user_id, 5, lnk.user_name);
+    xpAdd(uid, 5, ctx.from.first_name); // Liker bekommt +5 XP
 
     const feedbackMsg = await ctx.reply(
         '🎉 +5 XP erhalten!\n\nDanke für deine Unterstützung 💪'

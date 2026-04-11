@@ -840,6 +840,10 @@ bot.command('ankuendigung', async (ctx) => {
         { parse_mode: 'Markdown' }
     );
 });
+bot.command('time', (ctx) => {
+    const now = new Date();
+    ctx.reply("🕒 Serverzeit:\n" + now.toString());
+});
 
 // ================================
 // NEUE MITGLIEDER

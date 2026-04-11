@@ -1207,8 +1207,21 @@ async function zeitCheck() {
     gruppen.forEach(g => {
         // Regeln um 06:00
         if (h === 6 && m === 0) {
-            bot.telegram.sendMessage(g.id, '📜 *Regeln*\n\n1️⃣ 1 Link pro Tag\n2️⃣ Keine Duplikate\n3️⃣ Bot starten Pflicht\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt', { parse_mode: 'Markdown' }).catch(() => {});
-        }
+    bot.telegram.sendMessage(g.id,
+        '📜 *Regeln*\n\n' +
+        '1️⃣ 1 Link pro Tag\n' +
+        '2️⃣ Keine Duplikate\n' +
+        '3️⃣ Bot starten Pflicht\n' +
+        '4️⃣ 5 Warns = Ban\n' +
+        '5️⃣ Respektvoller Umgang\n\n' +
+        '🆕 Kommentare: mind. 2 Wörter (keine Emojis)\n\n' +
+        '👍 Pflicht: Jeder Link muss geliked & kommentiert werden\n\n' +
+        '🔍 Tägliche Kontrollen\n' +
+        '❗ Mogeln = sofortiger Ban\n\n' +
+        '👉 Vor Bestätigung prüfen: Geliked & kommentiert',
+        { parse_mode: 'Markdown' }
+    ).catch(() => {});
+}
     });
 
     // Daily Ranking Vortag um 06:00 in Gruppe posten

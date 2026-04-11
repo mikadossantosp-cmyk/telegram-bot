@@ -1035,7 +1035,7 @@ async function likeErinnerung() {
 // ================================
 // ZEITGESTEUERTE EVENTS
 // ================================
-function zeitCheck() {
+async function zeitCheck() {
     const jetzt = new Date();
     const h = jetzt.getHours();
     const m = jetzt.getMinutes();

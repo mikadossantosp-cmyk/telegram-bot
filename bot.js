@@ -24,6 +24,11 @@ let d = {
     // MISSIONEN
     missionen: {},      // { uid: { date: 'heute', likesGegeben: 0, m1: false, m2: false, m3: false } }
     wochenMissionen: {}, // { uid: { m1Tage: 0, m2Tage: 0, m3Tage: 0, letzterTag: null } }
+    // MISSIONS QUEUE: Missionen die um 12:00 des nächsten Tages verarbeitet werden sollen
+    missionQueue: {},   // { uid: { date: 'gestern', likesGegeben: 0, m1Pending: bool, m2Pending: bool, m3Pending: bool } }
+    missionQueueVerarbeitet: null, // Datum wann Queue zuletzt verarbeitet wurde
+    // GESTERN daily ranking für 06:00 posting
+    gesternDailyXP: {}, // wird um 23:55 gespeichert bevor reset
 };
 
 function laden() {
@@ -46,6 +51,8 @@ function laden() {
             if (!d.warteNachricht) d.warteNachricht = {};
             if (!d.dmNachrichten) d.dmNachrichten = {};
             if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { aktiv: true, gewinner: [], letzteAuslosung: null };
+            if (!d.missionQueue) d.missionQueue = {};
+            if (!d.gesternDailyXP) d.gesternDailyXP = {};
             console.log('Daten geladen');
         }
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -76,7 +83,6 @@ function badge(xp) {
 }
 
 function badgeBonusLinks(xp) {
-    // Erfahrener Badge bekommt +1 extra Link täglich
     if (xp >= 1000) return 1;
     return 0;
 }
@@ -87,6 +93,17 @@ function badgeBonusLinks(xp) {
 function level(xp) { return Math.floor(xp / 100) + 1; }
 
 function xpAdd(uid, menge, name) {
+    const u = user(uid, name);
+    u.xp += menge;
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    // NUR Gesamt XP und Weekly XP — kein dailyXP mehr für Missionen
+    if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
+    d.weeklyXP[uid] += menge;
+}
+
+// xpAdd für normale Aktionen (Links posten, Likes geben) — diese dürfen dailyXP nutzen
+function xpAddMitDaily(uid, menge, name) {
     const u = user(uid, name);
     u.xp += menge;
     u.level = level(u.xp);
@@ -172,88 +189,179 @@ function getWochenMission(uid) {
     return d.wochenMissionen[uid];
 }
 
+// Missionen werden NUR noch in die Queue geschrieben — XP gibt es erst um 12:00 nächsten Tag
 async function checkMissionen(uid, name) {
     const heute = new Date().toDateString();
     const mission = getMission(uid);
-    const wMission = getWochenMission(uid);
 
     // Heutige Links zählen
     const heutigeLinks = Object.values(d.links).filter(l => {
-        const d2 = new Date(l.timestamp).toDateString();
-        return d2 === heute;
+        return new Date(l.timestamp).toDateString() === heute;
     });
     const gesamtLinksHeute = heutigeLinks.length;
-
-    // Wie viele hat dieser User geliked?
     const gelikedVonUser = heutigeLinks.filter(l => l.likes.has(Number(uid))).length;
 
-    let meldungen = [];
+    // Queue initialisieren
+    if (!d.missionQueue[uid]) {
+        d.missionQueue[uid] = { date: heute, m1Pending: false, m2Pending: false, m3Pending: false };
+    }
+    // Wenn neuer Tag, Queue zurücksetzen
+    if (d.missionQueue[uid].date !== heute) {
+        d.missionQueue[uid] = { date: heute, m1Pending: false, m2Pending: false, m3Pending: false };
+    }
 
-    // MISSION 1: Mindestens 5 Links geliked
+    // Missionen in Queue einschreiben (noch keine XP!)
     if (!mission.m1 && mission.likesGegeben >= 5) {
         mission.m1 = true;
-        xpAdd(uid, 5, name);
-        meldungen.push('✅ *Mission 1 abgeschlossen!*\n5 Links geliked → +5 XP');
-
-        // Wochenmission 1 tracken
-        if (wMission.letzterTag !== heute) {
-            wMission.m1Tage++;
-            if (wMission.m1Tage >= 7) {
-                xpAdd(uid, 10, name);
-                meldungen.push('🏆 *Wochen-Mission 1 abgeschlossen!*\n7 Tage in Folge 5+ Links geliked → +10 XP');
-                wMission.m1Tage = 0;
-            }
-        }
+        d.missionQueue[uid].m1Pending = true;
     }
-
-    // MISSION 2: Mindestens 80% der heutigen Links geliked
     if (!mission.m2 && gesamtLinksHeute > 0 && gelikedVonUser / gesamtLinksHeute >= 0.8) {
         mission.m2 = true;
-        xpAdd(uid, 5, name);
-        meldungen.push('✅ *Mission 2 abgeschlossen!*\n80% der Links geliked → +5 XP');
-
-        // Wochenmission 2 tracken
-        if (wMission.letzterTag !== heute) {
-            wMission.m2Tage++;
-            if (wMission.m2Tage >= 7) {
-                xpAdd(uid, 15, name);
-                meldungen.push('🏆 *Wochen-Mission 2 abgeschlossen!*\n7 Tage in Folge 80% geliked → +15 XP');
-                wMission.m2Tage = 0;
-            }
-        }
+        d.missionQueue[uid].m2Pending = true;
     }
-
-    // MISSION 3: Alle heutigen Links geliked
     if (!mission.m3 && gesamtLinksHeute > 0 && gelikedVonUser === gesamtLinksHeute) {
         mission.m3 = true;
-        xpAdd(uid, 5, name);
-        meldungen.push('✅ *Mission 3 abgeschlossen!*\nAlle Links geliked → +5 XP');
-
-        // Wochenmission 3 tracken
-        if (wMission.letzterTag !== heute) {
-            wMission.m3Tage++;
-            if (wMission.m3Tage >= 7) {
-                xpAdd(uid, 20, name);
-                meldungen.push('🏆 *Wochen-Mission 3 abgeschlossen!*\n7 Tage in Folge alle Links geliked → +20 XP');
-                wMission.m3Tage = 0;
-            }
-        }
+        d.missionQueue[uid].m3Pending = true;
     }
 
-    wMission.letzterTag = heute;
+    // Nur Info-DM senden (noch keine XP — Hinweis auf 12:00 Auswertung)
+    let infoMeldungen = [];
+    if (d.missionQueue[uid].m1Pending && mission.m1) infoMeldungen.push('✅ *Mission 1* — 5 Links geliked');
+    if (d.missionQueue[uid].m2Pending && mission.m2) infoMeldungen.push('✅ *Mission 2* — 80% der Links geliked');
+    if (d.missionQueue[uid].m3Pending && mission.m3) infoMeldungen.push('✅ *Mission 3* — Alle Links geliked');
 
-    // DM mit Missions-Fortschritt senden
-    if (meldungen.length > 0) {
-        const u = d.users[uid];
+    if (infoMeldungen.length > 0) {
         try {
             await bot.telegram.sendMessage(Number(uid),
-                '🎯 *Missions Update!*\n\n' + meldungen.join('\n\n') + '\n\n⭐ Gesamt XP: ' + u.xp,
+                '🎯 *Missions Update!*\n\n' + infoMeldungen.join('\n') +
+                '\n\n⏳ *XP werden morgen um 12:00 Uhr vergeben!*\n_Missionen schließen um 12:00 Uhr — du hast bis dahin Zeit alle Links zu liken._',
                 { parse_mode: 'Markdown' }
             );
         } catch (e) {}
     }
 
     speichern();
+}
+
+// ================================
+// MISSIONS AUSWERTUNG UM 12:00 (nächster Tag)
+// ================================
+async function missionenAuswerten() {
+    const heute = new Date().toDateString();
+
+    // Nur einmal pro Tag auswerten
+    if (d.missionQueueVerarbeitet === heute) return;
+    d.missionQueueVerarbeitet = heute;
+
+    for (const [uid, queue] of Object.entries(d.missionQueue)) {
+        // Nur Queues vom Vortag verarbeiten
+        if (queue.date === heute) continue;
+
+        const name = d.users[uid] ? d.users[uid].name : '';
+        const wMission = getWochenMission(uid);
+        const gestern = queue.date;
+        let meldungen = [];
+
+        if (queue.m1Pending) {
+            // XP für Mission 1 → NUR Weekly + Gesamt
+            xpAdd(uid, 5, name);
+            meldungen.push('✅ *Mission 1 abgeschlossen!*\n5 Links geliked → +5 XP');
+            // Wochenmission 1
+            if (wMission.letzterTag !== gestern) {
+                wMission.m1Tage++;
+                if (wMission.m1Tage >= 7) {
+                    xpAdd(uid, 10, name);
+                    meldungen.push('🏆 *Wochen-Mission 1!*\n7 Tage 5+ Links geliked → +10 XP');
+                    wMission.m1Tage = 0;
+                }
+            }
+        }
+
+        if (queue.m2Pending) {
+            xpAdd(uid, 5, name);
+            meldungen.push('✅ *Mission 2 abgeschlossen!*\n80% der Links geliked → +5 XP');
+            if (wMission.letzterTag !== gestern) {
+                wMission.m2Tage++;
+                if (wMission.m2Tage >= 7) {
+                    xpAdd(uid, 15, name);
+                    meldungen.push('🏆 *Wochen-Mission 2!*\n7 Tage 80% geliked → +15 XP');
+                    wMission.m2Tage = 0;
+                }
+            }
+        }
+
+        if (queue.m3Pending) {
+            xpAdd(uid, 5, name);
+            meldungen.push('✅ *Mission 3 abgeschlossen!*\nAlle Links geliked → +5 XP');
+            if (wMission.letzterTag !== gestern) {
+                wMission.m3Tage++;
+                if (wMission.m3Tage >= 7) {
+                    xpAdd(uid, 20, name);
+                    meldungen.push('🏆 *Wochen-Mission 3!*\n7 Tage alle Links geliked → +20 XP');
+                    wMission.m3Tage = 0;
+                }
+            }
+        }
+
+        wMission.letzterTag = gestern;
+
+        // XP DM an User senden
+        if (meldungen.length > 0 && d.users[uid]) {
+            const u = d.users[uid];
+            try {
+                await bot.telegram.sendMessage(Number(uid),
+                    '🎯 *Missions Auswertung vom Vortag!*\n\n' +
+                    meldungen.join('\n\n') +
+                    '\n\n⭐ Gesamt XP: ' + u.xp,
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (e) {}
+        }
+
+        // Queue für diesen User leeren
+        delete d.missionQueue[uid];
+    }
+
+    speichern();
+}
+
+// ================================
+// WEEKLY RANKING DM UM 12:01
+// ================================
+async function weeklyRankingDM() {
+    const sorted = Object.entries(d.weeklyXP)
+        .filter(([uid]) => d.users[uid])
+        .sort((a, b) => b[1] - a[1]);
+
+    if (!sorted.length) return;
+
+    const badges = ['🥇', '🥈', '🥉'];
+
+    for (const [uid] of Object.entries(d.users)) {
+        if (!d.users[uid].started) continue;
+
+        const rank = sorted.findIndex(([id]) => id === uid);
+        if (rank === -1) continue;
+
+        const xp = d.weeklyXP[uid] || 0;
+        const u = d.users[uid];
+
+        let platzText = rank < 3 ? badges[rank] : '#' + (rank + 1);
+
+        let text = '📆 *Deine Weekly Ranking Platzierung*\n\n';
+        text += platzText + ' Platz *' + (rank + 1) + '* von ' + sorted.length + ' Teilnehmern\n';
+        text += '⭐ XP diese Woche: ' + xp + '\n\n';
+        text += '🏆 *Top 3 dieser Woche:*\n';
+        sorted.slice(0, 3).forEach(([tid, txp], i) => {
+            const tu = d.users[tid];
+            text += badges[i] + ' ' + tu.name + ': ' + txp + ' XP\n';
+        });
+        text += '\n🔥 Weiter so ' + u.name + '!';
+
+        try {
+            await bot.telegram.sendMessage(Number(uid), text, { parse_mode: 'Markdown' });
+        } catch (e) {}
+    }
 }
 
 // ================================
@@ -277,7 +385,6 @@ bot.start(async (ctx) => {
     const u = user(uid, ctx.from.first_name);
     u.started = true;
 
-    // Aufforderungs-Nachricht in Gruppe löschen
     if (d.warteNachricht && d.warteNachricht[uid]) {
         try {
             const { chatId, msgId } = d.warteNachricht[uid];
@@ -303,7 +410,7 @@ bot.command('help', async (ctx) => {
         '📋 *Bot Hilfe*\n\n' +
         '🔗 *Link System:*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n' +
         '👍 *Like System:*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like (für dich)\n\n' +
-        '🎯 *Tägliche Missionen:*\n• M1: 5 Links liken → +5 XP\n• M2: 80% aller Links liken → +5 XP\n• M3: Alle Links liken → +5 XP\n\n' +
+        '🎯 *Tägliche Missionen:*\n• M1: 5 Links liken → +5 XP\n• M2: 80% aller Links liken → +5 XP\n• M3: Alle Links liken → +5 XP\n• ⏳ XP werden täglich um 12:00 Uhr vergeben!\n\n' +
         '📅 *Wochen Missionen:*\n• 7x M1 → +10 XP\n• 7x M2 → +15 XP\n• 7x M3 → +20 XP\n\n' +
         '🏅 *Badges:*\n• 🆕 New: 0-49 XP\n• 📘 Anfänger: 50-499 XP\n• ⬆️ Aufsteiger: 500-999 XP\n• 🏅 Erfahrener: 1000+ XP (+1 Extra Link täglich!)\n\n' +
         '🏆 *Commands:*\n/ranking /dailyranking /weeklyranking\n/profile /daily /missionen';
@@ -336,11 +443,22 @@ bot.command('missionen', async (ctx) => {
     const geliked = heutigeLinks.filter(l => l.likes.has(Number(uid))).length;
     const prozent = gesamtLinks > 0 ? Math.round(geliked / gesamtLinks * 100) : 0;
 
+    const queue = d.missionQueue[uid];
+
     let text = '🎯 *Deine Missionen*\n\n';
-    text += '📅 *Täglich:*\n';
+    text += '📅 *Täglich (XP Vergabe um 12:00 Uhr):*\n';
     text += (mission.m1 ? '✅' : '⬜') + ' M1: ' + mission.likesGegeben + '/5 Links geliked\n';
     text += (mission.m2 ? '✅' : '⬜') + ' M2: ' + prozent + '% der Links geliked (Ziel: 80%)\n';
     text += (mission.m3 ? '✅' : '⬜') + ' M3: ' + geliked + '/' + gesamtLinks + ' alle Links geliked\n\n';
+
+    if (queue && queue.date === heute) {
+        text += '⏳ *Ausstehende XP (werden um 12:00 vergeben):*\n';
+        if (queue.m1Pending) text += '• M1: +5 XP\n';
+        if (queue.m2Pending) text += '• M2: +5 XP\n';
+        if (queue.m3Pending) text += '• M3: +5 XP\n';
+        text += '\n';
+    }
+
     text += '📆 *Wöchentlich:*\n';
     text += '🔹 W-M1: ' + wMission.m1Tage + '/7 Tage\n';
     text += '🔹 W-M2: ' + wMission.m2Tage + '/7 Tage\n';
@@ -441,7 +559,7 @@ bot.command('daily', async (ctx) => {
     }
     const bonus = Math.floor(Math.random() * 20) + 10;
     u.lastDaily = jetzt;
-    xpAdd(uid, bonus, ctx.from.first_name);
+    xpAddMitDaily(uid, bonus, ctx.from.first_name);
     speichern();
     await ctx.reply('🎁 *Daily Reward!*\n\n+' + bonus + ' XP!\n⭐ Gesamt: ' + u.xp + '\n🏅 Badge: ' + u.role, { parse_mode: 'Markdown' });
 });
@@ -455,7 +573,6 @@ bot.command('stats', async (ctx) => {
     const gruppen = alleChats.filter(c => istGruppe(c.type));
     await ctx.reply('📊 *Statistiken*\n\n👥 User: ' + Object.keys(d.users).length + '\n💬 Chats: ' + alleChats.length + '\n👥 Gruppen: ' + gruppen.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
 });
-
 
 // ================================
 // /dashboard - Admin Dashboard
@@ -522,7 +639,6 @@ bot.command('dashboard', async (ctx) => {
 
     await ctx.telegram.sendMessage(ctx.from.id, t1);
 
-    // User Details
     const sortedUsers = alleUser.sort((a, b) => b[1].xp - a[1].xp);
     let t2 = 'ALLE USER DETAILS\n\n';
 
@@ -591,7 +707,7 @@ bot.command('dm', async (ctx) => {
                 { parse_mode: 'Markdown' }
             );
             gesendet++;
-            await new Promise(r => setTimeout(r, 100)); // Rate limit
+            await new Promise(r => setTimeout(r, 100));
         } catch (e) { fehler++; }
     }
 
@@ -603,7 +719,7 @@ bot.command('dm', async (ctx) => {
 // ================================
 bot.command('testxp', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
-    xpAdd(ctx.from.id, 50, ctx.from.first_name);
+    xpAddMitDaily(ctx.from.id, 50, ctx.from.first_name);
     speichern();
     await ctx.reply('✅ +50 XP! Gesamt: ' + d.users[ctx.from.id].xp);
 });
@@ -629,7 +745,7 @@ bot.command('testranking', async (ctx) => {
 
 bot.command('testreset', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
-    d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {};
+    d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {};
     speichern();
     await ctx.reply('✅ Daily/Weekly/Missionen Reset! Permanente XP bleiben.');
 });
@@ -684,6 +800,19 @@ bot.command('testmission', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await checkMissionen(ctx.from.id, ctx.from.first_name);
     await ctx.reply('✅ Missionen geprüft!');
+});
+
+bot.command('testmissionauswertung', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    d.missionQueueVerarbeitet = null; // Reset damit es nochmal läuft
+    await missionenAuswerten();
+    await ctx.reply('✅ Missions Auswertung getestet!');
+});
+
+bot.command('testweeklyranking', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await weeklyRankingDM();
+    await ctx.reply('✅ Weekly Ranking DM gesendet!');
 });
 
 bot.command('unban', async (ctx) => {
@@ -741,7 +870,6 @@ bot.on('message', async (ctx) => {
 
     if (!hatLink(text)) {
         if (ctx.chat.id === -1003800312818) {
-            // Admin Nachrichten NICHT weiterleiten
             const istAdminMsg = await istAdmin(ctx, uid);
             if (!istAdminMsg) {
             try {
@@ -753,7 +881,7 @@ bot.on('message', async (ctx) => {
                 );
                 setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id); } catch (e) {} }, 30000);
             } catch (e) {}
-            } // Ende Admin Check
+            }
         }
         return;
     }
@@ -775,7 +903,6 @@ bot.on('message', async (ctx) => {
         return;
     }
 
-    // Duplikat Check
     const url = linkUrl(text);
     if (url && d.gepostet.includes(url)) {
         if (!admin) {
@@ -793,20 +920,16 @@ bot.on('message', async (ctx) => {
     }
     if (url) d.gepostet.push(url);
 
-    // Tages-Limit Check
     if (!d.counter[uid]) d.counter[uid] = 0;
     const heute = new Date().toDateString();
 
-    // Extra Link für Erfahrener Badge
     const badgeBonus = badgeBonusLinks(u.xp);
 
     if (!admin && d.tracker[uid] === heute) {
-        // Erst Bonus Links nutzen
         if (hatBonusLink(uid)) {
             bonusLinkNutzen(uid);
             await ctx.reply('🎁 *Bonus Link genutzt!*', { parse_mode: 'Markdown' });
         } else if (badgeBonus > 0 && (!d.badgeTracker || !d.badgeTracker[uid] || d.badgeTracker[uid] !== heute)) {
-            // Erfahrener Badge Extra Link
             if (!d.badgeTracker) d.badgeTracker = {};
             d.badgeTracker[uid] = heute;
             await ctx.reply('🏅 *Erfahrener Badge Extra Link genutzt!*', { parse_mode: 'Markdown' });
@@ -828,11 +951,10 @@ bot.on('message', async (ctx) => {
         }
     }
 
-    // Link erlaubt
     d.tracker[uid] = heute;
     d.counter[uid] = 0;
     u.links++;
-    xpAdd(uid, 1, ctx.from.first_name);
+    xpAddMitDaily(uid, 1, ctx.from.first_name);
     const msgId = ctx.message.message_id;
 
     const istInsta = istInstagramLink(text);
@@ -879,10 +1001,9 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
 
-    // Liker bekommt +5 XP
-    xpAdd(uid, 5, ctx.from.first_name);
+    // Liker bekommt +5 XP (mit daily)
+    xpAddMitDaily(uid, 5, ctx.from.first_name);
 
-    // DM Nachricht mit Haken markieren
     const msgKey = String(lnk.counter_msg_id);
     if (d.dmNachrichten && d.dmNachrichten[msgKey] && d.dmNachrichten[msgKey][uid]) {
         try {
@@ -894,7 +1015,6 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         } catch (e) {}
     }
 
-    // Mission Update für Liker
     const mission = getMission(uid);
     mission.likesGegeben++;
     await checkMissionen(uid, ctx.from.first_name);
@@ -939,7 +1059,6 @@ async function sendeLinkAnAlle(linkData) {
                 '📢 Neuer Booster-Link\n\n👤 Member: ' + linkData.user_name + '\n\n🔗 ' + linkData.text + '\n\nBitte liken und kommentieren! 👍',
                 { reply_markup: { inline_keyboard: [[{ text: '👉 Zum Beitrag', url: 'https://t.me/c/' + String(linkData.chat_id).replace('-100', '') + '/' + linkData.counter_msg_id }]] } }
             );
-            // DM Nachricht ID speichern
             d.dmNachrichten[msgKey][uid] = sent.message_id;
         } catch (e) { console.log('FEHLER:', uid, e.message); }
     }
@@ -973,10 +1092,48 @@ async function dailyRankingAbschluss() {
         } catch (e) {}
     }
 
+    // Gestern Daily XP speichern vor Reset (für 06:00 Posting)
+    d.gesternDailyXP = Object.assign({}, d.dailyXP);
+
     gruppen.forEach(g => { bot.telegram.sendMessage(g.id, rankText, { parse_mode: 'Markdown' }).catch(() => {}); });
     d.dailyXP = {};
     d.dailyReset = Date.now();
     speichern();
+}
+
+// ================================
+// DAILY RANKING VORTAG UM 06:00 IN GRUPPE POSTEN
+// ================================
+async function gesternRankingPosten() {
+    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+    const sorted = Object.entries(d.gesternDailyXP)
+        .filter(([uid]) => d.users[uid] && d.gesternDailyXP[uid] > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    if (!sorted.length) return;
+
+    const badges = ['🥇', '🥈', '🥉'];
+    const sieger = sorted[0] ? d.users[sorted[0][0]] : null;
+
+    let text = '🌅 *TAGES RANKING — VORTAG*\n\n';
+
+    if (sieger) {
+        text += '🎉 Herzlichen Glückwunsch an *' + sieger.name + '*!\n';
+        text += '👑 Du warst gestern der aktivste Member!\n\n';
+    }
+
+    sorted.forEach(([uid, xp], i) => {
+        const u = d.users[uid];
+        text += (badges[i] || (i + 1) + '.') + ' *' + u.name + '*\n';
+        text += '   ⭐ ' + xp + ' XP gestern\n\n';
+    });
+
+    text += '🔥 Macht heute weiter so!';
+
+    gruppen.forEach(g => {
+        bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
+    });
 }
 
 // ================================
@@ -1009,7 +1166,6 @@ async function wochenGewinnspiel() {
 // ================================
 async function likeErinnerung() {
     const heute = new Date().setHours(0, 0, 0, 0);
-    // NUR Links von heute
     const heutigeLinks = Object.entries(d.links).filter(([, l]) => {
         return l.timestamp >= heute && new Date(l.timestamp).toDateString() === new Date().toDateString();
     });
@@ -1026,7 +1182,7 @@ async function likeErinnerung() {
             text += '🔗 Link von *' + l.user_name + '*\n';
             buttons.push([Markup.button.url('👍 Liken - ' + l.user_name, 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + msgId)]);
         }
-        text += '\n_Klick um zu liken und Missionen zu erfüllen!_';
+        text += '\n⏳ *Missionen schließen um 12:00 Uhr — jetzt noch liken!*';
 
         try { await bot.telegram.sendMessage(Number(uid), text, { parse_mode: 'Markdown', reply_markup: Markup.inlineKeyboard(buttons).reply_markup }); } catch (e) {}
     }
@@ -1045,37 +1201,54 @@ async function zeitCheck() {
     if (!gruppen.length) return;
 
     gruppen.forEach(g => {
+        // Regeln um 06:00
         if (h === 6 && m === 0) {
             bot.telegram.sendMessage(g.id, '📜 *Regeln*\n\n1️⃣ 1 Link pro Tag\n2️⃣ Keine Duplikate\n3️⃣ Bot starten Pflicht\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt', { parse_mode: 'Markdown' }).catch(() => {});
         }
-        if (h === 7 && m === 0) {
-            const s = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid]).sort((a, b) => b[1] - a[1]).slice(0, 3);
-            if (s.length) {
-                const badges = ['🥇', '🥈', '🥉'];
-                let text = '📅 *Tages-Ranking*\n\n';
-                s.forEach(([uid, xp], i) => { text += badges[i] + ' ' + d.users[uid].name + ': ' + xp + ' XP\n'; });
-                bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
-            }
-        }
-        if (h === 7 && m === 5) topLinks(g.id);
-        if (h === 23 && m === 0) likeErinnerung();
     });
 
-    if (h === 23 && m === 55) dailyRankingAbschluss();
+    // Daily Ranking Vortag um 06:00 in Gruppe posten
+    if (h === 6 && m === 0) {
+        await gesternRankingPosten();
+    }
+
+    // Missions Auswertung um 12:00 — XP für Missionen vom Vortag vergeben
+    if (h === 12 && m === 0) {
+        await missionenAuswerten();
+    }
+
+    // Weekly Ranking DM um 12:01
+    if (h === 12 && m === 1) {
+        await weeklyRankingDM();
+    }
+
+    // Trending Links um 07:05
+    if (h === 7 && m === 5) {
+        gruppen.forEach(g => topLinks(g.id));
+    }
+
+    // Like Erinnerung um 23:00
+    if (h === 23 && m === 0) {
+        await likeErinnerung();
+    }
+
+    // Daily Ranking Abschluss um 23:55
+    if (h === 23 && m === 55) {
+        await dailyRankingAbschluss();
+    }
 
     // Alte Links löschen (älter als 2 Tage)
     const zweiTage = 2 * 24 * 60 * 60 * 1000;
     for (const [k, l] of Object.entries(d.links)) {
         if (Date.now() - l.timestamp > zweiTage) {
-            // Link-Nachricht löschen
             try { await bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id); } catch (e) {}
             delete d.links[k];
-            // DM Nachrichten aufräumen
             if (d.dmNachrichten && d.dmNachrichten[String(l.counter_msg_id)]) {
                 delete d.dmNachrichten[String(l.counter_msg_id)];
             }
         }
     }
+
     if (wochentag === 0 && h === 20 && m === 0) wochenGewinnspiel();
 }
 

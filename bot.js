@@ -12,7 +12,19 @@ let d = {
     users: {}, chats: {}, links: {},
     tracker: {}, counter: {}, warte: {},
     gepostet: [], seasonStart: Date.now(),
-    seasonGewinner: []
+    seasonGewinner: [],
+    // NEU: XP Systeme
+    dailyXP: {},        // { uid: xp heute }
+    weeklyXP: {},       // { uid: xp diese Woche }
+    dailyReset: null,   // letzter daily reset
+    weeklyReset: null,  // letzter weekly reset
+    // NEU: Extra Links
+    bonusLinks: {},     // { uid: anzahl bonus links }
+    wochenGewinnspiel: {
+        aktiv: true,
+        gewinner: [],   // vergangene Gewinner
+        letzteAuslosung: null
+    }
 };
 
 function laden() {
@@ -21,24 +33,24 @@ function laden() {
             const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             d = Object.assign({}, d, geladen);
 
-for (const uid in d.users) {
-    d.users[uid].started = true;
-}
+            for (const uid in d.users) {
+                d.users[uid].started = true;
+            }
             for (const k of Object.keys(d.links)) {
-    const link = d.links[k];
+                const link = d.links[k];
+                link.likes = new Set(link.likes || []);
+                link.msgId = Number(k);
+                if (!link.counter_msg_id || !link.chat_id) {
+                    delete d.links[k];
+                    continue;
+                }
+            }
+            // Fehlende Felder ergänzen
+            if (!d.dailyXP) d.dailyXP = {};
+            if (!d.weeklyXP) d.weeklyXP = {};
+            if (!d.bonusLinks) d.bonusLinks = {};
+            if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { aktiv: true, gewinner: [], letzteAuslosung: null };
 
-    // Likes wiederherstellen
-link.likes = new Set(link.likes || []);
-
-// 🔥 WICHTIG: msgId wiederherstellen
-link.msgId = Number(k);
-
-// Safety Fix
-if (!link.counter_msg_id || !link.chat_id) {
-    delete d.links[k];
-    continue;
-}
-}
             console.log('Daten geladen');
         }
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -70,11 +82,21 @@ function rolle(xp) {
     return '🆕 Anfänger';
 }
 
+// XP hinzufügen - zu allen 3 Töpfen
 function xpAdd(uid, menge, name) {
     const u = user(uid, name);
+    // Permanenter XP Topf (wächst für immer)
     u.xp += menge;
     u.level = level(u.xp);
     u.role = rolle(u.xp);
+
+    // Daily XP (wird täglich zurückgesetzt)
+    if (!d.dailyXP[uid]) d.dailyXP[uid] = 0;
+    d.dailyXP[uid] += menge;
+
+    // Weekly XP (wird wöchentlich zurückgesetzt)
+    if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
+    d.weeklyXP[uid] += menge;
 }
 
 function user(uid, name) {
@@ -120,24 +142,32 @@ async function istAdmin(ctx, uid) {
 
 function hatLink(text) {
     if (!text) return false;
-
     const t = text.toLowerCase().trim();
-
-    return t.includes('http://') ||
-           t.includes('https://') ||
-           t.includes('www.') ||
-           t.includes('t.me/');
+    return t.includes('http://') || t.includes('https://') ||
+           t.includes('www.') || t.includes('t.me/');
 }
+
 function linkUrl(text) {
     if (!text || typeof text !== 'string') return null;
-
     const t = text.trim();
-
     if (t.includes('http://') || t.includes('https://') || t.includes('www.') || t.includes('t.me/')) {
         return t;
     }
-
     return null;
+}
+
+// Bonus Link Check
+function hatBonusLink(uid) {
+    return d.bonusLinks[uid] && d.bonusLinks[uid] > 0;
+}
+
+function bonusLinkNutzen(uid) {
+    if (hatBonusLink(uid)) {
+        d.bonusLinks[uid]--;
+        if (d.bonusLinks[uid] <= 0) delete d.bonusLinks[uid];
+        return true;
+    }
+    return false;
 }
 
 // ================================
@@ -188,15 +218,15 @@ bot.command('help', async (ctx) => {
         '• 1 Like pro Link\n' +
         '• Kein Self-Like\n' +
         '• +5 XP pro Like\n\n' +
+        '🏆 *Ranking Systeme:*\n' +
+        '• /ranking - Gesamt XP (permanent)\n' +
+        '• /dailyranking - Heutiges Ranking\n' +
+        '• /weeklyranking - Wöchentliches Ranking\n\n' +
+        '🎰 *Gewinnspiel:*\n' +
+        '• Jeden Sonntag Auslosung\n' +
+        '• Gewinner: 1 Bonus Link pro Woche\n\n' +
         '⚠️ *Warn System:*\n' +
         '• 5 Verwarnungen = Ban\n\n' +
-        '🏆 *Commands:*\n' +
-        '/ranking - Top 10\n' +
-        '/profile - Dein Profil\n' +
-        '/daily - XP Bonus\n' +
-        '/chatinfo - Chat Info (Admin)\n' +
-        '/chats - Alle Chats (Admin)\n' +
-        '/stats - Statistiken (Admin)\n\n' +
         '🎖️ *Rollen:*\n' +
         '🆕 Anfänger 0 XP\n' +
         '🔥 Aktiv 50 XP\n' +
@@ -228,33 +258,76 @@ bot.command('profile', async (ctx) => {
     const u = user(uid, ctx.from.first_name);
     const sorted = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
     const rank = sorted.findIndex(x => x[0] == uid) + 1;
+    const bonusL = d.bonusLinks[uid] || 0;
     await ctx.reply(
         '👤 *Profil von ' + u.name + '*\n' +
         (u.username ? '🔗 @' + u.username + '\n' : '') +
         '🆔 ID: `' + uid + '`\n\n' +
         '🎖️ ' + u.role + '\n' +
-        '⭐ XP: ' + u.xp + '\n' +
+        '⭐ XP Gesamt: ' + u.xp + '\n' +
+        '📅 XP Heute: ' + (d.dailyXP[uid] || 0) + '\n' +
+        '📆 XP Diese Woche: ' + (d.weeklyXP[uid] || 0) + '\n' +
         '📊 Level: ' + u.level + '\n' +
         '🏆 Rang: #' + rank + '\n' +
         '🔗 Links: ' + u.links + '\n' +
+        (bonusL > 0 ? '🎁 Bonus Links: ' + bonusL + '\n' : '') +
         '👍 Likes: ' + u.totalLikes + '\n' +
-        '⚠️ Warns: ' + u.warnings + '/5\n' +
-        '💬 Chats: ' + u.chats.length,
+        '⚠️ Warns: ' + u.warnings + '/5',
         { parse_mode: 'Markdown' }
     );
 });
 
 // ================================
-// /ranking
+// /ranking - PERMANENTES RANKING
 // ================================
 bot.command('ranking', async (ctx) => {
     const sorted = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
     if (!sorted.length) return ctx.reply('Noch keine Daten.');
     const badges = ['🥇', '🥈', '🥉'];
-    let text = '🏆 *TOP RANKING*\n\n';
+    let text = '🏆 *GESAMT RANKING*\n_(Permanent)_\n\n';
     sorted.forEach(([, u], i) => {
         text += (badges[i] || (i + 1) + '.') + ' *' + u.name + '*\n';
         text += '   ' + u.role + ' | ⭐' + u.xp + ' | Lvl ' + u.level + '\n\n';
+    });
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
+// ================================
+// /dailyranking - TAGES RANKING
+// ================================
+bot.command('dailyranking', async (ctx) => {
+    const sorted = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    if (!sorted.length) return ctx.reply('Heute noch keine XP gesammelt.');
+    const badges = ['🥇', '🥈', '🥉'];
+    let text = '📅 *TAGES RANKING*\n_(Wird täglich zurückgesetzt)_\n\n';
+    sorted.forEach(([uid, xp], i) => {
+        const u = d.users[uid];
+        text += (badges[i] || (i + 1) + '.') + ' *' + u.name + '*\n';
+        text += '   ⭐ ' + xp + ' XP heute\n\n';
+    });
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
+// ================================
+// /weeklyranking - WOCHEN RANKING
+// ================================
+bot.command('weeklyranking', async (ctx) => {
+    const sorted = Object.entries(d.weeklyXP)
+        .filter(([uid]) => d.users[uid])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    if (!sorted.length) return ctx.reply('Diese Woche noch keine XP gesammelt.');
+    const badges = ['🥇', '🥈', '🥉'];
+    let text = '📆 *WOCHEN RANKING*\n_(Wird jeden Sonntag zurückgesetzt)_\n\n';
+    sorted.forEach(([uid, xp], i) => {
+        const u = d.users[uid];
+        text += (badges[i] || (i + 1) + '.') + ' *' + u.name + '*\n';
+        text += '   ⭐ ' + xp + ' XP diese Woche\n\n';
     });
     await ctx.reply(text, { parse_mode: 'Markdown' });
 });
@@ -280,6 +353,7 @@ bot.command('daily', async (ctx) => {
     await ctx.reply(
         '🎁 *Daily Reward!*\n\n+' + bonus + ' XP!\n' +
         '⭐ Gesamt: ' + u.xp + '\n' +
+        '📅 Heute: ' + (d.dailyXP[uid] || 0) + '\n' +
         '📊 Level: ' + u.level + '\n' +
         '🎖️ ' + u.role,
         { parse_mode: 'Markdown' }
@@ -364,9 +438,11 @@ bot.command('testranking', async (ctx) => {
 
 bot.command('testreset', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
-    for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
+    // Nur daily/weekly zurücksetzen, NICHT permanente XP!
+    d.dailyXP = {};
+    d.weeklyXP = {};
     speichern();
-    await ctx.reply('✅ Reset!');
+    await ctx.reply('✅ Daily/Weekly Reset! Permanente XP bleiben erhalten.');
 });
 
 bot.command('testregeln', async (ctx) => {
@@ -400,32 +476,65 @@ bot.command('testreward', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await ctx.reply('✅ Reward: Platz 1 bekommt Link-Repost.');
 });
-bot.command('unban', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
 
-    if (!ctx.message.reply_to_message) {
-        return ctx.reply('❌ Antworte auf die Nachricht vom User, den du entbannen willst.');
-    }
-
-    const userId = ctx.message.reply_to_message.from.id;
-
-    try {
-        await ctx.telegram.unbanChatMember(ctx.chat.id, userId);
-
-        if (d.users[userId]) {
-            d.users[userId].warnings = 0;
-        }
-
-        await ctx.reply('✅ User wurde entbannt!');
-    } catch (e) {
-        await ctx.reply('❌ Fehler beim Entbannen.');
-    }
+bot.command('testdailyranking', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await dailyRankingAbschluss();
+    await ctx.reply('✅ Daily Ranking Abschluss getestet!');
 });
+
+bot.command('testgewinnspiel', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await wochenGewinnspiel();
+    await ctx.reply('✅ Wöchentliches Gewinnspiel getestet!');
+});
+
 bot.command('testliked', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     await likeErinnerung();
     await ctx.reply('✅ Like Erinnerung gesendet!');
 });
+
+bot.command('unban', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    if (!ctx.message.reply_to_message) {
+        return ctx.reply('❌ Antworte auf die Nachricht vom User.');
+    }
+    const userId = ctx.message.reply_to_message.from.id;
+    try {
+        await ctx.telegram.unbanChatMember(ctx.chat.id, userId);
+        if (d.users[userId]) d.users[userId].warnings = 0;
+        await ctx.reply('✅ User wurde entbannt!');
+    } catch (e) {
+        await ctx.reply('❌ Fehler beim Entbannen.');
+    }
+});
+
+bot.command('ankuendigung', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    await ctx.reply(
+        '📢 *Wichtige Bot-Updates!*\n\n' +
+        '1️⃣ *Text-Weiterleitung*\n' +
+        'Alle normalen Textnachrichten werden ab sofort automatisch in den Chat-Ordner weitergeleitet!\n\n' +
+        '2️⃣ *Einmaliger /start erforderlich*\n' +
+        'Aufgrund eines Fehlers im Code bitten wir alle User einmalig den Bot neu zu starten.\n' +
+        'Bitte klickt auf den Button unten! 👇\n\n' +
+        '3️⃣ *Automatische Like-Kontrolle*\n' +
+        'Jeden Tag um 23:00 Uhr erhaltet ihr eine DM mit allen Links die ihr noch nicht geliked habt!\n\n' +
+        '4️⃣ *XP wird jetzt dauerhaft gespeichert!*\n' +
+        'Eure XP Punkte bleiben ab sofort auch nach Bot-Updates erhalten! 🎉\n\n' +
+        '5️⃣ *3 XP Systeme ab jetzt:*\n' +
+        '• /ranking - Permanente XP (wächst für immer)\n' +
+        '• /dailyranking - Tages XP\n' +
+        '• /weeklyranking - Wochen XP\n\n' +
+        '6️⃣ *Gewinnspiel kommt!*\n' +
+        'Jeden Sonntag wird ein Gewinner ausgelost der eine Woche lang einen extra Link posten darf! 🎰\n\n' +
+        '⚠️ *Hinweis:* Bisherige XP wurden durch technisches Update zurückgesetzt. Es geht fair für alle von vorne los!\n\n' +
+        '✅ Danke für eure Geduld!',
+        { parse_mode: 'Markdown' }
+    );
+});
+
 // ================================
 // NEUE MITGLIEDER
 // ================================
@@ -458,34 +567,30 @@ bot.on('message', async (ctx) => {
 
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    
     const text = ctx.message.text || ctx.message.caption || '';
+
     if (!hatLink(text)) {
-    if (ctx.chat.id === -1003800312818) {
-        try {
-            await ctx.forwardMessage(-1003906557227);
-            await ctx.deleteMessage();
-            const hinweis = await ctx.reply(
-                '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
-                '👉 [Hier klicken](https://t.me/c/3906557227/1)',
-                { parse_mode: 'Markdown' }
-            );
-            setTimeout(async () => {
-                try {
-                    await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id);
-                } catch (e) {}
-            }, 30000);
-        } catch (e) {}
+        if (ctx.chat.id === -1003800312818) {
+            try {
+                await ctx.forwardMessage(-1003906557227);
+                await ctx.deleteMessage();
+                const hinweis = await ctx.reply(
+                    '📨 *' + ctx.from.first_name + '*, deine Nachricht wurde in diesen Ordner verschoben:\n\n' +
+                    '👉 [Hier klicken](https://t.me/c/3906557227/1)',
+                    { parse_mode: 'Markdown' }
+                );
+                setTimeout(async () => {
+                    try { await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id); } catch (e) {}
+                }, 30000);
+            } catch (e) {}
+        }
+        return;
     }
-    return;
-}
 
     const admin = await istAdmin(ctx, uid);
 
-  // Admins + aktive User = automatisch gestartet
     if (admin || u.links > 0 || u.xp > 0) u.started = true;
 
-    // Force Start
     if (!u.started) {
         try { await ctx.deleteMessage(); } catch (e) {}
         d.warte[uid] = ctx.chat.id;
@@ -520,39 +625,43 @@ bot.on('message', async (ctx) => {
     }
     if (url) d.gepostet.push(url);
 
-    // 24h Limit
+    // 24h Limit - mit Bonus Link Check
     if (!d.counter[uid]) d.counter[uid] = 0;
+    const heute = new Date().toDateString();
 
-const heute = new Date().toDateString();
-
-if (!admin && d.tracker[uid] === heute) {
-    try { await ctx.deleteMessage(); } catch (e) {}
-
-    d.counter[uid]++;
-    u.warnings++;
-
-    if (u.warnings >= 5) {
-        try { await ctx.telegram.banChatMember(ctx.chat.id, uid); } catch (e) {}
-        await ctx.reply('🔨 *' + ctx.from.first_name + '* gebannt!', { parse_mode: 'Markdown' });
-    } else {
-        await ctx.reply(
-            '❌ Nur 1 Link pro Tag erlaubt!\n🕛 Ab Mitternacht kannst du wieder posten.\n⚠️ Warn ' + u.warnings + '/5',
-            { parse_mode: 'Markdown' }
-        );
-
-        if (u.started) {
-            try {
-                await ctx.telegram.sendMessage(uid, '⚠️ Link gelöscht!\n🕛 Du kannst morgen wieder posten.');
-            } catch (e) {}
+    if (!admin && d.tracker[uid] === heute) {
+        // Prüfe ob Bonus Link verfügbar
+        if (hatBonusLink(uid)) {
+            bonusLinkNutzen(uid);
+            await ctx.reply(
+                '🎁 *Bonus Link genutzt!*\nDu hattest noch ' + (d.bonusLinks[uid] || 0) + ' Bonus Links übrig.',
+                { parse_mode: 'Markdown' }
+            );
+        } else {
+            try { await ctx.deleteMessage(); } catch (e) {}
+            d.counter[uid]++;
+            u.warnings++;
+            if (u.warnings >= 5) {
+                try { await ctx.telegram.banChatMember(ctx.chat.id, uid); } catch (e) {}
+                await ctx.reply('🔨 *' + ctx.from.first_name + '* gebannt!', { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply(
+                    '❌ Nur 1 Link pro Tag erlaubt!\n🕛 Ab Mitternacht kannst du wieder posten.\n⚠️ Warn ' + u.warnings + '/5',
+                    { parse_mode: 'Markdown' }
+                );
+                if (u.started) {
+                    try {
+                        await ctx.telegram.sendMessage(uid, '⚠️ Link gelöscht!\n🕛 Du kannst morgen wieder posten.');
+                    } catch (e) {}
+                }
+            }
+            speichern();
+            return;
         }
     }
 
-    speichern();
-    return;
-}
-
     // Link erlaubt
-    d.tracker[uid] = new Date().toDateString();
+    d.tracker[uid] = heute;
     d.counter[uid] = 0;
     u.links++;
     xpAdd(uid, 1, ctx.from.first_name);
@@ -581,9 +690,9 @@ if (!admin && d.tracker[uid] === heute) {
         counter_msg_id: reply.message_id,
         timestamp: Date.now()
     };
-await sendeLinkAnAlle(d.links[msgId]);
 
-speichern();
+    await sendeLinkAnAlle(d.links[msgId]);
+    speichern();
 });
 
 // ================================
@@ -603,19 +712,14 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
-    xpAdd(uid, 5, ctx.from.first_name);
-    const feedbackMsg = await ctx.reply(
-    '🎉 +' + 5 + ' XP erhalten!\n\n' +
-    'Danke für deine Unterstützung 💪\n' +
-    'Dein Engagement wird überprüft.'
-);
+    xpAdd(lnk.user_id, 5, lnk.user_name);
 
-// nach 5 Sekunden löschen
-setTimeout(async () => {
-    try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id);
-    } catch (e) {}
-}, 5000);
+    const feedbackMsg = await ctx.reply(
+        '🎉 +5 XP erhalten!\n\nDanke für deine Unterstützung 💪'
+    );
+    setTimeout(async () => {
+        try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {}
+    }, 5000);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
 
@@ -648,70 +752,176 @@ async function topLinks(chatId) {
     sorted.forEach((l, i) => { text += (i + 1) + '. ' + l.user_name + ': ' + l.likes.size + ' 👍\n'; });
     try { await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' }); } catch (e) {}
 }
+
 async function sendeLinkAnAlle(linkData) {
     for (const [uid, u] of Object.entries(d.users)) {
-
-        // nicht an den Poster senden
         if (parseInt(uid) === linkData.user_id) continue;
-
         try {
             await bot.telegram.sendMessage(
-    uid,
-    '📢 Neuer Booster-Link\n\n' +
-    '👤 Member: ' + linkData.user_name + '\n\n' +
-    '🔗 ' + linkData.text + '\n\n' +
-    'Lieber Booster,\n\n' +
-    'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
-    'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
-    {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    {
-                        text: '👉 Zum Beitrag',
-                        url: `https://t.me/c/${String(linkData.chat_id).replace('-100','')}/${linkData.counter_msg_id}`
+                uid,
+                '📢 Neuer Booster-Link\n\n' +
+                '👤 Member: ' + linkData.user_name + '\n\n' +
+                '🔗 ' + linkData.text + '\n\n' +
+                'Lieber Booster,\n\n' +
+                'Member ' + linkData.user_name + ' hat gerade diesen Link gepostet.\n' +
+                'Bitte liken und kommentieren und nicht vergessen in der Gruppe zu bestätigen 👍',
+                {
+                    reply_markup: {
+                        inline_keyboard: [[{
+                            text: '👉 Zum Beitrag',
+                            url: 'https://t.me/c/' + String(linkData.chat_id).replace('-100', '') + '/' + linkData.counter_msg_id
+                        }]]
                     }
-                ]
-            ]
-        }
+                }
+            );
+        } catch (e) { console.log('FEHLER:', uid, e.message); }
     }
-);
-        } catch (e) {
-    console.log("FEHLER:", uid, e.message);
 }
-}
-}
+
 // ================================
-// ZEITGESTEUERTE EVENTS
+// DAILY RANKING ABSCHLUSS
+// ================================
+async function dailyRankingAbschluss() {
+    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+
+    const sorted = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0)
+        .sort((a, b) => b[1] - a[1]);
+
+    if (!sorted.length) return;
+
+    // Gewinner belohnen
+    const belohnungen = [
+        { xp: 10, links: 1, text: '🥇 Platz 1' },
+        { xp: 5, links: 0, text: '🥈 Platz 2' },
+        { xp: 2, links: 0, text: '🥉 Platz 3' }  // 2.5 gerundet
+    ];
+
+    let rankText = '🏆 *TAGES RANKING ABSCHLUSS*\n\n';
+    rankText += '🎉 Herzlichen Glückwunsch an die Gewinner!\n\n';
+
+    for (let i = 0; i < Math.min(3, sorted.length); i++) {
+        const [uid, xp] = sorted[i];
+        const u = d.users[uid];
+        const bel = belohnungen[i];
+
+        xpAdd(uid, bel.xp, u.name);
+        if (bel.links > 0) {
+            if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
+            d.bonusLinks[uid] += bel.links;
+        }
+
+        rankText += bel.text + ': *' + u.name + '*\n';
+        rankText += '   ⭐ ' + xp + ' XP heute\n';
+        rankText += '   🎁 +' + bel.xp + ' Bonus XP';
+        if (bel.links > 0) rankText += ' + 1 Extra Link morgen!';
+        rankText += '\n\n';
+
+        // DM an Gewinner
+        try {
+            let dm = '🎉 *Glückwunsch ' + u.name + '!*\n\n';
+            dm += 'Du hast heute ' + bel.text + ' im Tages-Ranking erreicht!\n\n';
+            dm += '🎁 Du bekommst:\n';
+            dm += '• +' + bel.xp + ' Bonus XP\n';
+            if (bel.links > 0) dm += '• 1 Extra Link für morgen! 🔗\n';
+            await bot.telegram.sendMessage(Number(uid), dm, { parse_mode: 'Markdown' });
+        } catch (e) {}
+    }
+
+    // Ranking in Gruppe posten
+    gruppen.forEach(g => {
+        bot.telegram.sendMessage(g.id, rankText, { parse_mode: 'Markdown' }).catch(() => {});
+    });
+
+    // Daily XP zurücksetzen
+    d.dailyXP = {};
+    d.dailyReset = Date.now();
+    speichern();
+}
+
+// ================================
+// WÖCHENTLICHES GEWINNSPIEL
+// ================================
+async function wochenGewinnspiel() {
+    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+
+    // Alle User mit wöchentlichen XP als Teilnehmer
+    const teilnehmer = Object.entries(d.weeklyXP)
+        .filter(([uid]) => d.users[uid] && d.weeklyXP[uid] > 0)
+        .map(([uid]) => uid);
+
+    if (!teilnehmer.length) return;
+
+    // Zufälligen Gewinner auslosen
+    const gewinnerUid = teilnehmer[Math.floor(Math.random() * teilnehmer.length)];
+    const gewinner = d.users[gewinnerUid];
+
+    // Gewinner bekommt 1 Bonus Link für die nächste Woche
+    if (!d.bonusLinks[gewinnerUid]) d.bonusLinks[gewinnerUid] = 0;
+    d.bonusLinks[gewinnerUid] += 1;
+
+    // Gewinner speichern
+    d.wochenGewinnspiel.gewinner.push({
+        name: gewinner.name,
+        uid: gewinnerUid,
+        datum: new Date().toLocaleDateString(),
+        weeklyXP: d.weeklyXP[gewinnerUid] || 0
+    });
+    d.wochenGewinnspiel.letzteAuslosung = Date.now();
+
+    // Ankündigung in Gruppen
+    const text =
+        '🎰 *WÖCHENTLICHES GEWINNSPIEL*\n\n' +
+        '🎉 Der Gewinner diese Woche ist:\n\n' +
+        '🏆 *' + gewinner.name + '*\n\n' +
+        '🎁 Gewinn: 1 Extra Link für die nächste Woche!\n\n' +
+        '📆 Nächste Auslosung: Nächsten Sonntag\n' +
+        '💪 Sammelt XP um dabei zu sein!';
+
+    gruppen.forEach(g => {
+        bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
+    });
+
+    // DM an Gewinner
+    try {
+        await bot.telegram.sendMessage(
+            Number(gewinnerUid),
+            '🎉 *Herzlichen Glückwunsch!*\n\n' +
+            'Du hast das wöchentliche Gewinnspiel gewonnen!\n\n' +
+            '🎁 Dein Gewinn: 1 Extra Link für diese Woche!\n' +
+            'Du kannst ihn in der Gruppe nutzen wenn dein normales Limit erreicht ist.',
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) {}
+
+    // Weekly XP zurücksetzen
+    d.weeklyXP = {};
+    d.weeklyReset = Date.now();
+    speichern();
+}
+
+// ================================
+// LIKE ERINNERUNG
 // ================================
 async function likeErinnerung() {
-    const jetzt = Date.now();
     const heute = new Date().setHours(0, 0, 0, 0);
-
-    // Alle Links von heute holen
-    const heutigeLinks = Object.entries(d.links).filter(([, l]) => {
-        return l.timestamp >= heute;
-    });
+    const heutigeLinks = Object.entries(d.links).filter(([, l]) => l.timestamp >= heute);
 
     if (!heutigeLinks.length) return;
 
-    // Für jeden User prüfen
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started) continue;
 
-        // Links die dieser User NICHT geliked hat
-        const nichtGeliked = heutigeLinks.filter(([msgId, l]) => {
+        const nichtGeliked = heutigeLinks.filter(([, l]) => {
             return l.user_id != uid && !l.likes.has(Number(uid));
         });
 
         if (!nichtGeliked.length) continue;
 
-        // Nachricht zusammenbauen
         let text = '👋 *Hallo ' + u.name + '!*\n\n';
         text += '⚠️ Du hast heute noch diese Links nicht geliked:\n\n';
 
         const buttons = [];
-
         for (const [msgId, l] of nichtGeliked) {
             text += '🔗 Link von *' + l.user_name + '*\n';
             buttons.push([
@@ -721,10 +931,8 @@ async function likeErinnerung() {
                 )
             ]);
         }
-
         text += '\n_Klick auf die Buttons um die Links zu liken!_';
 
-        // DM senden
         try {
             await bot.telegram.sendMessage(Number(uid), text, {
                 parse_mode: 'Markdown',
@@ -733,13 +941,21 @@ async function likeErinnerung() {
         } catch (e) {}
     }
 }
+
+// ================================
+// ZEITGESTEUERTE EVENTS
+// ================================
 function zeitCheck() {
-    const h = new Date().getHours();
-    const m = new Date().getMinutes();
+    const jetzt = new Date();
+    const h = jetzt.getHours();
+    const m = jetzt.getMinutes();
+    const wochentag = jetzt.getDay(); // 0=Sonntag
+
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
     if (!gruppen.length) return;
 
     gruppen.forEach(g => {
+        // 06:00 - Regeln
         if (h === 6 && m === 0) {
             bot.telegram.sendMessage(g.id,
                 '📜 *Regeln*\n\n1️⃣ 1 Link pro 24h\n2️⃣ Keine Duplikate\n' +
@@ -747,37 +963,37 @@ function zeitCheck() {
                 { parse_mode: 'Markdown' }
             ).catch(() => {});
         }
+
+        // 07:00 - Tages-Ranking
         if (h === 7 && m === 0) {
-            const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 3);
+            const s = Object.entries(d.dailyXP)
+                .filter(([uid]) => d.users[uid])
+                .sort((a, b) => b[1] - a[1]).slice(0, 3);
             if (s.length) {
                 const badges = ['🥇', '🥈', '🥉'];
-                let text = '🏆 *Tages-Ranking*\n\n';
-                s.forEach(([, u], i) => { text += badges[i] + ' ' + u.name + ': ' + u.xp + ' XP\n'; });
+                let text = '📅 *Tages-Ranking*\n\n';
+                s.forEach(([uid, xp], i) => {
+                    text += badges[i] + ' ' + d.users[uid].name + ': ' + xp + ' XP\n';
+                });
                 bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
             }
         }
+
+        // 07:05 - Top Links
         if (h === 7 && m === 5) topLinks(g.id);
-        if (h === 23 && m === 0) {
-            likeErinnerung();
-        }
+
+        // 23:00 - Like Erinnerung
+        if (h === 23 && m === 0) likeErinnerung();
     });
 
-    // Season Reset alle 7 Tage
-    if (Date.now() - d.seasonStart > 604800000) {
-        const s = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp);
-        if (s.length) {
-            const w = d.users[s[0][0]];
-            d.seasonGewinner.push({ name: w.name, xp: w.xp, datum: new Date().toLocaleDateString() });
-            gruppen.forEach(g => {
-                bot.telegram.sendMessage(g.id,
-                    '👑 *Season Ende!*\nGewinner: *' + w.name + '*\nXP: ' + w.xp + '\n\n🔄 Neue Season!',
-                    { parse_mode: 'Markdown' }
-                ).catch(() => {});
-            });
-        }
-        for (const u of Object.values(d.users)) { u.xp = 0; u.level = 1; u.role = '🆕 Anfänger'; }
-        d.seasonStart = Date.now();
-        speichern();
+    // 23:55 - Daily Ranking Abschluss
+    if (h === 23 && m === 55) {
+        dailyRankingAbschluss();
+    }
+
+    // Sonntag 20:00 - Wöchentliches Gewinnspiel
+    if (wochentag === 0 && h === 20 && m === 0) {
+        wochenGewinnspiel();
     }
 }
 

@@ -1,7 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
-const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
+const const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -19,6 +19,8 @@ let d = {
     weeklyReset: null,
     bonusLinks: {},
     wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
+    warteNachricht: {},  // { uid: { chatId, msgId } } - Aufforderungs-Nachricht
+    dmNachrichten: {},   // { uid: { msgId: dmMessageId } } - DM Nachrichten zum abhaken
     // MISSIONEN
     missionen: {},      // { uid: { date: 'heute', likesGegeben: 0, m1: false, m2: false, m3: false } }
     wochenMissionen: {}, // { uid: { m1Tage: 0, m2Tage: 0, m3Tage: 0, letzterTag: null } }
@@ -41,6 +43,8 @@ function laden() {
             if (!d.bonusLinks) d.bonusLinks = {};
             if (!d.missionen) d.missionen = {};
             if (!d.wochenMissionen) d.wochenMissionen = {};
+            if (!d.warteNachricht) d.warteNachricht = {};
+            if (!d.dmNachrichten) d.dmNachrichten = {};
             if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { aktiv: true, gewinner: [], letzteAuslosung: null };
             console.log('Daten geladen');
         }
@@ -129,6 +133,12 @@ function hatLink(text) {
     if (!text) return false;
     const t = text.toLowerCase().trim();
     return t.includes('http://') || t.includes('https://') || t.includes('www.') || t.includes('t.me/');
+}
+
+function istInstagramLink(text) {
+    if (!text) return false;
+    const t = text.toLowerCase();
+    return t.includes('instagram.com') || t.includes('instagr.am');
 }
 
 function linkUrl(text) {
@@ -266,6 +276,16 @@ bot.start(async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
     u.started = true;
+
+    // Aufforderungs-Nachricht in Gruppe löschen
+    if (d.warteNachricht && d.warteNachricht[uid]) {
+        try {
+            const { chatId, msgId } = d.warteNachricht[uid];
+            await bot.telegram.deleteMessage(chatId, msgId);
+        } catch (e) {}
+        delete d.warteNachricht[uid];
+    }
+
     if (d.warte[uid]) delete d.warte[uid];
     speichern();
     if (istPrivat(ctx.chat.type)) {
@@ -434,6 +454,201 @@ bot.command('stats', async (ctx) => {
     const alleChats = Object.values(d.chats);
     const gruppen = alleChats.filter(c => istGruppe(c.type));
     await ctx.reply('📊 *Statistiken*\n\n👥 User: ' + Object.keys(d.users).length + '\n💬 Chats: ' + alleChats.length + '\n👥 Gruppen: ' + gruppen.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
+});
+
+
+// ================================
+// /dashboard - Admin Dashboard
+// ================================
+bot.command('dashboard', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+
+    const heute = new Date().toDateString();
+    const jetzt = Date.now();
+    const h24 = 86400000;
+
+    // Heutige Links
+    const heutigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === heute);
+    const gesamtLinksHeute = heutigeLinks.length;
+
+    // User Analyse
+    const alleUser = Object.entries(d.users);
+    const gestarteteUser = alleUser.filter(([, u]) => u.started);
+
+    // Aktive User heute (haben XP gesammelt)
+    const aktiveHeute = alleUser.filter(([uid]) => d.dailyXP[uid] && d.dailyXP[uid] > 0);
+
+    // User die heute geliked haben
+    const habenGeliked = new Set();
+    heutigeLinks.forEach(l => l.likes.forEach(uid => habenGeliked.add(uid)));
+
+    // User die NICHT geliked haben (aber gestartet)
+    const nichtGeliked = gestarteteUser.filter(([uid]) => !habenGeliked.has(Number(uid)));
+
+    // User mit Verwarnungen
+    const mitWarns = alleUser.filter(([, u]) => u.warnings > 0);
+
+    // Missionen heute
+    let m1Heute = 0, m2Heute = 0, m3Heute = 0;
+    for (const [uid] of alleUser) {
+        if (d.missionen[uid] && d.missionen[uid].date === heute) {
+            if (d.missionen[uid].m1) m1Heute++;
+            if (d.missionen[uid].m2) m2Heute++;
+            if (d.missionen[uid].m3) m3Heute++;
+        }
+    }
+
+    // Top 3 heute
+    const top3 = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
+
+    // Like Rate
+    const gesamtLikes = heutigeLinks.reduce((sum, l) => sum + l.likes.size, 0);
+    const maxMoeglicheLikes = gesamtLinksHeute * gestarteteUser.length;
+    const likeRate = maxMoeglicheLikes > 0 ? Math.round(gesamtLikes / maxMoeglicheLikes * 100) : 0;
+
+    // Badge Verteilung
+    const badgeCount = { '🆕 New': 0, '📘 Anfänger': 0, '⬆️ Aufsteiger': 0, '🏅 Erfahrener': 0 };
+    alleUser.forEach(([, u]) => { if (badgeCount[u.role] !== undefined) badgeCount[u.role]++; });
+
+    // Dashboard Text Part 1 - Übersicht
+    let text1 = '📊 *ADMIN DASHBOARD*
+';
+    text1 += '🕐 ' + new Date().toLocaleString('de-DE') + '
+
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '👥 *USER ÜBERSICHT*
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '• Gesamt User: ' + alleUser.length + '
+';
+    text1 += '• Bot gestartet: ' + gestarteteUser.length + '
+';
+    text1 += '• Aktiv heute: ' + aktiveHeute.length + '
+';
+    text1 += '• Nicht geliked: ' + nichtGeliked.length + '
+';
+    text1 += '• Mit Warns: ' + mitWarns.length + '
+
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '🔗 *LINKS HEUTE*
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '• Links heute: ' + gesamtLinksHeute + '
+';
+    text1 += '• Gesamt Likes: ' + gesamtLikes + '
+';
+    text1 += '• Like Rate: ' + likeRate + '%
+
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '🎯 *MISSIONEN HEUTE*
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '• M1 (5 Likes): ' + m1Heute + ' User
+';
+    text1 += '• M2 (80%): ' + m2Heute + ' User
+';
+    text1 += '• M3 (Alle): ' + m3Heute + ' User
+
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '🏅 *BADGE VERTEILUNG*
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '• 🆕 New: ' + badgeCount['🆕 New'] + '
+';
+    text1 += '• 📘 Anfänger: ' + badgeCount['📘 Anfänger'] + '
+';
+    text1 += '• ⬆️ Aufsteiger: ' + badgeCount['⬆️ Aufsteiger'] + '
+';
+    text1 += '• 🏅 Erfahrener: ' + badgeCount['🏅 Erfahrener'] + '
+
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    text1 += '🏆 *TOP 3 HEUTE*
+';
+    text1 += '━━━━━━━━━━━━━━━
+';
+    const badges = ['🥇', '🥈', '🥉'];
+    top3.forEach(([uid, xp], i) => {
+        text1 += badges[i] + ' ' + d.users[uid].name + ': ' + xp + ' XP
+';
+    });
+
+    await ctx.telegram.sendMessage(ctx.from.id, text1, { parse_mode: 'Markdown' });
+
+    // Dashboard Text Part 2 - Alle User Details
+    let text2 = '👤 *ALLE USER DETAILS*
+';
+    text2 += '━━━━━━━━━━━━━━━
+
+';
+
+    const sortedUsers = alleUser.sort((a, b) => b[1].xp - a[1].xp);
+
+    for (const [uid, u] of sortedUsers) {
+        const mission = d.missionen[uid] && d.missionen[uid].date === heute ? d.missionen[uid] : null;
+        const hatGelikedHeute = habenGeliked.has(Number(uid));
+        const hatLinkGepostet = d.tracker[uid] === heute;
+
+        text2 += '*' + u.name + '*';
+        if (u.username) text2 += ' @' + u.username;
+        text2 += '
+';
+        text2 += '   🏅 ' + u.role + ' | ⭐ ' + u.xp + ' XP
+';
+        text2 += '   📅 Heute: ' + (d.dailyXP[uid] || 0) + ' XP
+';
+        text2 += '   👍 Geliked heute: ' + (hatGelikedHeute ? '✅' : '❌') + '
+';
+        text2 += '   🔗 Link gepostet: ' + (hatLinkGepostet ? '✅' : '❌') + '
+';
+        text2 += '   ⚠️ Warns: ' + u.warnings + '/5
+';
+
+        if (mission) {
+            text2 += '   🎯 M1:' + (mission.m1 ? '✅' : '❌') + ' M2:' + (mission.m2 ? '✅' : '❌') + ' M3:' + (mission.m3 ? '✅' : '❌') + '
+';
+        } else {
+            text2 += '   🎯 Keine Missionen heute
+';
+        }
+
+        const bonusL = d.bonusLinks[uid] || 0;
+        if (bonusL > 0) text2 += '   🎁 Bonus Links: ' + bonusL + '
+';
+        text2 += '
+';
+
+        // Telegram Limit vermeiden - aufteilen bei zu langer Nachricht
+        if (text2.length > 3500) {
+            await ctx.telegram.sendMessage(ctx.from.id, text2, { parse_mode: 'Markdown' });
+            text2 = '';
+        }
+    }
+
+    if (text2.length > 0) {
+        await ctx.telegram.sendMessage(ctx.from.id, text2, { parse_mode: 'Markdown' });
+    }
+
+    // Bestätigung in Gruppe
+    if (!istPrivat(ctx.chat.type)) {
+        await ctx.reply('📊 Dashboard per DM geschickt!');
+    }
 });
 
 // ================================
@@ -629,6 +844,9 @@ bot.on('message', async (ctx) => {
 
     if (!hatLink(text)) {
         if (ctx.chat.id === -1003800312818) {
+            // Admin Nachrichten NICHT weiterleiten
+            const istAdminMsg = await istAdmin(ctx, uid);
+            if (!istAdminMsg) {
             try {
                 await ctx.forwardMessage(-1003906557227);
                 await ctx.deleteMessage();
@@ -638,6 +856,7 @@ bot.on('message', async (ctx) => {
                 );
                 setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id); } catch (e) {} }, 30000);
             } catch (e) {}
+            } // Ende Admin Check
         }
         return;
     }
@@ -649,10 +868,13 @@ bot.on('message', async (ctx) => {
         try { await ctx.deleteMessage(); } catch (e) {}
         d.warte[uid] = ctx.chat.id;
         const info = await ctx.telegram.getMe();
-        await ctx.reply('⚠️ *' + ctx.from.first_name + '*, starte den Bot per DM!', {
+        const warteMsg = await ctx.reply('⚠️ *' + ctx.from.first_name + '*, starte den Bot per DM!', {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard([Markup.button.url('📩 Bot starten', 'https://t.me/' + info.username + '?start=gruppe')]).reply_markup
         });
+        if (!d.warteNachricht) d.warteNachricht = {};
+        d.warteNachricht[uid] = { chatId: ctx.chat.id, msgId: warteMsg.message_id };
+        speichern();
         return;
     }
 
@@ -716,13 +938,21 @@ bot.on('message', async (ctx) => {
     xpAdd(uid, 1, ctx.from.first_name);
     const msgId = ctx.message.message_id;
 
+    const istInsta = istInstagramLink(text);
+    const replyOptions = {
+        parse_mode: 'Markdown',
+        reply_to_message_id: msgId,
+    };
+    if (istInsta) {
+        replyOptions.reply_markup = Markup.inlineKeyboard([Markup.button.callback('👍 Like', 'like_' + msgId)]).reply_markup;
+    }
+
     const reply = await ctx.reply(
-        '🔗 *Link von ' + ctx.from.first_name + '*\n\n👍 Likes: **0**\n⭐ XP: ' + u.xp + ' | Lvl ' + u.level + '\n\n_1 Like pro User erlaubt_',
-        {
-            parse_mode: 'Markdown',
-            reply_to_message_id: msgId,
-            reply_markup: Markup.inlineKeyboard([Markup.button.callback('👍 Like', 'like_' + msgId)]).reply_markup
-        }
+        '🔗 *Link von ' + ctx.from.first_name + '*\n\n' +
+        (istInsta ? '👍 Likes: **0**\n' : '') +
+        '⭐ XP: ' + u.xp + ' | Lvl ' + u.level + '\n\n' +
+        (istInsta ? '_1 Like pro User erlaubt_' : '_Kein Like Button für diesen Link_'),
+        replyOptions
     );
 
     d.links[msgId] = {
@@ -754,6 +984,18 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
     // Liker bekommt +5 XP
     xpAdd(uid, 5, ctx.from.first_name);
+
+    // DM Nachricht mit Haken markieren
+    const msgKey = String(lnk.counter_msg_id);
+    if (d.dmNachrichten && d.dmNachrichten[msgKey] && d.dmNachrichten[msgKey][uid]) {
+        try {
+            await bot.telegram.editMessageText(
+                uid, d.dmNachrichten[msgKey][uid], null,
+                '✅ *Erledigt geliked!*\n\n📢 Link von *' + lnk.user_name + '*\n🔗 ' + lnk.text + '\n\n✅ Du hast diesen Link bereits geliked!',
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {}
+    }
 
     // Mission Update für Liker
     const mission = getMission(uid);
@@ -788,15 +1030,23 @@ async function topLinks(chatId) {
 }
 
 async function sendeLinkAnAlle(linkData) {
+    if (!d.dmNachrichten) d.dmNachrichten = {};
+    const msgKey = String(linkData.counter_msg_id);
+    if (!d.dmNachrichten[msgKey]) d.dmNachrichten[msgKey] = {};
+
     for (const [uid, u] of Object.entries(d.users)) {
         if (parseInt(uid) === linkData.user_id) continue;
+        if (!u.started) continue;
         try {
-            await bot.telegram.sendMessage(uid,
+            const sent = await bot.telegram.sendMessage(uid,
                 '📢 Neuer Booster-Link\n\n👤 Member: ' + linkData.user_name + '\n\n🔗 ' + linkData.text + '\n\nBitte liken und kommentieren! 👍',
                 { reply_markup: { inline_keyboard: [[{ text: '👉 Zum Beitrag', url: 'https://t.me/c/' + String(linkData.chat_id).replace('-100', '') + '/' + linkData.counter_msg_id }]] } }
             );
+            // DM Nachricht ID speichern
+            d.dmNachrichten[msgKey][uid] = sent.message_id;
         } catch (e) { console.log('FEHLER:', uid, e.message); }
     }
+    speichern();
 }
 
 // ================================
@@ -862,7 +1112,10 @@ async function wochenGewinnspiel() {
 // ================================
 async function likeErinnerung() {
     const heute = new Date().setHours(0, 0, 0, 0);
-    const heutigeLinks = Object.entries(d.links).filter(([, l]) => l.timestamp >= heute);
+    // NUR Links von heute
+    const heutigeLinks = Object.entries(d.links).filter(([, l]) => {
+        return l.timestamp >= heute && new Date(l.timestamp).toDateString() === new Date().toDateString();
+    });
     if (!heutigeLinks.length) return;
 
     for (const [uid, u] of Object.entries(d.users)) {
@@ -912,6 +1165,20 @@ function zeitCheck() {
     });
 
     if (h === 23 && m === 55) dailyRankingAbschluss();
+
+    // Alte Links löschen (älter als 2 Tage)
+    const zweiTage = 2 * 24 * 60 * 60 * 1000;
+    for (const [k, l] of Object.entries(d.links)) {
+        if (Date.now() - l.timestamp > zweiTage) {
+            // Link-Nachricht löschen
+            try { await bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id); } catch (e) {}
+            delete d.links[k];
+            // DM Nachrichten aufräumen
+            if (d.dmNachrichten && d.dmNachrichten[String(l.counter_msg_id)]) {
+                delete d.dmNachrichten[String(l.counter_msg_id)];
+            }
+        }
+    }
     if (wochentag === 0 && h === 20 && m === 0) wochenGewinnspiel();
 }
 

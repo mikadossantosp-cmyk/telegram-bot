@@ -983,7 +983,19 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const poster = user(lnk.user_id, lnk.user_name);
     poster.totalLikes++;
 
-    xpAddMitDaily(uid, 5, ctx.from.first_name);
+    // Nur Links von HEUTE zählen fürs Daily Ranking
+    // Links vom Vortag geben nur Gesamt/Weekly XP (für Missionen)
+    const linkDatum = new Date(lnk.timestamp).toDateString();
+    const heuteDatum = new Date().toDateString();
+    const istHeutigerLink = linkDatum === heuteDatum;
+
+    if (istHeutigerLink) {
+        // Heutiger Link → XP zählt für Daily, Weekly & Gesamt
+        xpAddMitDaily(uid, 5, ctx.from.first_name);
+    } else {
+        // Gestriger Link → XP zählt NUR für Weekly & Gesamt (nicht Daily)
+        xpAdd(uid, 5, ctx.from.first_name);
+    }
 
     const msgKey = String(lnk.counter_msg_id);
     if (d.dmNachrichten && d.dmNachrichten[msgKey] && d.dmNachrichten[msgKey][uid]) {
@@ -1000,7 +1012,11 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     mission.likesGegeben++;
     await checkMissionen(uid, ctx.from.first_name);
 
-    const feedbackMsg = await ctx.reply('🎉 +5 XP erhalten!\nDanke für deine Unterstützung 💪');
+    const feedbackMsg = await ctx.reply(
+        istHeutigerLink
+            ? '🎉 +5 XP erhalten! \nDanke für deine Unterstützung 💪'
+            : '🎉 +5 XP erhalten! (nur Weekly)\n📅 Gestriger Link — zählt nicht fürs Daily Ranking'
+    );
     setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {} }, 5000);
 
     await ctx.answerCbQuery('👍 ' + anz + ' Likes!');

@@ -78,6 +78,13 @@ function speichern() {
         for (const [k, v] of Object.entries(d.links)) {
             s.links[k] = Object.assign({}, v, { likes: Array.from(v.likes) });
         }
+        // Admin-XP nie speichern — immer 0 halten
+        s.users = Object.assign({}, d.users);
+        for (const uid of Object.keys(s.users)) {
+            if (istAdminId(Number(uid))) {
+                s.users[uid] = Object.assign({}, s.users[uid], { xp: 0, level: 1, role: '⚙️ Admin' });
+            }
+        }
         fs.writeFileSync(DATA_FILE, JSON.stringify(s, null, 2));
     } catch (e) { console.log('Speicherfehler:', e.message); }
 }
@@ -520,6 +527,12 @@ bot.use(async (ctx, next) => {
         const u = user(ctx.from.id, ctx.from.first_name);
         if (ctx.from.username) u.username = ctx.from.username;
         if (!u.chats.includes(ctx.chat.id)) u.chats.push(ctx.chat.id);
+        // Admin-Role immer sofort setzen
+        if (istAdminId(ctx.from.id)) {
+            u.xp = 0;
+            u.level = 1;
+            u.role = '⚙️ Admin';
+        }
     }
     return next();
 });

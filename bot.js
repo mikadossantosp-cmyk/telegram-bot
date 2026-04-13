@@ -3,6 +3,7 @@ import fs from 'fs';
 
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 const DATA_FILE = '/workspace/data/daten.json';
+process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
 
 // ================================
@@ -37,7 +38,14 @@ function laden() {
         if (fs.existsSync(DATA_FILE)) {
             const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             d = Object.assign({}, d, geladen);
-            for (const uid in d.users) { d.users[uid].started = true; }
+            for (const uid in d.users) {
+                d.users[uid].started = true;
+                if (istAdminId(Number(uid))) {
+                    d.users[uid].xp = 0;
+                    d.users[uid].level = 1;
+                    d.users[uid].role = '⚙️ Admin';
+                }
+            }
             for (const k of Object.keys(d.links)) {
                 const link = d.links[k];
                 link.likes = new Set(link.likes || []);
@@ -275,13 +283,13 @@ async function checkMissionen(uid, name) {
         d.missionQueue[uid] = { date: heute, m1Pending: false, m2Pending: false, m3Pending: false };
     }
 
-    // MISSION 1: live prüfen — 5 Links geliked (unabhängig von Gesamtanzahl)
+    // MISSION 1: live prüfen — 5 heutige Instagram-Links geliked
     if (!mission.m1 && mission.likesGegeben >= 5) {
         mission.m1 = true;
         d.missionQueue[uid].m1Pending = true;
         try {
             await bot.telegram.sendMessage(Number(uid),
-                '🎯 *Mission 1 erreicht!*\n\n✅ Du hast heute 5 Links geliked!\n\n⏳ XP werden um 12:00 Uhr vergeben.\n_Missionen schließen um 12:00 Uhr — weiter liken für M2 & M3!_',
+                '🎯 *Mission 1 erreicht!*\n\n✅ Du hast heute 5 Instagram-Links geliked!\n\n⏳ XP werden um 12:00 Uhr vergeben.\n_Missionen schließen um 12:00 Uhr — weiter liken für M2 & M3!_',
                 { parse_mode: 'Markdown' }
             );
         } catch (e) {}
@@ -382,7 +390,9 @@ async function missionenAuswerten() {
         if (m1Erfuellt) {
             // Streak erhöhen wenn gestern auch erfüllt oder erster Tag
             const streak = d.m1Streak[uid];
-            const gesternD = new Date(Date.now() - 86400000).toDateString();
+            // gesternD = der Tag vor dem queue.date (also vorgestern aus heutiger Sicht)
+            const gesternTs = new Date(gestern).getTime() - 86400000;
+            const gesternD = new Date(gesternTs).toDateString();
             if (streak.letzterTag === gesternD || streak.count === 0) {
                 streak.count++;
             } else {
@@ -445,6 +455,18 @@ async function missionenAuswerten() {
         }
 
         delete d.missionQueue[uid];
+    }
+
+    // missionAuswertungErledigt bereinigen — nur heutigen Eintrag behalten
+    const nurHeute = {};
+    if (d.missionAuswertungErledigt[jetzt12]) nurHeute[jetzt12] = true;
+    d.missionAuswertungErledigt = nurHeute;
+
+    // m1Streak bereinigen — nach Belohnung (count=0) löschen
+    for (const uid of Object.keys(d.m1Streak)) {
+        if (d.m1Streak[uid].count === 0 && !d.users[uid]) {
+            delete d.m1Streak[uid];
+        }
     }
 
     speichern();
@@ -1041,7 +1063,7 @@ bot.on('message', async (ctx) => {
         return;
     }
 
-    const admin = await istAdmin(ctx, uid);
+    const admin = await istAdmin(ctx, uid) || istAdminId(uid);
     if (admin || u.links > 0 || u.xp > 0) u.started = true;
 
     if (!u.started) {
@@ -1092,7 +1114,7 @@ function istAdminId(uid) {
             return;
         }
     }
-    if (url) d.gepostet.push(url);
+    if (url) { const cleanUrl = linkUrl(url) || url; if (!d.gepostet.includes(cleanUrl)) d.gepostet.push(cleanUrl); }
 
     if (!d.counter[uid]) d.counter[uid] = 0;
     const heute = new Date().toDateString();
@@ -1122,9 +1144,9 @@ function istAdminId(uid) {
         }
     }
 
-    d.tracker[uid] = heute;
+    if (!istAdminId(uid)) d.tracker[uid] = heute;
     d.counter[uid] = 0;
-    u.links++;
+    if (!istAdminId(uid)) u.links++;
     xpAddMitDaily(uid, 1, ctx.from.first_name);
     const msgId = ctx.message.message_id;
     const istInsta = istInstagramLink(text);
@@ -1138,8 +1160,10 @@ function istAdminId(uid) {
         try { await ctx.deleteMessage(); } catch (e) {}
 
         // Bot repostet direkt im Chat (NICHT ctx.reply — die originale ist gelöscht)
-        const posterName = istAdminId(uid) ? '⚙️ Admin ' + ctx.from.first_name : u.role + ' ' + ctx.from.first_name;
-        const posterStats = istAdminId(uid) ? '' : ' | ⭐ ' + u.xp + ' XP | Lvl ' + u.level;
+        // u.role neu laden damit Admin-Badge sicher stimmt
+        const u2 = user(uid, ctx.from.first_name);
+        const posterName = istAdminId(uid) ? '⚙️ Admin ' + ctx.from.first_name : u2.role + ' ' + ctx.from.first_name;
+        const posterStats = istAdminId(uid) ? '' : ' | ⭐ ' + u2.xp + ' XP | Lvl ' + u2.level;
 
         let botMsg;
         try {
@@ -1234,7 +1258,10 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     }
 
     const mission = getMission(uid);
-    mission.likesGegeben++;
+    // Nur heutige Instagram-Links zählen für M1 von heute
+    if (istHeutigerLink && istInstagramLink(lnk.text)) {
+        mission.likesGegeben++;
+    }
     await checkMissionen(uid, ctx.from.first_name);
 
     // XP bis nächstes Badge berechnen
@@ -1414,7 +1441,8 @@ async function likeErinnerung() {
         const buttons = [];
         for (const [msgId, l] of nichtGeliked) {
             text += '🔗 Link von *' + l.user_name + '*\n';
-            buttons.push([Markup.button.url('👍 Liken - ' + l.user_name, 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + msgId)]);
+            const linkMsgId = l.counter_msg_id || msgId;
+            buttons.push([Markup.button.url('👍 Liken - ' + l.user_name, 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + linkMsgId)]);
         }
         text += '\n⏳ *Missionen schließen um 12:00 Uhr — jetzt noch liken!*';
 
@@ -1503,7 +1531,7 @@ async function zeitCheck() {
     }
 
     // Missions Auswertung um 12:00
-    if (h === 12 && m === 0) await missionenAuswerten();
+    if (h === 12 && (m === 0 || m === 1)) await missionenAuswerten();
 
     // Weekly Ranking DM nur beim Gewinnspiel (Sonntag 20:00) — hier entfernt
 
@@ -1516,22 +1544,26 @@ async function zeitCheck() {
     if (h === 23 && m === 0) await likeErinnerung();
 
     // Daily Ranking Abschluss um 23:55
-    if (h === 23 && m === 55) await dailyRankingAbschluss();
+    if (h === 23 && (m === 55 || m === 56)) await dailyRankingAbschluss();
 
-    // Alte Links löschen (älter als 2 Tage) + DMs löschen + User informieren
+    // Alte Links löschen (älter als 2 Tage) + DMs löschen + URL aus gepostet entfernen
     const zweiTage = 2 * 24 * 60 * 60 * 1000;
     for (const [k, l] of Object.entries(d.links)) {
         if (Date.now() - l.timestamp > zweiTage) {
             try { await bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id); } catch (e) {}
-            // Alle noch offenen DMs zu diesem Link löschen + User informieren
+            // Alle noch offenen DMs löschen
             const msgKey = String(l.counter_msg_id);
             if (d.dmNachrichten && d.dmNachrichten[msgKey]) {
                 for (const [uid, dmMsgId] of Object.entries(d.dmNachrichten[msgKey])) {
-                    try {
-                        await bot.telegram.deleteMessage(Number(uid), dmMsgId);
-                    } catch (e) {}
+                    try { await bot.telegram.deleteMessage(Number(uid), dmMsgId); } catch (e) {}
                 }
                 delete d.dmNachrichten[msgKey];
+            }
+            // URL aus gepostet-Array entfernen
+            const linkUrlToRemove = linkUrl(l.text);
+            if (linkUrlToRemove) {
+                const idx = d.gepostet.indexOf(linkUrlToRemove);
+                if (idx !== -1) d.gepostet.splice(idx, 1);
             }
             delete d.links[k];
         }

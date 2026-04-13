@@ -1255,84 +1255,108 @@ bot.on('message', async (ctx) => {
 // LIKE SYSTEM
 // ================================
 bot.action(/^like_(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery(); // MUSS erste Zeile sein — Telegram Timeout vermeiden
     const msgId = parseInt(ctx.match[1]);
     const uid = ctx.from.id;
 
-    if (!d.links[msgId]) return ctx.answerCbQuery('❌ Nicht mehr vorhanden.', { show_alert: true });
-    const lnk = d.links[msgId];
-    if (uid === lnk.user_id) return ctx.answerCbQuery('❌ Kein Self-Like!', { show_alert: true });
-    if (lnk.likes.has(uid)) return ctx.answerCbQuery('❌ Bereits geliked!', { show_alert: true });
-
-    lnk.likes.add(uid);
-    const anz = lnk.likes.size;
-    const poster = user(lnk.user_id, lnk.user_name);
-    if (!istAdminId(lnk.user_id)) poster.totalLikes++;
-
-    // Nur Links von HEUTE zählen fürs Daily Ranking
-    // Links vom Vortag geben nur Gesamt/Weekly XP (für Missionen)
-    const linkDatum = new Date(lnk.timestamp).toDateString();
-    const heuteDatum = new Date().toDateString();
-    const istHeutigerLink = linkDatum === heuteDatum;
-
-    if (!istAdminId(uid)) {
-        if (istHeutigerLink) {
-            xpAddMitDaily(uid, 5, ctx.from.first_name);
-        } else {
-            xpAdd(uid, 5, ctx.from.first_name);
-        }
-    }
-
-    const msgKey = String(lnk.counter_msg_id);
-    // DM nach Like LÖSCHEN (nicht nur editieren)
-    if (d.dmNachrichten && d.dmNachrichten[msgKey] && d.dmNachrichten[msgKey][uid]) {
-        try {
-            await bot.telegram.deleteMessage(uid, d.dmNachrichten[msgKey][uid]);
-            delete d.dmNachrichten[msgKey][uid];
-        } catch (e) {}
-    }
-
-    const mission = getMission(uid);
-    // Nur heutige Instagram-Links zählen für M1 von heute
-    if (istHeutigerLink && istInstagramLink(lnk.text)) {
-        mission.likesGegeben++;
-    }
-    await checkMissionen(uid, ctx.from.first_name);
-
-    // XP bis nächstes Badge berechnen
-    const liker = user(uid, ctx.from.first_name);
-    const naechstesBadge = xpBisNaechstesBadge(liker.xp);
-    const badgeInfo = naechstesBadge
-        ? '\n⬆️ Noch *' + naechstesBadge.fehlend + ' XP* bis ' + naechstesBadge.ziel
-        : '\n🏅 Maximales Badge erreicht!';
-
-    const feedbackText = istAdminId(uid)
-        ? '✅ *Like registriert!* _(Admin — keine XP)_'
-        : istHeutigerLink
-            ? '🎉 *+5 XP erhalten!*\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo
-            : '🎉 *+5 XP erhalten!* _(nur Weekly)_\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo + '\n📅 _Gestriger Link — nicht im Daily_';
-
-    const feedbackMsg = await ctx.reply(feedbackText, { parse_mode: 'Markdown' });
-    setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {} }, 10000);
-
-    await ctx.answerCbQuery('👍 ' + anz + ' Likes!');
+    let answerText = '👍';
 
     try {
-        await ctx.telegram.editMessageText(
-            lnk.chat_id, lnk.counter_msg_id, null,
-            (istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name) + '\n' +
-            '🔗 ' + lnk.text + '\n\n' +
-            '👍 *' + anz + ' Likes*' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level),
-            {
-                parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]
-                ]).reply_markup
-            }
-        );
-    } catch (e) {}
+        if (!d.links[msgId]) {
+            answerText = '❌ Nicht mehr vorhanden.';
+            return;
+        }
 
-    speichern();
+        const lnk = d.links[msgId];
+
+        if (uid === lnk.user_id) {
+            answerText = '❌ Kein Self-Like!';
+            return;
+        }
+
+        if (lnk.likes.has(uid)) {
+            answerText = '❌ Bereits geliked!';
+            return;
+        }
+
+        // LIKE hinzufügen
+        lnk.likes.add(uid);
+        const anz = lnk.likes.size;
+
+        const poster = user(lnk.user_id, lnk.user_name);
+        if (!istAdminId(lnk.user_id)) poster.totalLikes++;
+
+        // Datum prüfen
+        const linkDatum = new Date(lnk.timestamp).toDateString();
+        const heuteDatum = new Date().toDateString();
+        const istHeutigerLink = linkDatum === heuteDatum;
+
+        if (!istAdminId(uid)) {
+            if (istHeutigerLink) {
+                xpAddMitDaily(uid, 5, ctx.from.first_name);
+            } else {
+                xpAdd(uid, 5, ctx.from.first_name);
+            }
+        }
+
+        // Missionen
+        const mission = getMission(uid);
+        if (istHeutigerLink && istInstagramLink(lnk.text)) {
+            mission.likesGegeben++;
+        }
+        await checkMissionen(uid, ctx.from.first_name);
+
+        // Feedback berechnen
+        const liker = user(uid, ctx.from.first_name);
+        const naechstesBadge = xpBisNaechstesBadge(liker.xp);
+        const badgeInfo = naechstesBadge
+            ? '\n⬆️ Noch *' + naechstesBadge.fehlend + ' XP* bis ' + naechstesBadge.ziel
+            : '\n🏅 Maximales Badge erreicht!';
+
+        const feedbackText = istAdminId(uid)
+            ? '✅ *Like registriert!* _(Admin — keine XP)_'
+            : istHeutigerLink
+                ? '🎉 *+5 XP erhalten!*\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo
+                : '🎉 *+5 XP erhalten!* _(nur Weekly)_\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo + '\n📅 _Gestriger Link — nicht im Daily_';
+
+        const feedbackMsg = await ctx.reply(feedbackText, { parse_mode: 'Markdown' });
+        setTimeout(async () => {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {}
+        }, 10000);
+
+        // Nachricht updaten
+        try {
+            await ctx.telegram.editMessageText(
+                lnk.chat_id,
+                lnk.counter_msg_id,
+                null,
+                (istAdminId(lnk.user_id)
+                    ? '⚙️ Admin ' + lnk.user_name
+                    : poster.role + ' ' + lnk.user_name) + '\n' +
+                '🔗 ' + lnk.text + '\n\n' +
+                '👍 *' + anz + ' Likes*' +
+                (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level),
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]
+                    ]).reply_markup
+                }
+            );
+        } catch (e) {}
+
+        speichern();
+
+        answerText = '👍 ' + anz + ' Likes!';
+
+    } catch (err) {
+        console.error(err);
+        answerText = '❌ Fehler';
+    } finally {
+        // 🔥 NUR EINE EINZIGE ANTWORT!
+        try {
+            await ctx.answerCbQuery(answerText);
+        } catch (e) {}
+    }
 });
 
 async function sendeDM(uid, text, options = {}) {

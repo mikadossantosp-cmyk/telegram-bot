@@ -234,7 +234,7 @@ function xpBisNaechstesBadge(xp) {
 }
 
 // Admin IDs — hier deine Telegram ID eintragen
-const ADMIN_IDS = new Set([1854730015]); // deine ID
+const ADMIN_IDS = new Set([1094738615]); // deine ID
 
 function istAdminId(uid) {
     return ADMIN_IDS.has(Number(uid));

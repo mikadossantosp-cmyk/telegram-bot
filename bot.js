@@ -71,7 +71,10 @@ function laden() {
     } catch (e) { console.log('Ladefehler:', e.message); }
 }
 
+let isSaving = false;
 function speichern() {
+    if (isSaving) return; // Lock gegen Race Condition
+    isSaving = true;
     try {
         const s = Object.assign({}, d);
         s.links = {};
@@ -87,6 +90,7 @@ function speichern() {
         }
         fs.writeFileSync(DATA_FILE, JSON.stringify(s, null, 2));
     } catch (e) { console.log('Speicherfehler:', e.message); }
+    finally { isSaving = false; }
 }
 
 setInterval(speichern, 30000);
@@ -225,6 +229,18 @@ function linkUrl(text) {
     return null;
 }
 
+function normalisiereUrl(url) {
+    if (!url) return url;
+    try {
+        // www entfernen, trailing slash entfernen, lowercase
+        return url.toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .replace(/^www\./, '')
+            .replace(/\/$/, '')
+            .split('?')[0]; // Query-Parameter ignorieren für Duplikat-Check
+    } catch (e) { return url; }
+}
+
 // XP bis zum nächsten Badge berechnen
 function xpBisNaechstesBadge(xp) {
     if (xp < 50) return { ziel: '📘 Anfänger', fehlend: 50 - xp };
@@ -234,7 +250,7 @@ function xpBisNaechstesBadge(xp) {
 }
 
 // Admin IDs — hier deine Telegram ID eintragen
-const ADMIN_IDS = new Set([1094738615]); // deine ID
+const ADMIN_IDS = new Set([1854730015]); // deine ID
 
 function istAdminId(uid) {
     return ADMIN_IDS.has(Number(uid));
@@ -871,7 +887,7 @@ bot.command('dm', async (ctx) => {
         try {
             await bot.telegram.sendMessage(Number(uid), '📢 *Nachricht vom Admin:*\n\n' + nachricht, { parse_mode: 'Markdown' });
             gesendet++;
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 200)); // Rate limit 200ms
         } catch (e) { fehler++; }
     }
     await ctx.reply('✅ Gesendet: ' + gesendet + '\n❌ Fehler: ' + fehler);
@@ -1093,14 +1109,7 @@ bot.on('message', async (ctx) => {
         return;
     }
 
-    // Admin IDs — hier deine Telegram ID eintragen
-const ADMIN_IDS = new Set([1854730015]); // deine ID
-
-function istAdminId(uid) {
-    return ADMIN_IDS.has(Number(uid));
-}
-
-// Sperrzeit: Sonntag 20:00 bis Montag 06:00 — keine Links erlaubt
+    // Sperrzeit: Sonntag 20:00 bis Montag 06:00 — keine Links erlaubt
     if (istSperrzeit() && !admin) {
         try { await ctx.deleteMessage(); } catch (e) {}
         const sperrMsg = await ctx.reply(
@@ -1116,7 +1125,8 @@ function istAdminId(uid) {
     }
 
     const url = linkUrl(text);
-    if (url && d.gepostet.includes(url)) {
+    const urlNorm = normalisiereUrl(url);
+    if (url && d.gepostet.some(u => normalisiereUrl(u) === urlNorm)) {
         if (!admin) {
             try { await ctx.deleteMessage(); } catch (e) {}
             // Keine Verwarnung — nur Warnnachricht (10 Sek) + DM
@@ -1127,7 +1137,13 @@ function istAdminId(uid) {
             return;
         }
     }
-    if (url) { const cleanUrl = linkUrl(url) || url; if (!d.gepostet.includes(cleanUrl)) d.gepostet.push(cleanUrl); }
+    if (url) {
+        const cleanUrl = linkUrl(url) || url;
+        if (!d.gepostet.includes(cleanUrl)) {
+            d.gepostet.push(cleanUrl);
+            if (d.gepostet.length > 2000) d.gepostet.shift(); // Max 2000 URLs
+        }
+    }
 
     if (!d.counter[uid]) d.counter[uid] = 0;
     const heute = new Date().toDateString();
@@ -1217,7 +1233,13 @@ function istAdminId(uid) {
             } catch (e) {}
         }
 
-        await sendeLinkAnAlle(d.links[origMsgId]);
+        // Links Limit: max 500 gleichzeitig
+    const linkKeys = Object.keys(d.links);
+    if (linkKeys.length > 500) {
+        const oldest = linkKeys.sort((a, b) => d.links[a].timestamp - d.links[b].timestamp)[0];
+        delete d.links[oldest];
+    }
+    await sendeLinkAnAlle(d.links[origMsgId]);
     } else {
         // Nicht-Instagram-Link: nur tracken, kein Bot-Reply
         d.links[msgId] = {
@@ -1233,9 +1255,9 @@ function istAdminId(uid) {
 // LIKE SYSTEM
 // ================================
 bot.action(/^like_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery(); // MUSS erste Zeile sein — Telegram Timeout vermeiden
     const msgId = parseInt(ctx.match[1]);
     const uid = ctx.from.id;
-    await ctx.answerCbQuery();
 
     if (!d.links[msgId]) return ctx.answerCbQuery('❌ Nicht mehr vorhanden.', { show_alert: true });
     const lnk = d.links[msgId];

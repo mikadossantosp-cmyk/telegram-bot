@@ -1130,39 +1130,57 @@ function istAdminId(uid) {
     const istInsta = istInstagramLink(text);
 
     if (istInsta) {
+        // msgId vor dem Löschen sichern
+        const origMsgId = ctx.message.message_id;
+        const chatId = ctx.chat.id;
+
         // Originale User-Nachricht löschen
         try { await ctx.deleteMessage(); } catch (e) {}
 
-        // Bot repostet als eigene Nachricht mit Like-Button direkt dran
+        // Bot repostet direkt im Chat (NICHT ctx.reply — die originale ist gelöscht)
         const posterName = istAdminId(uid) ? '⚙️ Admin ' + ctx.from.first_name : u.role + ' ' + ctx.from.first_name;
         const posterStats = istAdminId(uid) ? '' : ' | ⭐ ' + u.xp + ' XP | Lvl ' + u.level;
-        const botMsg = await ctx.reply(
-            '*' + posterName + '*\n' +
-            '🔗 ' + text + '\n\n' +
-            '👍 *0 Likes*' + posterStats,
-            {
-                parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('👍 Like  |  0', 'like_' + ctx.message.message_id)]
-                ]).reply_markup
-            }
-        );
 
-        d.links[ctx.message.message_id] = {
-            chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
+        let botMsg;
+        try {
+            botMsg = await bot.telegram.sendMessage(
+                chatId,
+                '*' + posterName + '*\n' +
+                '🔗 ' + text + '\n\n' +
+                '👍 *0 Likes*' + posterStats,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.callback('👍 Like  |  0', 'like_' + origMsgId)]
+                    ]).reply_markup
+                }
+            );
+        } catch (e) {
+            console.log('Fehler beim Reposten:', e.message);
+            speichern();
+            return;
+        }
+
+        d.links[origMsgId] = {
+            chat_id: chatId, user_id: uid, user_name: ctx.from.first_name,
             text: text, likes: new Set(), counter_msg_id: botMsg.message_id, timestamp: Date.now()
         };
 
-        // 10-Sek Erinnerung als Reply auf Bot-Nachricht (wie Like-Feedback)
-        const erinnerungMsg = await ctx.reply(
-            '🎯 *' + posterName + '*\n' +
-            '⭐ ' + u.xp + ' XP | Lvl ' + u.level + '\n\n' +
-            '⚠️ Mindestens *5 Links* liken (M1) — sonst droht Verwarnung!',
-            { parse_mode: 'Markdown', reply_to_message_id: botMsg.message_id }
-        );
-        setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, erinnerungMsg.message_id); } catch (e) {} }, 10000);
+        // 10-Sek Erinnerung — nur für normale User (nicht Admin)
+        if (!istAdminId(uid)) {
+            try {
+                const erinnerungMsg = await bot.telegram.sendMessage(
+                    chatId,
+                    '🎯 *' + posterName + '*\n' +
+                    '⭐ ' + u.xp + ' XP | Lvl ' + u.level + '\n\n' +
+                    '⚠️ Mindestens *5 Links* liken (M1) — sonst droht Verwarnung!',
+                    { parse_mode: 'Markdown', reply_to_message_id: botMsg.message_id }
+                );
+                setTimeout(async () => { try { await bot.telegram.deleteMessage(chatId, erinnerungMsg.message_id); } catch (e) {} }, 10000);
+            } catch (e) {}
+        }
 
-        await sendeLinkAnAlle(d.links[ctx.message.message_id]);
+        await sendeLinkAnAlle(d.links[origMsgId]);
     } else {
         // Nicht-Instagram-Link: nur tracken, kein Bot-Reply
         d.links[msgId] = {

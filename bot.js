@@ -117,6 +117,7 @@ function badgeBonusLinks(xp) {
 function level(xp) { return Math.floor(xp / 100) + 1; }
 
 function xpAdd(uid, menge, name) {
+    if (istAdminId(uid)) return; // Admin bekommt keine XP
     const u = user(uid, name);
     u.xp += menge;
     u.level = level(u.xp);
@@ -126,6 +127,7 @@ function xpAdd(uid, menge, name) {
 }
 
 function xpAddMitDaily(uid, menge, name) {
+    if (istAdminId(uid)) return; // Admin bekommt keine XP
     const u = user(uid, name);
     u.xp += menge;
     u.level = level(u.xp);
@@ -141,11 +143,21 @@ function user(uid, name) {
         d.users[uid] = {
             name: name || '', username: null, xp: 0, level: 1,
             warnings: 0, started: false, links: 0, likes: 0,
-            role: '🆕 New', lastDaily: null, totalLikes: 0, chats: []
+            role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [],
+            isAdmin: false
         };
     }
     if (name) d.users[uid].name = name;
+    if (istAdminId(uid)) d.users[uid].isAdmin = true;
     return d.users[uid];
+}
+
+// Name mit Badge anzeigen (Admin bekommt ⚙️ Admin dahinter)
+function anzeigeName(uid) {
+    const u = d.users[uid];
+    if (!u) return 'Unbekannt';
+    if (istAdminId(uid)) return u.role + ' ' + u.name + ' ⚙️ Admin';
+    return u.role + ' ' + u.name;
 }
 
 function chat(cid, obj) {
@@ -195,6 +207,23 @@ function xpBisNaechstesBadge(xp) {
     return null; // Bereits max Badge
 }
 
+// Admin IDs — hier deine Telegram ID eintragen
+const ADMIN_IDS = new Set([1854730015]); // deine ID
+
+function istAdminId(uid) {
+    return ADMIN_IDS.has(Number(uid));
+}
+
+// Sperrzeit: Sonntag 20:00 bis Montag 06:00
+function istSperrzeit() {
+    const jetzt = new Date();
+    const tag = jetzt.getDay(); // 0=Sonntag, 1=Montag
+    const h = jetzt.getHours();
+    if (tag === 0 && h >= 20) return true;  // Sonntag ab 20:00
+    if (tag === 1 && h < 6) return true;    // Montag bis 05:59
+    return false;
+}
+
 function hatBonusLink(uid) { return d.bonusLinks[uid] && d.bonusLinks[uid] > 0; }
 function bonusLinkNutzen(uid) {
     if (hatBonusLink(uid)) { d.bonusLinks[uid]--; if (d.bonusLinks[uid] <= 0) delete d.bonusLinks[uid]; return true; }
@@ -223,6 +252,7 @@ function getWochenMission(uid) {
 // Mission 1 (5 Links geliked) → live prüfen, sofortige DM
 // Mission 2 & 3 → werden erst um 12:00 Uhr ausgewertet, kein vorzeitiges Feedback
 async function checkMissionen(uid, name) {
+    if (istAdminId(uid)) return; // Admin nimmt nicht an Missionen teil
     const heute = new Date().toDateString();
     const mission = getMission(uid);
 
@@ -264,6 +294,7 @@ async function missionenAuswerten() {
     d.missionQueueVerarbeitet = heute;
 
     for (const [uid, queue] of Object.entries(d.missionQueue)) {
+        if (istAdminId(uid)) continue; // Admin nicht in Missionen
         if (queue.date === heute) continue;
 
         const name = d.users[uid] ? d.users[uid].name : '';
@@ -422,6 +453,7 @@ async function weeklyRankingDM() {
 
     for (const [uid] of Object.entries(d.users)) {
         if (!d.users[uid].started) continue;
+        if (istAdminId(uid)) continue; // Admin nicht im Ranking
 
         const rank = sorted.findIndex(([id]) => id === uid);
         if (rank === -1) continue;
@@ -515,6 +547,7 @@ bot.command('help', async (ctx) => {
 // ================================
 bot.command('missionen', async (ctx) => {
     const uid = ctx.from.id;
+    if (istAdminId(uid)) return ctx.reply('⚙️ *Admins nehmen nicht an Missionen teil.*', { parse_mode: 'Markdown' });
     const u = user(uid, ctx.from.first_name);
     const mission = getMission(uid);
     const wMission = getWochenMission(uid);
@@ -558,7 +591,7 @@ bot.command('profile', async (ctx) => {
     const rank = sorted.findIndex(x => x[0] == uid) + 1;
     const bonusL = d.bonusLinks[uid] || 0;
     await ctx.reply(
-        '👤 *Profil von ' + u.name + '*\n' +
+        '👤 *Profil von ' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '*\n' +
         (u.username ? '🔗 @' + u.username + '\n' : '') +
         '🆔 ID: `' + uid + '`\n\n' +
         '🏅 Badge: ' + u.role + '\n' +
@@ -579,11 +612,13 @@ bot.command('profile', async (ctx) => {
 // /ranking
 // ================================
 bot.command('ranking', async (ctx) => {
-    const sorted = Object.entries(d.users).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
+    const sorted = Object.entries(d.users)
+        .filter(([uid]) => !istAdminId(uid))
+        .sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
     if (!sorted.length) return ctx.reply('Noch keine Daten.');
     const badges = ['🥇', '🥈', '🥉'];
     let text = '🏆 *GESAMT RANKING*\n_(Permanent)_\n\n';
-    sorted.forEach(([, u], i) => {
+    sorted.forEach(([uid, u], i) => {
         const warns = u.warnings >= 3 ? ' 🔴' : '';
         text += (badges[i] || (i + 1) + '.') + ' ' + u.role + ' *' + u.name + '*' + warns + '\n';
         text += '   ⭐' + u.xp + ' | Lvl ' + u.level + '\n\n';
@@ -595,7 +630,9 @@ bot.command('ranking', async (ctx) => {
 // /dailyranking
 // ================================
 bot.command('dailyranking', async (ctx) => {
-    const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid]).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const sorted = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid] && !istAdminId(uid))
+        .sort((a, b) => b[1] - a[1]).slice(0, 10);
     if (!sorted.length) return ctx.reply('Heute noch keine XP gesammelt.');
     const badges = ['🥇', '🥈', '🥉'];
     let text = '📅 *TAGES RANKING*\n\n';
@@ -612,7 +649,9 @@ bot.command('dailyranking', async (ctx) => {
 // /weeklyranking
 // ================================
 bot.command('weeklyranking', async (ctx) => {
-    const sorted = Object.entries(d.weeklyXP).filter(([uid]) => d.users[uid]).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const sorted = Object.entries(d.weeklyXP)
+        .filter(([uid]) => d.users[uid] && !istAdminId(uid))
+        .sort((a, b) => b[1] - a[1]).slice(0, 10);
     if (!sorted.length) return ctx.reply('Diese Woche noch keine XP.');
     const badges = ['🥇', '🥈', '🥉'];
     let text = '📆 *WOCHEN RANKING*\n\n';
@@ -639,6 +678,7 @@ bot.command('daily', async (ctx) => {
         const m = Math.floor((left % 3600000) / 60000);
         return ctx.reply('⏳ Noch ' + h + 'h ' + m + 'min warten.');
     }
+    if (istAdminId(uid)) return ctx.reply('⚙️ *Admins nehmen nicht am Daily Bonus teil.*', { parse_mode: 'Markdown' });
     const bonus = Math.floor(Math.random() * 20) + 10;
     u.lastDaily = jetzt;
     xpAddMitDaily(uid, bonus, ctx.from.first_name);
@@ -1007,6 +1047,28 @@ bot.on('message', async (ctx) => {
         return;
     }
 
+    // Admin IDs — hier deine Telegram ID eintragen
+const ADMIN_IDS = new Set([1854730015]); // deine ID
+
+function istAdminId(uid) {
+    return ADMIN_IDS.has(Number(uid));
+}
+
+// Sperrzeit: Sonntag 20:00 bis Montag 06:00 — keine Links erlaubt
+    if (istSperrzeit() && !admin) {
+        try { await ctx.deleteMessage(); } catch (e) {}
+        const sperrMsg = await ctx.reply(
+            '🚫 *Keine Links erlaubt!*\n\n' +
+            '📅 Von *Sonntag 20:00* bis *Montag 06:00* sind keine Links erlaubt.\n\n' +
+            '⏳ Grund: Auswertung & Prüfung der Vorwoche läuft.\n' +
+            '✅ Ab Montag 06:00 Uhr kannst du wieder posten!',
+            { parse_mode: 'Markdown' }
+        );
+        setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, sperrMsg.message_id); } catch (e) {} }, 20000);
+        speichern();
+        return;
+    }
+
     const url = linkUrl(text);
     if (url && d.gepostet.includes(url)) {
         if (!admin) {
@@ -1057,31 +1119,38 @@ bot.on('message', async (ctx) => {
     const istInsta = istInstagramLink(text);
 
     if (istInsta) {
-        // Instagram-Link: Like-Button direkt an den Link anhängen via editMessageReplyMarkup
-        // Zuerst die originale Nachricht mit Like-Button editieren
-        try {
-            await ctx.telegram.editMessageReplyMarkup(ctx.chat.id, msgId, null, {
-                inline_keyboard: [[{ callback_data: 'like_' + msgId, text: u.role + ' ' + u.name + ' | 👍 0 Likes | ⭐' + u.xp }]]
-            });
-        } catch(e) {
-            // Falls edit nicht möglich, nichts tun — Link bleibt als Text
-        }
+        // Originale User-Nachricht löschen
+        try { await ctx.deleteMessage(); } catch (e) {}
 
-        d.links[msgId] = {
+        // Bot repostet als eigene Nachricht mit Like-Button direkt dran
+        const posterName = istAdminId(uid) ? u.role + ' ' + ctx.from.first_name + ' ⚙️ Admin' : u.role + ' ' + ctx.from.first_name;
+        const botMsg = await ctx.reply(
+            '*' + posterName + '*\n' +
+            '🔗 ' + text + '\n\n' +
+            '👍 *0 Likes* | ⭐ ' + u.xp + ' XP | Lvl ' + u.level,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: Markup.inlineKeyboard([
+                    [Markup.button.callback('👍 Like  |  0', 'like_' + ctx.message.message_id)]
+                ]).reply_markup
+            }
+        );
+
+        d.links[ctx.message.message_id] = {
             chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-            text: text, likes: new Set(), counter_msg_id: msgId, timestamp: Date.now()
+            text: text, likes: new Set(), counter_msg_id: botMsg.message_id, timestamp: Date.now()
         };
 
-        // 10-Sek Erinnerung (wie Like-Feedback: reply auf Link, auto-löschen)
+        // 10-Sek Erinnerung als Reply auf Bot-Nachricht (wie Like-Feedback)
         const erinnerungMsg = await ctx.reply(
-            '🎯 *' + u.role + ' ' + ctx.from.first_name + '*\n' +
+            '🎯 *' + posterName + '*\n' +
             '⭐ ' + u.xp + ' XP | Lvl ' + u.level + '\n\n' +
             '⚠️ Mindestens *5 Links* liken (M1) — sonst droht Verwarnung!',
-            { parse_mode: 'Markdown', reply_to_message_id: msgId }
+            { parse_mode: 'Markdown', reply_to_message_id: botMsg.message_id }
         );
         setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, erinnerungMsg.message_id); } catch (e) {} }, 10000);
 
-        await sendeLinkAnAlle(d.links[msgId]);
+        await sendeLinkAnAlle(d.links[ctx.message.message_id]);
     } else {
         // Nicht-Instagram-Link: nur tracken, kein Bot-Reply
         d.links[msgId] = {
@@ -1117,12 +1186,12 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const heuteDatum = new Date().toDateString();
     const istHeutigerLink = linkDatum === heuteDatum;
 
-    if (istHeutigerLink) {
-        // Heutiger Link → XP zählt für Daily, Weekly & Gesamt
-        xpAddMitDaily(uid, 5, ctx.from.first_name);
-    } else {
-        // Gestriger Link → XP zählt NUR für Weekly & Gesamt (nicht Daily)
-        xpAdd(uid, 5, ctx.from.first_name);
+    if (!istAdminId(uid)) {
+        if (istHeutigerLink) {
+            xpAddMitDaily(uid, 5, ctx.from.first_name);
+        } else {
+            xpAdd(uid, 5, ctx.from.first_name);
+        }
     }
 
     const msgKey = String(lnk.counter_msg_id);
@@ -1145,9 +1214,11 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         ? '\n⬆️ Noch *' + naechstesBadge.fehlend + ' XP* bis ' + naechstesBadge.ziel
         : '\n🏅 Maximales Badge erreicht!';
 
-    const feedbackText = istHeutigerLink
-        ? '🎉 *+5 XP erhalten!*\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo
-        : '🎉 *+5 XP erhalten!* _(nur Weekly)_\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo + '\n📅 _Gestriger Link — nicht im Daily_';
+    const feedbackText = istAdminId(uid)
+        ? '✅ *Like registriert!* _(Admin — keine XP)_'
+        : istHeutigerLink
+            ? '🎉 *+5 XP erhalten!*\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo
+            : '🎉 *+5 XP erhalten!* _(nur Weekly)_\n' + liker.role + ' | ⭐ ' + liker.xp + ' XP' + badgeInfo + '\n📅 _Gestriger Link — nicht im Daily_';
 
     const feedbackMsg = await ctx.reply(feedbackText, { parse_mode: 'Markdown' });
     setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {} }, 10000);
@@ -1157,8 +1228,15 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     try {
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
-            '🔗 *' + poster.role + ' ' + lnk.user_name + '*\n\n👍 Likes: **+' + anz + '**\n⭐ XP: ' + poster.xp + ' | Lvl ' + poster.level + '\n\n_1 Like pro User erlaubt_',
-            { parse_mode: 'Markdown', reply_markup: Markup.inlineKeyboard([Markup.button.callback('👍 Like', 'like_' + msgId)]).reply_markup }
+            (istAdminId(lnk.user_id) ? poster.role + ' ' + lnk.user_name + ' ⚙️ Admin' : poster.role + ' ' + lnk.user_name) + '\n' +
+            '🔗 ' + lnk.text + '\n\n' +
+            '👍 *' + anz + ' Likes* | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: Markup.inlineKeyboard([
+                    [Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]
+                ]).reply_markup
+            }
         );
     } catch (e) {}
 
@@ -1199,7 +1277,7 @@ async function sendeLinkAnAlle(linkData) {
 // ================================
 async function dailyRankingAbschluss() {
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-    const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0).sort((a, b) => b[1] - a[1]);
+    const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0 && !istAdminId(uid)).sort((a, b) => b[1] - a[1]);
     if (!sorted.length) return;
 
     const belohnungen = [
@@ -1234,7 +1312,7 @@ async function dailyRankingAbschluss() {
 async function gesternRankingPosten() {
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
     const sorted = Object.entries(d.gesternDailyXP)
-        .filter(([uid]) => d.users[uid] && d.gesternDailyXP[uid] > 0)
+        .filter(([uid]) => d.users[uid] && d.gesternDailyXP[uid] > 0 && !istAdminId(uid))
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10);
 
@@ -1263,7 +1341,7 @@ async function gesternRankingPosten() {
 // ================================
 async function wochenGewinnspiel() {
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-    const teilnehmer = Object.entries(d.weeklyXP).filter(([uid]) => d.users[uid] && d.weeklyXP[uid] > 0).map(([uid]) => uid);
+    const teilnehmer = Object.entries(d.weeklyXP).filter(([uid]) => d.users[uid] && d.weeklyXP[uid] > 0 && !istAdminId(uid)).map(([uid]) => uid);
     if (!teilnehmer.length) return;
 
     const gewinnerUid = teilnehmer[Math.floor(Math.random() * teilnehmer.length)];
@@ -1298,6 +1376,7 @@ async function likeErinnerung() {
 
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started) continue;
+        if (istAdminId(uid)) continue; // Admin überspringen
         const nichtGeliked = heutigeLinks.filter(([, l]) => l.user_id != uid && !l.likes.has(Number(uid)));
         if (!nichtGeliked.length) continue;
 
@@ -1320,6 +1399,7 @@ async function abendM1Warnung() {
     const heute = new Date().toDateString();
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started) continue;
+        if (istAdminId(uid)) continue; // Admin überspringen
 
         // Hat heute einen Link gepostet?
         const hatHeuteLink = Object.values(d.links).some(l =>

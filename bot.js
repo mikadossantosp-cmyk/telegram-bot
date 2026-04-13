@@ -106,6 +106,11 @@ function badge(xp) {
     return '🆕 New';
 }
 
+function badgeFuerAnzeige(uid) {
+    if (istAdminId(uid)) return '⚙️ Admin';
+    return d.users[uid] ? d.users[uid].role : '🆕 New';
+}
+
 function badgeBonusLinks(xp) {
     if (xp >= 1000) return 1;
     return 0;
@@ -148,7 +153,13 @@ function user(uid, name) {
         };
     }
     if (name) d.users[uid].name = name;
-    if (istAdminId(uid)) d.users[uid].isAdmin = true;
+    if (istAdminId(uid)) {
+        d.users[uid].isAdmin = true;
+        // Admin immer auf 0 XP halten
+        d.users[uid].xp = 0;
+        d.users[uid].level = 1;
+        d.users[uid].role = '⚙️ Admin';
+    }
     return d.users[uid];
 }
 
@@ -1123,11 +1134,12 @@ function istAdminId(uid) {
         try { await ctx.deleteMessage(); } catch (e) {}
 
         // Bot repostet als eigene Nachricht mit Like-Button direkt dran
-        const posterName = istAdminId(uid) ? u.role + ' ' + ctx.from.first_name + ' ⚙️ Admin' : u.role + ' ' + ctx.from.first_name;
+        const posterName = istAdminId(uid) ? '⚙️ Admin ' + ctx.from.first_name : u.role + ' ' + ctx.from.first_name;
+        const posterStats = istAdminId(uid) ? '' : ' | ⭐ ' + u.xp + ' XP | Lvl ' + u.level;
         const botMsg = await ctx.reply(
             '*' + posterName + '*\n' +
             '🔗 ' + text + '\n\n' +
-            '👍 *0 Likes* | ⭐ ' + u.xp + ' XP | Lvl ' + u.level,
+            '👍 *0 Likes*' + posterStats,
             {
                 parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([
@@ -1178,7 +1190,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     lnk.likes.add(uid);
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
-    poster.totalLikes++;
+    if (!istAdminId(lnk.user_id)) poster.totalLikes++;
 
     // Nur Links von HEUTE zählen fürs Daily Ranking
     // Links vom Vortag geben nur Gesamt/Weekly XP (für Missionen)
@@ -1228,9 +1240,9 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     try {
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
-            (istAdminId(lnk.user_id) ? poster.role + ' ' + lnk.user_name + ' ⚙️ Admin' : poster.role + ' ' + lnk.user_name) + '\n' +
+            (istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name) + '\n' +
             '🔗 ' + lnk.text + '\n\n' +
-            '👍 *' + anz + ' Likes* | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level,
+            '👍 *' + anz + ' Likes*' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level),
             {
                 parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([

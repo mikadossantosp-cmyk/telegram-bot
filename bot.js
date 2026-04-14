@@ -1106,9 +1106,8 @@ bot.on('message', async (ctx) => {
         let botMsg;
         try {
             botMsg = await bot.telegram.sendMessage(chatId,
-                '*' + posterName + '*\n🔗 ' + text + '\n\n👍 *0 Likes*' + posterStats,
+                posterName + '\n🔗 ' + text + '\n\n👍 0 Likes' + posterStats,
                 {
-                    parse_mode: 'Markdown',
                     reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + origMsgId)]]).reply_markup
                 }
             );
@@ -1235,17 +1234,15 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     try { await ctx.answerCbQuery('👍 ' + anz + '!'); } catch(e) {}
 
     try {
-        // Sonderzeichen im Link escapen für Markdown
-        const safeName = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name;
-        const safeText = lnk.text.replace(/_/g, '\_').replace(/\*/g, '\*').replace(/\[/g, '\[').replace(/`/g, '\`');
-        const editText = safeName + '\n' +
-            '🔗 ' + safeText + '\n\n' +
-            '👍 *' + anz + ' Likes*' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level);
+        // Kein Markdown - verhindert Parse-Fehler bei Instagram URLs
+        const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name;
+        const editText = posterLabel + '\n' +
+            '🔗 ' + lnk.text + '\n\n' +
+            '👍 ' + anz + ' Likes' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level);
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
             editText,
             {
-                parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]]).reply_markup
             }
         );

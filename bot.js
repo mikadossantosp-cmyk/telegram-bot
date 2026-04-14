@@ -701,7 +701,46 @@ bot.command('unban', async (ctx) => {
     try { await ctx.telegram.unbanChatMember(ctx.chat.id, userId); if (d.users[userId]) d.users[userId].warnings = 0; await ctx.reply('✅ Entbannt!'); }
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
+bot.command('extralink', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
 
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('❌ Nutzung: /extralink @username');
+
+    let targetUser = null;
+
+    // Suche User anhand Username
+    const username = args[0].replace('@', '').toLowerCase();
+
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (u.username && u.username.toLowerCase() === username) {
+            targetUser = { uid, user: u };
+            break;
+        }
+    }
+
+    if (!targetUser) return ctx.reply('❌ User nicht gefunden.');
+
+    const uid = targetUser.uid;
+
+    // Extra Link geben
+    if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
+    d.bonusLinks[uid] += 1;
+
+    speichern();
+
+    // DM senden
+    try {
+        await bot.telegram.sendMessage(uid,
+            '🎁 *Extra-Link erhalten!*\n\n' +
+            'Du hast einen Extra-Link vom Admin erhalten!\n\n' +
+            '🔗 Du kannst heute einen zusätzlichen Link posten.',
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) {}
+
+    await ctx.reply('✅ Extra-Link an ' + targetUser.user.name + ' vergeben!');
+});
 // ================================
 // TEST COMMANDS
 // ================================

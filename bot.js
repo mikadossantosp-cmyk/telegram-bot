@@ -702,7 +702,6 @@ bot.command('unban', async (ctx) => {
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
 bot.command('extralink', async (ctx) => {
-bot.command('extralink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
 
     if (!ctx.message.reply_to_message) {

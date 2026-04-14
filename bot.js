@@ -1185,12 +1185,15 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     lnk.likes.add(uid);
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
-    if (!istAdminId(lnk.user_id)) poster.totalLikes++;
+    // Poster totalLikes erhöhen (auch für Admin-Posts)
+    poster.totalLikes++;
 
     const linkDatum = new Date(lnk.timestamp).toDateString();
     const heuteDatum = new Date().toDateString();
     const istHeutigerLink = linkDatum === heuteDatum;
 
+    // Liker bekommt IMMER XP - egal ob Admin-Link oder nicht
+    // Nur der Liker selbst bekommt keine XP wenn er Admin ist
     if (!istAdminId(uid)) {
         if (istHeutigerLink) {
             xpAddMitDaily(uid, 5, ctx.from.first_name);
@@ -1207,11 +1210,14 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         } catch (e) {}
     }
 
-    const mission = getMission(uid);
-    if (istHeutigerLink && istInstagramLink(lnk.text)) {
-        mission.likesGegeben++;
+    // Mission zählt für ALLE Links - auch Admin Links
+    if (!istAdminId(uid)) {
+        const mission = getMission(uid);
+        if (istHeutigerLink && istInstagramLink(lnk.text)) {
+            mission.likesGegeben++;
+        }
+        await checkMissionen(uid, ctx.from.first_name);
     }
-    await checkMissionen(uid, ctx.from.first_name);
 
     const liker = user(uid, ctx.from.first_name);
     const naechstesBadge = xpBisNaechstesBadge(liker.xp);
@@ -1229,17 +1235,18 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     try { await ctx.answerCbQuery('👍 ' + anz + '!'); } catch(e) {}
 
     try {
+        const editText = (istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name) + '\n' +
+            '🔗 ' + lnk.text + '\n\n' +
+            '👍 *' + anz + ' Likes*' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level);
         await ctx.telegram.editMessageText(
             lnk.chat_id, lnk.counter_msg_id, null,
-            (istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name) + '\n' +
-            '🔗 ' + lnk.text + '\n\n' +
-            '👍 *' + anz + ' Likes*' + (istAdminId(lnk.user_id) ? '' : ' | ⭐ ' + poster.xp + ' XP | Lvl ' + poster.level),
+            editText,
             {
                 parse_mode: 'Markdown',
                 reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]]).reply_markup
             }
         );
-    } catch (e) {}
+    } catch (e) { console.log('Edit Fehler:', e.message); }
 
     speichernDebounced(); // Debounced - nicht bei jedem Like sofort schreiben
     } catch(e) { console.log('Like Fehler:', e.message); }

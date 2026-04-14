@@ -10,7 +10,7 @@ const DATA_FILE = '/workspace/data/daten.json';
 process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
 
-const ADMIN_IDS = new Set([1854730015]);
+const ADMIN_IDS = new Set([1094738615]);
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
 // ================================

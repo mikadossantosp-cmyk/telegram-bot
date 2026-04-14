@@ -1091,11 +1091,11 @@ bot.on('message', async (ctx) => {
     if (!istAdminId(uid)) d.tracker[uid] = heute;
     d.counter[uid] = 0;
     if (!istAdminId(uid)) u.links++;
-    xpAddMitDaily(uid, 1, ctx.from.first_name);
+    if (!istAdminId(uid)) xpAddMitDaily(uid, 1, ctx.from.first_name);
+    // Admin Badge IMMER sofort erzwingen
+    if (istAdminId(uid)) { u.xp = 0; u.level = 1; u.role = '⚙️ Admin'; }
     const msgId = ctx.message.message_id;
     const istInsta = istInstagramLink(text);
-
-    if (istAdminId(uid)) { u.xp = 0; u.level = 1; u.role = '⚙️ Admin'; }
 
     if (istInsta) {
         const origMsgId = ctx.message.message_id;
@@ -1156,20 +1156,31 @@ bot.on('message', async (ctx) => {
 const likeInProgress = new Set();
 
 bot.action(/^like_(\d+)$/, async (ctx) => {
-    try { await ctx.answerCbQuery(); } catch(e) {}
     const msgId = parseInt(ctx.match[1]);
     const uid = ctx.from.id;
     const likeKey = msgId + '_' + uid;
 
-    if (likeInProgress.has(likeKey)) return;
+    if (likeInProgress.has(likeKey)) {
+        try { await ctx.answerCbQuery(); } catch(e) {}
+        return;
+    }
     likeInProgress.add(likeKey);
     setTimeout(() => likeInProgress.delete(likeKey), 5000);
 
     try {
-    if (!d.links[msgId]) return;
+    if (!d.links[msgId]) {
+        try { await ctx.answerCbQuery('❌ Link nicht mehr vorhanden.'); } catch(e) {}
+        return;
+    }
     const lnk = d.links[msgId];
-    if (uid === lnk.user_id) return;
-    if (lnk.likes.has(uid)) return;
+    if (uid === lnk.user_id) {
+        try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch(e) {}
+        return;
+    }
+    if (lnk.likes.has(uid)) {
+        try { await ctx.answerCbQuery('❌ Bereits geliked!'); } catch(e) {}
+        return;
+    }
 
     lnk.likes.add(uid);
     const anz = lnk.likes.size;
@@ -1215,7 +1226,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const feedbackMsg = await ctx.reply(feedbackText, { parse_mode: 'Markdown' });
     setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {} }, 10000);
 
-    try { await ctx.answerCbQuery('👍 ' + anz + ' Likes!'); } catch(e) {}
+    try { await ctx.answerCbQuery('👍 ' + anz + '!'); } catch(e) {}
 
     try {
         await ctx.telegram.editMessageText(

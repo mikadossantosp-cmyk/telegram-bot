@@ -702,44 +702,29 @@ bot.command('unban', async (ctx) => {
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
 bot.command('extralink', async (ctx) => {
+bot.command('extralink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
 
-    const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('❌ Nutzung: /extralink @username');
-
-    let targetUser = null;
-
-    // Suche User anhand Username
-    const username = args[0].replace('@', '').toLowerCase();
-
-    for (const [uid, u] of Object.entries(d.users)) {
-        if (u.username && u.username.toLowerCase() === username) {
-            targetUser = { uid, user: u };
-            break;
-        }
+    if (!ctx.message.reply_to_message) {
+        return ctx.reply('❌ Antworte auf eine Nachricht vom User!');
     }
 
-    if (!targetUser) return ctx.reply('❌ User nicht gefunden.');
+    const uid = ctx.message.reply_to_message.from.id;
+    const u = user(uid, ctx.message.reply_to_message.from.first_name);
 
-    const uid = targetUser.uid;
-
-    // Extra Link geben
     if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
     d.bonusLinks[uid] += 1;
 
     speichern();
 
-    // DM senden
     try {
         await bot.telegram.sendMessage(uid,
-            '🎁 *Extra-Link erhalten!*\n\n' +
-            'Du hast einen Extra-Link vom Admin erhalten!\n\n' +
-            '🔗 Du kannst heute einen zusätzlichen Link posten.',
+            '🎁 *Extra-Link erhalten!*\n\nDu hast einen Extra-Link vom Admin erhalten!',
             { parse_mode: 'Markdown' }
         );
     } catch (e) {}
 
-    await ctx.reply('✅ Extra-Link an ' + targetUser.user.name + ' vergeben!');
+    await ctx.reply('✅ Extra-Link vergeben an ' + u.name);
 });
 // ================================
 // TEST COMMANDS

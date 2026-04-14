@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 
+const BOT_TOKEN = process.env.BOT_TOKEN || "DEIN_BOT_TOKEN";
 const BOT_TOKEN = "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 const DATA_FILE = '/workspace/data/daten.json';
 const bot = new Telegraf(BOT_TOKEN);
@@ -34,7 +35,7 @@ function laden() {
             for (const uid in d.users) { d.users[uid].started = true; }
             for (const k of Object.keys(d.links)) {
                 const link = d.links[k];
-                link.likes = new Set(link.likes || []);
+                link.likes = new Set(Array.isArray(link.likes) ? link.likes : []);
                 link.msgId = Number(k);
                 if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
             }
@@ -51,15 +52,32 @@ function laden() {
     } catch (e) { console.log('Ladefehler:', e.message); }
 }
 
+let speichernLock = false;
+let speichernPending = false;
+
 function speichern() {
+    if (speichernLock) {
+        speichernPending = true;
+        return;
+    }
+    speichernLock = true;
     try {
         const s = Object.assign({}, d);
         s.links = {};
         for (const [k, v] of Object.entries(d.links)) {
             s.links[k] = Object.assign({}, v, { likes: Array.from(v.likes) });
         }
-        fs.writeFileSync(DATA_FILE, JSON.stringify(s, null, 2));
+        const tmpFile = DATA_FILE + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify(s, null, 2));
+        fs.renameSync(tmpFile, DATA_FILE);
     } catch (e) { console.log('Speicherfehler:', e.message); }
+    finally {
+        speichernLock = false;
+        if (speichernPending) {
+            speichernPending = false;
+            setTimeout(speichern, 100);
+        }
+    }
 }
 
 setInterval(speichern, 30000);
@@ -889,6 +907,8 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     // Doppelklick verhindern
     if (likeInProgress.has(likeKey)) return;
     likeInProgress.add(likeKey);
+    // Auto-cleanup nach 5 Sekunden falls Fehler
+    setTimeout(() => likeInProgress.delete(likeKey), 5000);
 
     try {
     if (!d.links[msgId]) {
@@ -1010,6 +1030,10 @@ async function dailyRankingAbschluss() {
     gruppen.forEach(g => { bot.telegram.sendMessage(g.id, rankText, { parse_mode: 'Markdown' }).catch(() => {}); });
     d.dailyXP = {};
     d.dailyReset = Date.now();
+    // Vollständiger Daily Reset
+    d.tracker = {};
+    d.counter = {};
+    d.badgeTracker = {};
     speichern();
 }
 
@@ -1075,14 +1099,22 @@ function zeitCheck() {
     const m = jetzt.getMinutes();
     const wochentag = jetzt.getDay();
 
+    // Event Key ZUERST definieren
+    const eventKey = h + ':' + m + ':' + jetzt.toDateString();
+    if (!d._lastEvents) d._lastEvents = {};
+
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
     if (!gruppen.length) return;
 
     gruppen.forEach(g => {
-        if (h === 6 && m === 0) {
+        // 06:00 Regeln
+        if (h === 6 && m === 0 && d._lastEvents['regeln'] !== eventKey) {
+            d._lastEvents['regeln'] = eventKey;
             bot.telegram.sendMessage(g.id, '📜 *Regeln*\n\n1️⃣ 1 Link pro Tag\n2️⃣ Keine Duplikate\n3️⃣ Bot starten Pflicht\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt', { parse_mode: 'Markdown' }).catch(() => {});
         }
-        if (h === 7 && m === 0) {
+        // 07:00 Tages Ranking
+        if (h === 7 && m === 0 && d._lastEvents['ranking'] !== eventKey) {
+            d._lastEvents['ranking'] = eventKey;
             const s = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid]).sort((a, b) => b[1] - a[1]).slice(0, 3);
             if (s.length) {
                 const badges = ['🥇', '🥈', '🥉'];
@@ -1091,11 +1123,23 @@ function zeitCheck() {
                 bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {});
             }
         }
-        if (h === 7 && m === 5) topLinks(g.id);
-        if (h === 23 && m === 0) likeErinnerung();
+        // 07:05 Top Links
+        if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) {
+            d._lastEvents['toplinks'] = eventKey;
+            topLinks(g.id);
+        }
+        // 23:00 Like Erinnerung
+        if (h === 23 && m === 0 && d._lastEvents['reminder'] !== eventKey) {
+            d._lastEvents['reminder'] = eventKey;
+            likeErinnerung();
+        }
     });
 
-    if (h === 23 && m === 55) dailyRankingAbschluss();
+    // 23:55 Daily Ranking Abschluss
+    if (h === 23 && m === 55 && d._lastEvents['dailyRanking'] !== eventKey) {
+        d._lastEvents['dailyRanking'] = eventKey;
+        dailyRankingAbschluss();
+    }
 
     // Alte Links löschen (älter als 2 Tage)
     const zweiTage = 2 * 24 * 60 * 60 * 1000;
@@ -1108,7 +1152,20 @@ function zeitCheck() {
             }
         }
     }
-    if (wochentag === 0 && h === 20 && m === 0) wochenGewinnspiel();
+    // dmNachrichten begrenzen
+    const dmKeys = Object.keys(d.dmNachrichten || {});
+    if (dmKeys.length > 200) {
+        const zuLoeschen = dmKeys.slice(0, dmKeys.length - 200);
+        zuLoeschen.forEach(k => delete d.dmNachrichten[k]);
+    }
+    // seasonGewinner begrenzen
+    if (d.seasonGewinner && d.seasonGewinner.length > 100) {
+        d.seasonGewinner = d.seasonGewinner.slice(-100);
+    }
+    if (wochentag === 0 && h === 20 && m === 0 && d._lastEvents['gewinnspiel'] !== eventKey) {
+        d._lastEvents['gewinnspiel'] = eventKey;
+        wochenGewinnspiel();
+    }
 }
 
 setInterval(zeitCheck, 60000);

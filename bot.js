@@ -273,7 +273,7 @@ function xpBisNaechstesBadge(xp) {
     return null;
 }
 
-const ADMIN_IDS = new Set([1854730015]);
+const ADMIN_IDS = new Set([1094738615]);
 
 function istAdminId(uid) {
     return ADMIN_IDS.has(Number(uid));

@@ -1364,10 +1364,31 @@ app.get('/dashboard', (req, res) => {
   const totalLinks = Object.keys(d.links).length;
   const totalLikes = Object.values(d.links).reduce((sum, l) => sum + l.likes.size, 0);
 
+  const today = new Date().toDateString();
+  let todayLinks = 0;
+
+  for (const l of Object.values(d.links)) {
+    if (new Date(l.timestamp).toDateString() === today) {
+      todayLinks++;
+    }
+  }
+
+  const topUsers = Object.values(d.users)
+    .sort((a, b) => b.xp - a.xp)
+    .slice(0, 5);
+
+  const topLinks = Object.values(d.links)
+    .sort((a,b) => b.likes.size - a.likes.size)
+    .slice(0,5);
+
+  const noInsta = Object.values(d.users).filter(u => !u.instagram);
+
   let html = `
   <html>
   <head>
     <title>Dashboard</title>
+
+    <meta http-equiv="refresh" content="10">
 
     <style>
       body {
@@ -1377,9 +1398,7 @@ app.get('/dashboard', (req, res) => {
         padding: 20px;
       }
 
-      h1 {
-        margin-bottom: 20px;
-      }
+      h1 { margin-bottom: 20px; }
 
       .stats {
         display: flex;
@@ -1415,9 +1434,7 @@ app.get('/dashboard', (req, res) => {
         margin-bottom: 10px;
       }
 
-      a {
-        color: #38bdf8;
-      }
+      a { color: #38bdf8; }
 
       input {
         padding: 10px;
@@ -1437,6 +1454,15 @@ app.get('/dashboard', (req, res) => {
           u.style.display = u.innerText.toLowerCase().includes(input) ? "" : "none";
         }
       }
+
+      function filterLinks() {
+        let input = document.getElementById("linkSearch").value.toLowerCase();
+        let links = document.getElementsByClassName("link");
+
+        for (let l of links) {
+          l.style.display = l.innerText.toLowerCase().includes(input) ? "" : "none";
+        }
+      }
     </script>
 
   </head>
@@ -1449,6 +1475,30 @@ app.get('/dashboard', (req, res) => {
       <div class="card">👤 ${totalUsers} Users</div>
       <div class="card">🔗 ${totalLinks} Links</div>
       <div class="card">❤️ ${totalLikes} Likes</div>
+      <div class="card">🔥 Heute ${todayLinks}</div>
+    </div>
+
+    <div class="box">
+      <h2>🏆 Top User</h2>
+  `;
+
+  topUsers.forEach(u => {
+    html += `${u.name} (${u.xp} XP)<br>`;
+  });
+
+  html += `</div><div class="box"><h2>🔥 Top Links</h2>`;
+
+  topLinks.forEach(l => {
+    html += `${l.text} (${l.likes.size} Likes)<br>`;
+  });
+
+  html += `</div><div class="box"><h2>❌ Ohne Instagram</h2>`;
+
+  noInsta.forEach(u => {
+    html += `${u.name}<br>`;
+  });
+
+  html += `
     </div>
 
     <input type="text" id="search" placeholder="User suchen..." onkeyup="filterUsers()">
@@ -1457,7 +1507,6 @@ app.get('/dashboard', (req, res) => {
       <h2>👤 User</h2>
   `;
 
-  // USER LISTE
   for (const [id, u] of Object.entries(d.users)) {
     html += `
       <div class="user">
@@ -1471,11 +1520,12 @@ app.get('/dashboard', (req, res) => {
   html += `
     </div>
 
+    <input type="text" id="linkSearch" placeholder="Links suchen..." onkeyup="filterLinks()">
+
     <div class="box">
       <h2>🔗 Links</h2>
   `;
 
-  // LINKS
   for (const [msgId, link] of Object.entries(d.links)) {
 
     html += `

@@ -1337,53 +1337,54 @@ async function zeitCheck() {
 
         const heuteStr = jetzt.toDateString();
         for (const key of Object.keys(d._lastEvents)) { if (!key.endsWith(heuteStr)) delete d._lastEvents[key]; }
-// XP EVENT SYSTEM
-if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
-    const now = Date.now();
-    const percent = Math.round((d.xpEvent.multiplier - 1) * 100);
-    const dauerMin = Math.round((d.xpEvent.end - d.xpEvent.start) / 60000);
-const endZeit = new Date(d.xpEvent.end).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
-    if (!d.xpEvent.announced && now >= d.xpEvent.start - 1800000 && now < d.xpEvent.start) {
-        d.xpEvent.announced = true;
+        // XP EVENT SYSTEM
+        if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
+            const now = Date.now();
+            const percent = Math.round((d.xpEvent.multiplier - 1) * 100);
+            const dauerMin = Math.round((d.xpEvent.end - d.xpEvent.start) / 60000);
+            const endZeit = new Date(d.xpEvent.end).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 
-        gruppen.forEach(g => {
-            bot.telegram.sendMessage(g.id,
-                `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten`
-                { parse_mode: 'Markdown' }
-            ).catch(() => {});
-        });
+            if (!d.xpEvent.announced && now >= d.xpEvent.start - 1800000 && now < d.xpEvent.start) {
+                d.xpEvent.announced = true;
 
-        speichern();
-    }
+                gruppen.forEach(g => {
+                    bot.telegram.sendMessage(g.id,
+                        `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => {});
+                });
 
-    if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
-    d.xpEvent.aktiv = true;
+                speichern();
+            }
 
-        gruppen.forEach(g => {
-            bot.telegram.sendMessage(g.id,
-                `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten\n🕒 Ende: ${endZeit}`
-                { parse_mode: 'Markdown' }
-            ).catch(() => {});
-        });
+            if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
+                d.xpEvent.aktiv = true;
 
-        speichern();
-    }
+                gruppen.forEach(g => {
+                    bot.telegram.sendMessage(g.id,
+                        `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten\n🕒 Ende: ${endZeit}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => {});
+                });
 
-    if (d.xpEvent.aktiv && now > d.xpEvent.end) {
-        d.xpEvent.aktiv = false;
+                speichern();
+            }
 
-        gruppen.forEach(g => {
-            bot.telegram.sendMessage(g.id,
-                `⏱️ *XP EVENT BEENDET*\n\n🔥 Event vorbei\n📉 XP wieder normal`
-                { parse_mode: 'Markdown' }
-            ).catch(() => {});
-        });
+            if (d.xpEvent.aktiv && now > d.xpEvent.end) {
+                d.xpEvent.aktiv = false;
 
-        speichern();
-    }
-}
+                gruppen.forEach(g => {
+                    bot.telegram.sendMessage(g.id,
+                        `⏱️ *XP EVENT BEENDET*\n\n🔥 Event vorbei\n📉 XP wieder normal`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => {});
+                });
+
+                speichern();
+            }
+        }
+
     } catch (e) { console.log('ZeitCheck Fehler:', e.message); }
 }
 
@@ -1413,7 +1414,6 @@ app.get('/dashboard', (req, res) => {
     const topLinksList = Object.values(d.links).sort((a, b) => (b.likes?.size || 0) - (a.likes?.size || 0)).slice(0, 5);
     const noInsta = Object.values(d.users).filter(u => !u.instagram);
 
-    // ── NEU: Rankings (Feature 1) ──────────────────────────────────────────
     const gesamtRanking = Object.entries(d.users)
         .filter(([uid]) => !istAdminId(uid))
         .sort((a, b) => (b[1].xp || 0) - (a[1].xp || 0))
@@ -1435,9 +1435,7 @@ app.get('/dashboard', (req, res) => {
             ${medals[i] || `#${i+1}`} &nbsp; <b>${name}</b> &nbsp;
             <span style="color:#facc15">${xp} XP</span>
         </div>`;
-    // ── Ende Feature 1 ────────────────────────────────────────────────────
 
-    // ── NEU: Missionen Übersicht (Feature 2) ──────────────────────────────
     let m1Count = 0, m2Count = 0, m3Count = 0;
     for (const [uid, m] of Object.entries(d.missionen)) {
         if (istAdminId(uid)) continue;
@@ -1447,7 +1445,6 @@ app.get('/dashboard', (req, res) => {
             if (m.m3) m3Count++;
         }
     }
-    // ── Ende Feature 2 ────────────────────────────────────────────────────
 
     let html = `
     <html>
@@ -1471,6 +1468,10 @@ app.get('/dashboard', (req, res) => {
             h2 { margin-top: 0; }
             .mission-stats { display: flex; gap: 10px; flex-wrap: wrap; }
             .mission-card { background: #334155; border-radius: 10px; padding: 12px 20px; text-align: center; flex: 1; min-width: 100px; }
+            select { padding: 10px; width: 100%; margin-bottom: 15px; border-radius: 8px; border: none; background: #334155; color: white; }
+            button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; }
+            button:hover { background: #2563eb; }
+            label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
         </style>
         <script>
             function filterUsers() {
@@ -1488,37 +1489,34 @@ app.get('/dashboard', (req, res) => {
             <div class="card">❤️ ${totalLikes}</div>
             <div class="card">🔥 ${todayLinks}</div>
         </div>
-<div class="box">
-    <h2>⚡ XP Event</h2>
 
-    <form action="/create-xp-event">
-        <label>Bonus (%)</label>
-        <input type="number" name="percent" placeholder="20" required>
+        <div class="box">
+            <h2>⚡ XP Event</h2>
+            <form action="/create-xp-event">
+                <label>Bonus (%)</label>
+                <input type="number" name="percent" placeholder="20" required>
 
-        <label>Dauer (Minuten)</label>
-        <input type="number" name="duration" placeholder="120" required>
+                <label>Dauer (Minuten)</label>
+                <input type="number" name="duration" placeholder="120" required>
 
-        <label>Start</label>
-        <select name="startType">
-            <option value="now">Sofort</option>
-            <option value="custom">Geplant</option>
-        </select>
+                <label>Start</label>
+                <select name="startType">
+                    <option value="now">Sofort</option>
+                    <option value="custom">Geplant</option>
+                </select>
 
-        <input type="datetime-local" name="startCustom">
+                <input type="datetime-local" name="startCustom">
 
-        <button type="submit">🚀 Event starten</button>
-    </form>
+                <button type="submit">🚀 Event starten</button>
+            </form>
+            <br>
+            <a href="/stop-xp-event" style="color:red">🛑 Event stoppen</a>
+            <p>
+                Status: ${d.xpEvent?.aktiv ? '🟢 Aktiv' : '🔴 Inaktiv'}<br>
+                Bonus: ${d.xpEvent?.multiplier ? Math.round((d.xpEvent.multiplier - 1) * 100) : 0}%
+            </p>
+        </div>
 
-    <br>
-
-    <a href="/stop-xp-event" style="color:red">🛑 Event stoppen</a>
-
-    <p>
-        Status: ${d.xpEvent?.aktiv ? '🟢 Aktiv' : '🔴 Inaktiv'}<br>
-        Bonus: ${d.xpEvent?.multiplier ? Math.round((d.xpEvent.multiplier - 1) * 100) : 0}%
-    </p>
-</div>
-        <!-- NEU: Missionen Übersicht (Feature 2) -->
         <div class="box">
             <h2>🎯 Missionen heute</h2>
             <div class="mission-stats">
@@ -1527,9 +1525,7 @@ app.get('/dashboard', (req, res) => {
                 <div class="mission-card">✅ M3<br><b style="font-size:22px">${m3Count}</b><br><small>User</small></div>
             </div>
         </div>
-        <!-- Ende Feature 2 -->
 
-        <!-- NEU: Rankings (Feature 1) -->
         <div class="rankings">
             <div class="box">
                 <h2>🏆 Gesamt Ranking</h2>
@@ -1550,7 +1546,6 @@ app.get('/dashboard', (req, res) => {
                     : '<small style="color:#64748b">Diese Woche noch keine XP</small>'}
             </div>
         </div>
-        <!-- Ende Feature 1 -->
 
         <div class="box">
             <h2>🔥 Top Links</h2>
@@ -1572,10 +1567,8 @@ app.get('/dashboard', (req, res) => {
                     ⭐ XP: ${u.xp || 0} | ${u.role || '-'} | ⚠️ Warns: ${u.warnings || 0}/5<br>
                     <a href="/reset-user?id=${id}" class="danger">🔴 XP Reset</a>
                     <a href="/remove-warn?id=${id}" class="warn-btn">⚠️ Warn Reset</a>
-                    <!-- NEU: XP Abziehen Buttons (Feature 4) -->
                     <a href="/remove-xp?id=${id}&amount=10" class="xp-btn">➖ 10 XP</a>
                     <a href="/remove-xp?id=${id}&amount=50" class="xp-btn">➖ 50 XP</a>
-                    <!-- Ende Feature 4 -->
                 </div>
             `).join('')}
         </div>
@@ -1616,6 +1609,7 @@ app.get('/delete-link', (req, res) => {
     if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
     res.redirect('/dashboard');
 });
+
 app.get('/create-xp-event', (req, res) => {
     const percent = parseInt(req.query.percent);
     const durationMin = parseInt(req.query.duration);
@@ -1626,7 +1620,6 @@ app.get('/create-xp-event', (req, res) => {
     }
 
     let startTime;
-
     if (startType === 'custom' && req.query.startCustom) {
         startTime = new Date(req.query.startCustom).getTime();
     } else {
@@ -1646,6 +1639,7 @@ app.get('/create-xp-event', (req, res) => {
     speichern();
     res.redirect('/dashboard');
 });
+
 app.get('/stop-xp-event', (req, res) => {
     d.xpEvent = {
         aktiv: false,
@@ -1658,21 +1652,17 @@ app.get('/stop-xp-event', (req, res) => {
     res.redirect('/dashboard');
 });
 
-// ── NEU: XP Abziehen Route (Feature 3) ────────────────────────────────────
 app.get('/remove-xp', (req, res) => {
     const uid = req.query.id;
     const amount = parseInt(req.query.amount) || 0;
     if (d.users[uid] && amount > 0) {
-        // XP abziehen, aber nicht unter 0
         d.users[uid].xp = Math.max(0, (d.users[uid].xp || 0) - amount);
-        // Level & Badge neu berechnen (bestehende Funktionen)
         d.users[uid].level = level(d.users[uid].xp);
-        d.users[uid].role  = badge(d.users[uid].xp);
+        d.users[uid].role = badge(d.users[uid].xp);
         speichern();
     }
     res.redirect('/dashboard');
 });
-// ── Ende Feature 3 ────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });

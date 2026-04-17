@@ -117,41 +117,35 @@ function speichernDebounced() {
 
 setInterval(speichern, 30000);
 laden();
+
 async function checkInstagramForAllUsers(bot) {
     console.log('📸 Starte Instagram Check...');
-
     for (const [uid, u] of Object.entries(d.users)) {
-
         if (!u.started) continue;
         if (u.instagram && u.instagram.trim() !== '') continue;
         if (d.instaWarte[uid]) continue;
-
         try {
             await bot.telegram.sendMessage(
-    Number(uid),
-    '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)',
-    {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
-            ]
-        }
-    }
-);
-
+                Number(uid),
+                '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+                        ]
+                    }
+                }
+            );
             d.instaWarte[uid] = true;
-
             console.log('✅ DM gesendet an', uid);
-
             await new Promise(r => setTimeout(r, 150));
-
         } catch (e) {
             console.log('❌ DM fehlgeschlagen bei', uid);
         }
     }
-
     speichern();
 }
+
 // ================================
 // BACKUP
 // ================================
@@ -490,31 +484,26 @@ bot.use(async (ctx, next) => {
 // /start
 // ================================
 bot.start(async (ctx) => {
-const uid = ctx.from.id;
-const u = user(uid, ctx.from.first_name);
-u.started = true;
-// alte Warte-Nachrichten löschen
-if (d.warteNachricht && d.warteNachricht[uid]) {
-    try {
-        const { chatId, msgId } = d.warteNachricht[uid];
-        await bot.telegram.deleteMessage(chatId, msgId);
-    } catch (e) {}
-    delete d.warteNachricht[uid];
-}
-if (d.warte[uid]) delete d.warte[uid];
-speichern();
-// 👉 NUR in DM
-if (istPrivat(ctx.chat.type)) {
- // 👉 Wenn kein Instagram gesetzt
-    if (!u.instagram) {
-        d.instaWarte[uid] = true;
-        speichern();
-  return ctx.reply(
-    '📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'
-        );
+    const uid = ctx.from.id;
+    const u = user(uid, ctx.from.first_name);
+    u.started = true;
+    if (d.warteNachricht && d.warteNachricht[uid]) {
+        try {
+            const { chatId, msgId } = d.warteNachricht[uid];
+            await bot.telegram.deleteMessage(chatId, msgId);
+        } catch (e) {}
+        delete d.warteNachricht[uid];
     }
-   return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
-}
+    if (d.warte[uid]) delete d.warte[uid];
+    speichern();
+    if (istPrivat(ctx.chat.type)) {
+        if (!u.instagram) {
+            d.instaWarte[uid] = true;
+            speichern();
+            return ctx.reply('📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)');
+        }
+        return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
+    }
 });
 
 // ================================
@@ -574,7 +563,7 @@ bot.command('profile', async (ctx) => {
     const bonusL = d.bonusLinks[uid] || 0;
     await ctx.reply(
         '👤 *' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '*\n' +
-(u.instagram ? '📸 @' + u.instagram + '\n' : '') +
+        (u.instagram ? '📸 @' + u.instagram + '\n' : '') +
         (u.username ? '@' + u.username + '\n' : '') +
         '🏅 ' + u.role + '\n⭐ XP: ' + u.xp + '\n📅 Heute: ' + (d.dailyXP[uid] || 0) +
         '\n📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n🏆 Rang: #' + rank +
@@ -583,22 +572,20 @@ bot.command('profile', async (ctx) => {
         { parse_mode: 'Markdown' }
     );
 });
+
+// ================================
+// /setinsta
+// ================================
 bot.command('setinsta', async (ctx) => {
-const uid = ctx.from.id;
-const u = user(uid, ctx.from.first_name);
-// Nur in DM erlauben
-if (!istPrivat(ctx.chat.type)) {
-    return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
-}
-// Bot wartet jetzt auf neue Eingabe
-d.instaWarte[uid] = true;
-speichern();
-
-return ctx.reply(
-    '📸 Schick mir deinen neuen Instagram Namen.\n\n(z.B. max123)'
-);
-
+    const uid = ctx.from.id;
+    if (!istPrivat(ctx.chat.type)) {
+        return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
+    }
+    d.instaWarte[uid] = true;
+    speichern();
+    return ctx.reply('📸 Schick mir deinen neuen Instagram Namen.\n\n(z.B. max123)');
 });
+
 // ================================
 // /ranking
 // ================================
@@ -665,10 +652,21 @@ bot.command('stats', async (ctx) => {
 });
 
 // ================================
-// /dashboard
+// /dashboard (Bot Command)
 // ================================
 bot.command('dashboard', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const uid = ctx.from.id;
+    if (!await istAdmin(ctx, uid)) {
+        return ctx.reply('❌ Kein Zugriff');
+    }
+    await ctx.reply('📊 Admin Dashboard:', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '🚀 Dashboard öffnen', url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard' }]
+            ]
+        }
+    });
+
     const heute = new Date().toDateString();
     const hLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === heute);
     const alleUser = Object.entries(d.users);
@@ -692,49 +690,40 @@ bot.command('dashboard', async (ctx) => {
     t1 += 'TOP 3: ';
     top3.forEach(([uid, xp], i) => { t1 += (i + 1) + '. ' + d.users[uid].name + '(' + xp + ') '; });
     await ctx.telegram.sendMessage(ctx.from.id, t1, {
-    reply_markup: {
-        inline_keyboard: [
-            [{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]
-        ]
-    }
-});
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]
+            ]
+        }
+    });
+
     let tLinks = '🔗 HEUTIGE LINKS + LIKES\n\n';
-
-for (const l of hLinks) {
-    const likerListe = Object.values(l.likerNames || {});
-    
-    tLinks += '👤 ' + l.user_name + '\n';
-    tLinks += '🔗 ' + l.text + '\n';
-    tLinks += '👍 ' + likerListe.length + ' Likes\n';
-
-    if (likerListe.length > 0) {
-        tLinks += '❤️ Geliked von:\n';
-    tLinks += likerListe.map(liker => {
-    if (typeof liker === 'string') {
-        return ' - ' + liker;
+    for (const l of hLinks) {
+        const likerListe = Object.values(l.likerNames || {});
+        tLinks += '👤 ' + l.user_name + '\n';
+        tLinks += '🔗 ' + l.text + '\n';
+        tLinks += '👍 ' + likerListe.length + ' Likes\n';
+        if (likerListe.length > 0) {
+            tLinks += '❤️ Geliked von:\n';
+            tLinks += likerListe.map(liker => {
+                if (typeof liker === 'string') return ' - ' + liker;
+                return ' - ' + liker.name + (liker.insta ? ' (@' + liker.insta + ')' : '');
+            }).join('\n') + '\n';
+        } else {
+            tLinks += '❌ Noch keine Likes\n';
+        }
+        tLinks += '\n----------------\n\n';
+        if (tLinks.length > 3500) {
+            await ctx.telegram.sendMessage(ctx.from.id, tLinks);
+            tLinks = '';
+        }
     }
-    return ' - ' + liker.name + (liker.insta ? ' (@' + liker.insta + ')' : '');
-}).join('\n') + '\n';
-    } else {
-        tLinks += '❌ Noch keine Likes\n';
-    }
-
-    tLinks += '\n----------------\n\n';
-
-    if (tLinks.length > 3500) {
-        await ctx.telegram.sendMessage(ctx.from.id, tLinks);
-        tLinks = '';
-    }
-}
-
-if (tLinks.length > 0) {
-    await ctx.telegram.sendMessage(ctx.from.id, tLinks);
-}
+    if (tLinks.length > 0) await ctx.telegram.sendMessage(ctx.from.id, tLinks);
 
     let t2 = 'ALLE USER\n\n';
     for (const [uid, u] of alleUser.sort((a, b) => b[1].xp - a[1].xp)) {
         const m = d.missionen[uid] && d.missionen[uid].date === heute ? d.missionen[uid] : null;
-        t2 += u.name + (u.username ? ' @' + u.username : '')  + (u.instagram ? ' | 📸 @' + u.instagram : ' | ❌ kein Insta') + '\n';
+        t2 += u.name + (u.username ? ' @' + u.username : '') + (u.instagram ? ' | 📸 @' + u.instagram : ' | ❌ kein Insta') + '\n';
         t2 += '  ' + u.role + ' XP:' + u.xp + ' Heute:' + (d.dailyXP[uid] || 0) + '\n';
         t2 += '  Geliked:' + (gelikedSet.has(Number(uid)) ? 'Ja' : 'Nein') + ' Link:' + (d.tracker[uid] === heute ? 'Ja' : 'Nein') + ' W:' + u.warnings + '/5\n';
         if (m) t2 += '  M1:' + (m.m1 ? 'OK' : 'X') + ' M2:' + (m.m2 ? 'OK' : 'X') + ' M3:' + (m.m3 ? 'OK' : 'X') + '\n';
@@ -761,7 +750,6 @@ bot.command('chats', async (ctx) => {
 // ================================
 bot.command('chatinfo', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
-    const c = d.chats[ctx.chat.id];
     await ctx.reply('🆔 `' + ctx.chat.id + '`\n📝 ' + (ctx.chat.title || 'Privat') + '\n🔤 ' + ctx.chat.type, { parse_mode: 'Markdown' });
 });
 
@@ -806,30 +794,22 @@ bot.command('unban', async (ctx) => {
     try { await ctx.telegram.unbanChatMember(ctx.chat.id, userId); if (d.users[userId]) d.users[userId].warnings = 0; await ctx.reply('✅ Entbannt!'); }
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
+
+// ================================
+// /extralink
+// ================================
 bot.command('extralink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
-
-    if (!ctx.message.reply_to_message) {
-        return ctx.reply('❌ Antworte auf eine Nachricht vom User!');
-    }
-
+    if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht vom User!');
     const uid = ctx.message.reply_to_message.from.id;
     const u = user(uid, ctx.message.reply_to_message.from.first_name);
-
     if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
     d.bonusLinks[uid] += 1;
-
     speichern();
-
-    try {
-        await bot.telegram.sendMessage(uid,
-            '🎁 *Extra-Link erhalten!*\n\nDu hast einen Extra-Link vom Admin erhalten!',
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) {}
-
+    try { await bot.telegram.sendMessage(uid, '🎁 *Extra-Link erhalten!*\n\nDu hast einen Extra-Link vom Admin erhalten!', { parse_mode: 'Markdown' }); } catch (e) {}
     await ctx.reply('✅ Extra-Link vergeben an ' + u.name);
 });
+
 // ================================
 // TEST COMMANDS
 // ================================
@@ -859,25 +839,6 @@ bot.command('ankuendigung', async (ctx) => {
     await ctx.reply('📢 *Updates!*\n\n✅ XP permanent\n✅ Missionen\n✅ Badges\n✅ Gewinnspiel\n✅ Ranking System\n\nViel Spaß! 🎉', { parse_mode: 'Markdown' });
 });
 bot.command('time', (ctx) => { ctx.reply('🕒 ' + new Date().toString()); });
-bot.command('dashboard', async (ctx) => {
-  const uid = ctx.from.id;
-
-  if (!isAdminId(uid)) {
-    return ctx.reply('❌ Kein Zugriff');
-  }
-
-  await ctx.reply('📊 Admin Dashboard:', {
-  reply_markup: {
-    inline_keyboard: [
-      [
-        {
-          text: '🚀 Dashboard öffnen',
-          url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard'
-        }
-      ]
-    ]
-  }
-});
 
 // ================================
 // NEUE MITGLIEDER
@@ -901,20 +862,16 @@ bot.on('new_chat_members', async (ctx) => {
 bot.on('message', async (ctx) => {
     try {
         if (istPrivat(ctx.chat.type) && d.instaWarte[ctx.from.id]) {
-    const text = ctx.message.text;
-    if (!text) return;
-
-    const clean = text.replace('@', '').trim();
-    const u = user(ctx.from.id, ctx.from.first_name);
-
-    u.instagram = clean;
-    delete d.instaWarte[ctx.from.id];
-
-    speichern();
-
-    await ctx.reply('✅ Instagram gespeichert: @' + clean);
-    return;
-}
+            const text = ctx.message.text;
+            if (!text) return;
+            const clean = text.replace('@', '').trim();
+            const u = user(ctx.from.id, ctx.from.first_name);
+            u.instagram = clean;
+            delete d.instaWarte[ctx.from.id];
+            speichern();
+            await ctx.reply('✅ Instagram gespeichert: @' + clean);
+            return;
+        }
 
         if (!ctx.message || !ctx.from) return;
         if (!istGruppe(ctx.chat.type)) return;
@@ -923,7 +880,6 @@ bot.on('message', async (ctx) => {
         const u = user(uid, ctx.from.first_name);
         const text = ctx.message.text || ctx.message.caption || '';
 
-        // Textnachrichten weiterleiten
         if (!hatLink(text)) {
             if (ctx.chat.id === -1003800312818) {
                 const istAdminMsg = await istAdmin(ctx, uid);
@@ -954,7 +910,6 @@ bot.on('message', async (ctx) => {
             return;
         }
 
-        // Sperrzeit
         if (istSperrzeit() && !admin) {
             try { await ctx.deleteMessage(); } catch (e) {}
             const msg = await ctx.reply('🚫 Keine Links von Sonntag 20:00 bis Montag 06:00!');
@@ -962,7 +917,6 @@ bot.on('message', async (ctx) => {
             return;
         }
 
-        // Duplikat Check
         const url = linkUrl(text);
         const urlNorm = normalisiereUrl(url);
         if (url && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {
@@ -976,7 +930,6 @@ bot.on('message', async (ctx) => {
         }
         if (url) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
 
-        // Tages-Limit
         if (!d.counter[uid]) d.counter[uid] = 0;
         const heute = new Date().toDateString();
 
@@ -1003,9 +956,7 @@ bot.on('message', async (ctx) => {
             }
         }
 
-        // Admin Badge erzwingen
         if (istAdminId(uid)) { u.xp = 0; u.level = 1; u.role = '⚙️ Admin'; }
-
         if (!istAdminId(uid)) d.tracker[uid] = heute;
         d.counter[uid] = 0;
         if (!istAdminId(uid)) { u.links++; xpAddMitDaily(uid, 1, ctx.from.first_name); }
@@ -1014,13 +965,9 @@ bot.on('message', async (ctx) => {
         const istInsta = istInstagramLink(text);
 
         if (istInsta) {
-            // Original Nachricht löschen
             try { await ctx.deleteMessage(); } catch (e) {}
-
             const posterName = istAdminId(uid) ? '⚙️ Admin ' + ctx.from.first_name : u.role + ' ' + ctx.from.first_name;
             const posterStats = istAdminId(uid) ? '' : '  |  ⭐ ' + u.xp + ' XP';
-
-            // Bot Nachricht senden - OHNE Markdown wegen URLs
             let botMsg;
             try {
                 botMsg = await bot.telegram.sendMessage(ctx.chat.id,
@@ -1038,7 +985,6 @@ bot.on('message', async (ctx) => {
                 text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now()
             };
 
-            // Erinnerung für normale User
             if (!istAdminId(uid)) {
                 try {
                     const erin = await bot.telegram.sendMessage(ctx.chat.id,
@@ -1049,22 +995,18 @@ bot.on('message', async (ctx) => {
                 } catch (e) {}
             }
 
-            // Links Limit
             const linkKeys = Object.keys(d.links);
             if (linkKeys.length > 500) {
                 const oldest = linkKeys.sort((a, b) => d.links[a].timestamp - d.links[b].timestamp)[0];
                 delete d.links[oldest];
             }
-
             await sendeLinkAnAlle(d.links[msgId]);
         } else {
-            // Nicht-Instagram Link: nur tracken
             d.links[msgId] = {
                 chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
                 text: text, likes: new Set(), counter_msg_id: msgId, timestamp: Date.now()
             };
         }
-
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }
 });
@@ -1079,7 +1021,6 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     const uid = ctx.from.id;
     const likeKey = msgId + '_' + uid;
 
-    // Doppelklick verhindern
     if (likeInProgress.has(likeKey)) {
         try { await ctx.answerCbQuery(); } catch (e) {}
         return;
@@ -1103,39 +1044,29 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         lnk.likes.add(uid);
-
-lnk.likerNames[uid] = {
-  name: ctx.from.first_name,
-  insta: d.users[uid]?.instagram || null
-};
+        lnk.likerNames[uid] = { name: ctx.from.first_name, insta: d.users[uid]?.instagram || null };
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;
 
         const istHeutigerLink = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
 
-        // XP für Liker (nicht für Admin-Liker)
         if (!istAdminId(uid)) {
             if (istHeutigerLink) { xpAddMitDaily(uid, 5, ctx.from.first_name); }
             else { xpAdd(uid, 5, ctx.from.first_name); }
         }
 
-        // DM löschen nach Like
         const msgKey = String(lnk.counter_msg_id);
         if (d.dmNachrichten && d.dmNachrichten[msgKey] && d.dmNachrichten[msgKey][uid]) {
             try { await bot.telegram.deleteMessage(uid, d.dmNachrichten[msgKey][uid]); delete d.dmNachrichten[msgKey][uid]; } catch (e) {}
         }
 
-        // Mission tracken (für alle nicht-Admin Liker)
         if (!istAdminId(uid)) {
             const mission = getMission(uid);
-            if (istHeutigerLink && istInstagramLink(lnk.text)) {
-                mission.likesGegeben++;
-            }
+            if (istHeutigerLink && istInstagramLink(lnk.text)) { mission.likesGegeben++; }
             await checkMissionen(uid, ctx.from.first_name);
         }
 
-        // Feedback Nachricht
         const liker = user(uid, ctx.from.first_name);
         const nb = xpBisNaechstesBadge(liker.xp);
         const feedbackText = istAdminId(uid)
@@ -1147,7 +1078,6 @@ lnk.likerNames[uid] = {
 
         try { await ctx.answerCbQuery('👍 ' + anz + '!'); } catch (e) {}
 
-        // Like Counter in Gruppe aktualisieren - OHNE Markdown
         try {
             const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name;
             const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + poster.xp + ' XP';
@@ -1162,74 +1092,37 @@ lnk.likerNames[uid] = {
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }
 });
+
+// ================================
+// CALLBACK ACTIONS
+// ================================
 bot.action('remind_insta', async (ctx) => {
-  let count = 0;
-
-  for (const [uid, u] of Object.entries(d.users)) {
-
-    if (!u.started) continue;
-    if (u.instagram && u.instagram.trim() !== '') continue;
-
-    try {
-      await bot.telegram.sendMessage(
-        Number(uid),
-        '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)',
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
-            ]
-          }
-        }
-      );
-
-      count++;
-      await new Promise(r => setTimeout(r, 100));
-
-    } catch (e) {}
-  }
-
-  await ctx.answerCbQuery(`✅ ${count} User erinnert`);
+    let count = 0;
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u.started) continue;
+        if (u.instagram && u.instagram.trim() !== '') continue;
+        try {
+            await bot.telegram.sendMessage(Number(uid), '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)', {
+                reply_markup: { inline_keyboard: [[{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]] }
+            });
+            count++;
+            await new Promise(r => setTimeout(r, 100));
+        } catch (e) {}
+    }
+    await ctx.answerCbQuery(`✅ ${count} User erinnert`);
 });
+
 bot.action('set_insta', async (ctx) => {
-  try {
-    const uid = ctx.from.id;
-
-    if (!d.instaWarte) d.instaWarte = {};
-
-    d.instaWarte[uid] = true;
-    speichern();
-
-    await ctx.answerCbQuery('✅ Sende mir jetzt deinen Insta Namen');
-
-    await ctx.reply('📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)');
-    
-  } catch (err) {
-    console.log('FEHLER set_insta:', err);
-  }
+    try {
+        const uid = ctx.from.id;
+        if (!d.instaWarte) d.instaWarte = {};
+        d.instaWarte[uid] = true;
+        speichern();
+        await ctx.answerCbQuery('✅ Sende mir jetzt deinen Insta Namen');
+        await ctx.reply('📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)');
+    } catch (err) { console.log('FEHLER set_insta:', err); }
 });
- bot.on('text', async (ctx) => {
-   const uid = ctx.from.id;
 
-   if (d.instaWarte[uid]) {
-     if (!d.users[uid]) {
-       d.users[uid] = {
-         name: ctx.from.first_name,
-         xp: 0,
-         role: 'Anfänger',
-         instagram: null
-       };
-     }
-
-     d.users[uid].instagram = ctx.message.text.replace('@', '').trim();
-     d.instaWarte[uid] = false;
-
-     speichern();
-
-     await ctx.reply('✅ Instagram gespeichert: @' + d.users[uid].instagram);
-     return;
-   }
- });
 // ================================
 // AUTO CONTENT
 // ================================
@@ -1253,11 +1146,8 @@ async function sendeLinkAnAlle(linkData) {
     if (!d.dmNachrichten) d.dmNachrichten = {};
     const msgKey = String(linkData.counter_msg_id);
     if (!d.dmNachrichten[msgKey]) d.dmNachrichten[msgKey] = {};
-
     const empfaenger = Object.entries(d.users).filter(([uid, u]) => parseInt(uid) !== linkData.user_id && u.started);
-
     const linkUrl2 = 'https://t.me/c/' + String(linkData.chat_id).replace('-100', '') + '/' + linkData.counter_msg_id;
-
     for (let i = 0; i < empfaenger.length; i += 10) {
         const batch = empfaenger.slice(i, i + 10);
         const results = await Promise.allSettled(
@@ -1283,10 +1173,8 @@ async function dailyRankingAbschluss() {
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
     const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0 && !istAdminId(uid)).sort((a, b) => b[1] - a[1]);
     if (!sorted.length) return;
-
     const bel = [{ xp: 10, links: 1, text: '🥇' }, { xp: 5, links: 0, text: '🥈' }, { xp: 2, links: 0, text: '🥉' }];
     let rankText = '🏆 *TAGES RANKING*\n\n';
-
     for (let i = 0; i < Math.min(3, sorted.length); i++) {
         const [uid, xp] = sorted[i];
         const u = d.users[uid];
@@ -1296,7 +1184,6 @@ async function dailyRankingAbschluss() {
         rankText += b.text + ' *' + u.name + '*\n   ⭐ ' + xp + ' XP | +' + b.xp + ' Bonus' + (b.links > 0 ? ' + Extra Link!' : '') + '\n\n';
         try { await bot.telegram.sendMessage(Number(uid), '🎉 *' + b.text + ' im Ranking!*\n+' + b.xp + ' XP' + (b.links > 0 ? '\n🔗 Extra Link morgen!' : ''), { parse_mode: 'Markdown' }); } catch (e) {}
     }
-
     d.gesternDailyXP = Object.assign({}, d.dailyXP);
     gruppen.forEach(g => { bot.telegram.sendMessage(g.id, rankText, { parse_mode: 'Markdown' }).catch(() => {}); });
     d.dailyXP = {};
@@ -1372,8 +1259,8 @@ async function abendM1Warnung() {
     const heute = new Date().toDateString();
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || istAdminId(uid)) continue;
-        const hatLink = Object.values(d.links).some(l => l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute);
-        if (!hatLink) continue;
+        const hatLinkHeute = Object.values(d.links).some(l => l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute);
+        if (!hatLinkHeute) continue;
         const fremde = Object.values(d.links).filter(l => istInstagramLink(l.text) && l.user_id !== Number(uid) && new Date(l.timestamp).toDateString() === heute);
         if (fremde.length < 5) continue;
         const m = d.missionen[uid];
@@ -1399,7 +1286,6 @@ async function zeitCheck() {
         const wochentag = jetzt.getDay();
         const eventKey = h + ':' + m + ':' + jetzt.toDateString();
         if (!d._lastEvents) d._lastEvents = {};
-
         const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
         if (h === 3 && m === 0 && d._lastEvents['backup'] !== eventKey) { d._lastEvents['backup'] = eventKey; await backup(); }
@@ -1416,18 +1302,12 @@ async function zeitCheck() {
         }
 
         if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) { d._lastEvents['toplinks'] = eventKey; gruppen.forEach(g => topLinks(g.id)); }
-
         if (h === 12 && m === 0 && d._lastEvents['missionen'] !== eventKey) { d._lastEvents['missionen'] = eventKey; await missionenAuswerten(); }
-
         if (h === 22 && m === 0 && d._lastEvents['abendwarnung'] !== eventKey) { d._lastEvents['abendwarnung'] = eventKey; await abendM1Warnung(); }
-
         if (h === 23 && m === 0 && d._lastEvents['reminder'] !== eventKey) { d._lastEvents['reminder'] = eventKey; await likeErinnerung(); }
-
         if (h === 23 && m === 55 && d._lastEvents['dailyRanking'] !== eventKey) { d._lastEvents['dailyRanking'] = eventKey; await dailyRankingAbschluss(); }
-
         if (wochentag === 0 && h === 20 && m === 0 && d._lastEvents['gewinnspiel'] !== eventKey) { d._lastEvents['gewinnspiel'] = eventKey; await wochenGewinnspiel(); }
 
-        // Alte Links löschen
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
             if (Date.now() - l.timestamp > zweiTage) {
@@ -1445,7 +1325,6 @@ async function zeitCheck() {
             }
         }
 
-        // _lastEvents bereinigen
         const heuteStr = jetzt.toDateString();
         for (const key of Object.keys(d._lastEvents)) { if (!key.endsWith(heuteStr)) delete d._lastEvents[key]; }
 
@@ -1464,52 +1343,55 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // START
 // ================================
 bot.launch();
-
 console.log('🤖 Bot läuft!');
-await checkInstagramForAllUsers(bot);
+
+// FIX: checkInstagramForAllUsers in async IIFE wrappen
+(async () => {
+    await checkInstagramForAllUsers(bot);
+})();
+
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-app.get('/data', (req, res) => {
-  res.json(d);
-});
-app.get('/data', (req, res) => {
-    res.json(d);
-});
+
+// ================================
+// EXPRESS SERVER
+// ================================
+app.get('/data', (req, res) => { res.json(d); });
 
 app.get('/dashboard', (req, res) => {
-  let html = `
-  <html>
-  <head>
-    <title>Dashboard</title>
-    <style>
-      body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
-      .user { background: #222; padding: 10px; margin: 10px 0; border-radius: 8px; }
-    </style>
-  </head>
-  <body>
-    <h1>📊 User Dashboard</h1>
-  `;
-
-  for (const [id, u] of Object.entries(d.users)) {
-    html += `
-      <div class="user">
-        <b>${u.name}</b><br>
-        Instagram: ${u.instagram ? '@' + u.instagram : '❌'}<br>
-        XP: ${u.xp}<br>
-        Rolle: ${u.role}
-      </div>
+    let html = `
+    <html>
+    <head>
+        <title>Dashboard</title>
+        <style>
+            body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
+            .user { background: #222; padding: 10px; margin: 10px 0; border-radius: 8px; }
+        </style>
+    </head>
+    <body>
+        <h1>📊 User Dashboard</h1>
     `;
-  }
 
-  html += `
-  </body>
-  </html>
-  `;
+    for (const [id, u] of Object.entries(d.users)) {
+        html += `
+        <div class="user">
+            <b>${u.name}</b><br>
+            Instagram: ${u.instagram ? '@' + u.instagram : '❌'}<br>
+            XP: ${u.xp}<br>
+            Rolle: ${u.role}
+        </div>
+        `;
+    }
 
-  res.send(html);
+    html += `
+    </body>
+    </html>
+    `;
+
+    res.send(html);
 });
-const PORT = process.env.PORT || 3000;
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('🌐 Dashboard läuft auf Port ' + PORT);
 });

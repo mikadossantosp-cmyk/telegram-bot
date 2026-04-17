@@ -1171,6 +1171,23 @@ bot.action('remind_insta', async (ctx) => {
 
   await ctx.answerCbQuery(`✅ ${count} User erinnert`);
 });
+bot.action('set_insta', async (ctx) => {
+  try {
+    const uid = ctx.from.id;
+
+    if (!d.instaWarte) d.instaWarte = {};
+
+    d.instaWarte[uid] = true;
+    speichern();
+
+    await ctx.answerCbQuery('✅ Sende mir jetzt deinen Insta Namen');
+
+    await ctx.reply('📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)');
+    
+  } catch (err) {
+    console.log('FEHLER set_insta:', err);
+  }
+});
  bot.on('text', async (ctx) => {
    const uid = ctx.from.id;
 

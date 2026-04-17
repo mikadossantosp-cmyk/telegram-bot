@@ -9,6 +9,7 @@ if (!BOT_TOKEN || BOT_TOKEN === "DEIN_BOT_TOKEN") {
 const DATA_FILE = '/workspace/data/daten.json';
 process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
+const app = express();
 
 const ADMIN_IDS = new Set([1094738615]);
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
@@ -1449,3 +1450,11 @@ bot.launch().then(async () => {
 });
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+app.get('/data', (req, res) => {
+  res.json(d);
+});
+
+app.listen(3000, () => {
+  console.log('Dashboard läuft auf Port 3000');
+});
+

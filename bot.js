@@ -36,6 +36,13 @@ let d = {
     m1Streak: {},
     backupDatum: null,
     _lastEvents: {},
+    xpEvent: {
+    aktiv: false,
+    multiplier: 1,
+    start: null,
+    end: null,
+    announced: false
+},
 };
 
 function laden() {
@@ -74,6 +81,15 @@ function laden() {
             if (!d.m1Streak) d.m1Streak = {};
             if (!d.missionAuswertungErledigt) d.missionAuswertungErledigt = {};
             if (!d._lastEvents) d._lastEvents = {};
+            if (!d.xpEvent) {
+    d.xpEvent = {
+        aktiv: false,
+        multiplier: 1,
+        start: null,
+        end: null,
+        announced: false
+    };
+            }
             console.log('✅ Daten geladen');
         }
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -196,7 +212,11 @@ function level(xp) { return Math.floor(xp / 100) + 1; }
 function xpAdd(uid, menge, name) {
     if (istAdminId(uid)) return;
     const u = user(uid, name);
-    u.xp += menge;
+    let finalXP = menge;
+if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
+    finalXP = Math.round(menge * d.xpEvent.multiplier);
+}
+u.xp += finalXP;
     u.level = level(u.xp);
     u.role = badge(u.xp);
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
@@ -206,7 +226,11 @@ function xpAdd(uid, menge, name) {
 function xpAddMitDaily(uid, menge, name) {
     if (istAdminId(uid)) return;
     const u = user(uid, name);
-    u.xp += menge;
+    let finalXP = menge;
+if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
+    finalXP = Math.round(menge * d.xpEvent.multiplier);
+}
+u.xp += finalXP;
     u.level = level(u.xp);
     u.role = badge(u.xp);
     if (!d.dailyXP[uid]) d.dailyXP[uid] = 0;
@@ -1313,7 +1337,51 @@ async function zeitCheck() {
 
         const heuteStr = jetzt.toDateString();
         for (const key of Object.keys(d._lastEvents)) { if (!key.endsWith(heuteStr)) delete d._lastEvents[key]; }
+// XP EVENT SYSTEM
+if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
+    const now = Date.now();
+    const percent = Math.round((d.xpEvent.multiplier - 1) * 100);
+    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
+    if (!d.xpEvent.announced && now >= d.xpEvent.start - 1800000 && now < d.xpEvent.start) {
+        d.xpEvent.announced = true;
+
+        gruppen.forEach(g => {
+            bot.telegram.sendMessage(g.id,
+                `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP in 30 Minuten!`,
+                { parse_mode: 'Markdown' }
+            ).catch(() => {});
+        });
+
+        speichern();
+    }
+
+    if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
+        d.xpEvent.aktiv = true;
+
+        gruppen.forEach(g => {
+            bot.telegram.sendMessage(g.id,
+                `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP aktiv!`,
+                { parse_mode: 'Markdown' }
+            ).catch(() => {});
+        });
+
+        speichern();
+    }
+
+    if (d.xpEvent.aktiv && now > d.xpEvent.end) {
+        d.xpEvent.aktiv = false;
+
+        gruppen.forEach(g => {
+            bot.telegram.sendMessage(g.id,
+                `⏱️ *XP EVENT BEENDET*\n\nXP wieder normal.`,
+                { parse_mode: 'Markdown' }
+            ).catch(() => {});
+        });
+
+        speichern();
+    }
+}
     } catch (e) { console.log('ZeitCheck Fehler:', e.message); }
 }
 
@@ -1418,7 +1486,36 @@ app.get('/dashboard', (req, res) => {
             <div class="card">❤️ ${totalLikes}</div>
             <div class="card">🔥 ${todayLinks}</div>
         </div>
+<div class="box">
+    <h2>⚡ XP Event</h2>
 
+    <form action="/create-xp-event">
+        <label>Bonus (%)</label>
+        <input type="number" name="percent" placeholder="20" required>
+
+        <label>Dauer (Minuten)</label>
+        <input type="number" name="duration" placeholder="120" required>
+
+        <label>Start</label>
+        <select name="startType">
+            <option value="now">Sofort</option>
+            <option value="custom">Geplant</option>
+        </select>
+
+        <input type="datetime-local" name="startCustom">
+
+        <button type="submit">🚀 Event starten</button>
+    </form>
+
+    <br>
+
+    <a href="/stop-xp-event" style="color:red">🛑 Event stoppen</a>
+
+    <p>
+        Status: ${d.xpEvent?.aktiv ? '🟢 Aktiv' : '🔴 Inaktiv'}<br>
+        Bonus: ${d.xpEvent?.multiplier ? Math.round((d.xpEvent.multiplier - 1) * 100) : 0}%
+    </p>
+</div>
         <!-- NEU: Missionen Übersicht (Feature 2) -->
         <div class="box">
             <h2>🎯 Missionen heute</h2>
@@ -1515,6 +1612,47 @@ app.get('/remove-warn', (req, res) => {
 app.get('/delete-link', (req, res) => {
     const msgId = req.query.id;
     if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
+    res.redirect('/dashboard');
+});
+app.get('/create-xp-event', (req, res) => {
+    const percent = parseInt(req.query.percent);
+    const durationMin = parseInt(req.query.duration);
+    const startType = req.query.startType;
+
+    if (!percent || !durationMin) {
+        return res.send('❌ Ungültige Eingabe');
+    }
+
+    let startTime;
+
+    if (startType === 'custom' && req.query.startCustom) {
+        startTime = new Date(req.query.startCustom).getTime();
+    } else {
+        startTime = Date.now();
+    }
+
+    const endTime = startTime + durationMin * 60000;
+
+    d.xpEvent = {
+        aktiv: false,
+        multiplier: 1 + (percent / 100),
+        start: startTime,
+        end: endTime,
+        announced: false
+    };
+
+    speichern();
+    res.redirect('/dashboard');
+});
+app.get('/stop-xp-event', (req, res) => {
+    d.xpEvent = {
+        aktiv: false,
+        multiplier: 1,
+        start: null,
+        end: null,
+        announced: false
+    };
+    speichern();
     res.redirect('/dashboard');
 });
 

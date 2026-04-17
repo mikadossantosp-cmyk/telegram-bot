@@ -25,7 +25,7 @@ let d = {
     dailyReset: null, weeklyReset: null,
     bonusLinks: {},
     wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
-    warteNachricht: {}, dmNachrichten: {},
+    warteNachricht: {}, dmNachrichten: {}, instaWarte: {},
     missionen: {}, wochenMissionen: {},
     missionQueue: {}, missionQueueVerarbeitet: null,
     missionAuswertungErledigt: {},
@@ -186,7 +186,7 @@ function xpAddMitDaily(uid, menge, name) {
 function user(uid, name) {
     if (!d.users[uid]) {
         d.users[uid] = {
-            name: name || '', username: null, xp: 0, level: 1,
+            name: name || '', username: null, instagram: null, xp: 0, level: 1,
             warnings: 0, started: false, links: 0, likes: 0,
             role: '🆕 New', lastDaily: null, totalLikes: 0, chats: []
         };
@@ -463,8 +463,19 @@ bot.start(async (ctx) => {
     if (d.warte[uid]) delete d.warte[uid];
     speichern();
     if (istPrivat(ctx.chat.type)) {
-        return ctx.reply('👋 Hallo ' + ctx.from.first_name + '!\n\n✅ Bot gestartet!\n🎉 Du kannst jetzt Links posten!\n\n📋 /help für alle Befehle.');
+    const uid = ctx.from.id;
+    const u = user(uid, ctx.from.first_name);
+
+    if (!u.instagram) {
+        d.instaWarte[uid] = true;
+        speichern();
+
+        return ctx.reply(
+            '📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'
+        );
     }
+   return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
+}
 });
 
 // ================================
@@ -804,6 +815,22 @@ bot.on('new_chat_members', async (ctx) => {
 // ================================
 bot.on('message', async (ctx) => {
     try {
+        if (istPrivat(ctx.chat.type) && d.instaWarte[ctx.from.id]) {
+    const text = ctx.message.text;
+    if (!text) return;
+
+    const clean = text.replace('@', '').trim();
+    const u = user(ctx.from.id, ctx.from.first_name);
+
+    u.instagram = clean;
+    delete d.instaWarte[ctx.from.id];
+
+    speichern();
+
+    await ctx.reply('✅ Instagram gespeichert: @' + clean);
+    return;
+}
+
         if (!ctx.message || !ctx.from) return;
         if (!istGruppe(ctx.chat.type)) return;
 

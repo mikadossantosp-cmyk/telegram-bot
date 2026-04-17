@@ -53,6 +53,7 @@ function laden() {
                 const link = d.links[k];
                 link.likes = new Set(Array.isArray(link.likes) ? link.likes : []);
                 link.msgId = Number(k);
+                if (!link.likerNames) link.likerNames = {};
                 if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
             }
             if (!d.dailyXP) d.dailyXP = {};
@@ -625,6 +626,33 @@ bot.command('dashboard', async (ctx) => {
     t1 += 'TOP 3: ';
     top3.forEach(([uid, xp], i) => { t1 += (i + 1) + '. ' + d.users[uid].name + '(' + xp + ') '; });
     await ctx.telegram.sendMessage(ctx.from.id, t1);
+    let tLinks = '🔗 HEUTIGE LINKS + LIKES\n\n';
+
+for (const l of hLinks) {
+    const likerListe = Object.values(l.likerNames || {});
+    
+    tLinks += '👤 ' + l.user_name + '\n';
+    tLinks += '🔗 ' + l.text + '\n';
+    tLinks += '👍 ' + likerListe.length + ' Likes\n';
+
+    if (likerListe.length > 0) {
+        tLinks += '❤️ Geliked von:\n';
+        tLinks += likerListe.map(n => ' - ' + n).join('\n') + '\n';
+    } else {
+        tLinks += '❌ Noch keine Likes\n';
+    }
+
+    tLinks += '\n----------------\n\n';
+
+    if (tLinks.length > 3500) {
+        await ctx.telegram.sendMessage(ctx.from.id, tLinks);
+        tLinks = '';
+    }
+}
+
+if (tLinks.length > 0) {
+    await ctx.telegram.sendMessage(ctx.from.id, tLinks);
+}
 
     let t2 = 'ALLE USER\n\n';
     for (const [uid, u] of alleUser.sort((a, b) => b[1].xp - a[1].xp)) {

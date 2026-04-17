@@ -1341,6 +1341,8 @@ async function zeitCheck() {
 if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
     const now = Date.now();
     const percent = Math.round((d.xpEvent.multiplier - 1) * 100);
+    const dauerMin = Math.round((d.xpEvent.end - d.xpEvent.start) / 60000);
+const endZeit = new Date(d.xpEvent.end).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
     if (!d.xpEvent.announced && now >= d.xpEvent.start - 1800000 && now < d.xpEvent.start) {
@@ -1348,7 +1350,7 @@ if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
 
         gruppen.forEach(g => {
             bot.telegram.sendMessage(g.id,
-                `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP in 30 Minuten!`,
+                `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten`
                 { parse_mode: 'Markdown' }
             ).catch(() => {});
         });
@@ -1357,11 +1359,11 @@ if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
     }
 
     if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
-        d.xpEvent.aktiv = true;
+    d.xpEvent.aktiv = true;
 
         gruppen.forEach(g => {
             bot.telegram.sendMessage(g.id,
-                `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP aktiv!`,
+                `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten\n🕒 Ende: ${endZeit}`
                 { parse_mode: 'Markdown' }
             ).catch(() => {});
         });
@@ -1374,7 +1376,7 @@ if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
 
         gruppen.forEach(g => {
             bot.telegram.sendMessage(g.id,
-                `⏱️ *XP EVENT BEENDET*\n\nXP wieder normal.`,
+                `⏱️ *XP EVENT BEENDET*\n\n🔥 Event vorbei\n📉 XP wieder normal`
                 { parse_mode: 'Markdown' }
             ).catch(() => {});
         });

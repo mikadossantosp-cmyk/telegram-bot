@@ -1343,6 +1343,42 @@ app.get('/dashboard', (req, res) => {
     const topLinksList = Object.values(d.links).sort((a, b) => (b.likes?.size || 0) - (a.likes?.size || 0)).slice(0, 5);
     const noInsta = Object.values(d.users).filter(u => !u.instagram);
 
+    // ── NEU: Rankings (Feature 1) ──────────────────────────────────────────
+    const gesamtRanking = Object.entries(d.users)
+        .filter(([uid]) => !istAdminId(uid))
+        .sort((a, b) => (b[1].xp || 0) - (a[1].xp || 0))
+        .slice(0, 10);
+
+    const dailyRanking = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid] && !istAdminId(uid))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const weeklyRanking = Object.entries(d.weeklyXP)
+        .filter(([uid]) => d.users[uid] && !istAdminId(uid))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const rankRow = (i, name, xp) =>
+        `<div style="padding:6px 0; border-bottom:1px solid #334155">
+            ${medals[i] || `#${i+1}`} &nbsp; <b>${name}</b> &nbsp;
+            <span style="color:#facc15">${xp} XP</span>
+        </div>`;
+    // ── Ende Feature 1 ────────────────────────────────────────────────────
+
+    // ── NEU: Missionen Übersicht (Feature 2) ──────────────────────────────
+    let m1Count = 0, m2Count = 0, m3Count = 0;
+    for (const [uid, m] of Object.entries(d.missionen)) {
+        if (istAdminId(uid)) continue;
+        if (m.date === today) {
+            if (m.m1) m1Count++;
+            if (m.m2) m2Count++;
+            if (m.m3) m3Count++;
+        }
+    }
+    // ── Ende Feature 2 ────────────────────────────────────────────────────
+
     let html = `
     <html>
     <head>
@@ -1353,12 +1389,18 @@ app.get('/dashboard', (req, res) => {
             .stats { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
             .card { background: #1e293b; padding: 15px; border-radius: 12px; flex: 1; min-width: 120px; text-align: center; font-size: 20px; font-weight: bold; }
             .box { background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+            .rankings { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px; }
+            .rankings .box { flex: 1; min-width: 240px; margin-bottom: 0; }
             .user { padding: 10px; border-bottom: 1px solid #334155; }
             .link { background: #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
             a { color: #38bdf8; text-decoration: none; margin-right: 10px; }
             .danger { color: #ef4444; }
+            .warn-btn { color: #f97316; }
+            .xp-btn { color: #facc15; }
             input { padding: 10px; width: 100%; margin-bottom: 15px; border-radius: 8px; border: none; background: #334155; color: white; }
             h2 { margin-top: 0; }
+            .mission-stats { display: flex; gap: 10px; flex-wrap: wrap; }
+            .mission-card { background: #334155; border-radius: 10px; padding: 12px 20px; text-align: center; flex: 1; min-width: 100px; }
         </style>
         <script>
             function filterUsers() {
@@ -1377,10 +1419,39 @@ app.get('/dashboard', (req, res) => {
             <div class="card">🔥 ${todayLinks}</div>
         </div>
 
+        <!-- NEU: Missionen Übersicht (Feature 2) -->
         <div class="box">
-            <h2>🏆 Top User</h2>
-            ${topUsers.map(u => `${u.name || 'User'} — ${u.xp || 0} XP`).join('<br>')}
+            <h2>🎯 Missionen heute</h2>
+            <div class="mission-stats">
+                <div class="mission-card">✅ M1<br><b style="font-size:22px">${m1Count}</b><br><small>User</small></div>
+                <div class="mission-card">✅ M2<br><b style="font-size:22px">${m2Count}</b><br><small>User</small></div>
+                <div class="mission-card">✅ M3<br><b style="font-size:22px">${m3Count}</b><br><small>User</small></div>
+            </div>
         </div>
+        <!-- Ende Feature 2 -->
+
+        <!-- NEU: Rankings (Feature 1) -->
+        <div class="rankings">
+            <div class="box">
+                <h2>🏆 Gesamt Ranking</h2>
+                ${gesamtRanking.length
+                    ? gesamtRanking.map(([, u], i) => rankRow(i, u.name || 'User', u.xp || 0)).join('')
+                    : '<small style="color:#64748b">Keine Daten</small>'}
+            </div>
+            <div class="box">
+                <h2>📅 Daily Ranking</h2>
+                ${dailyRanking.length
+                    ? dailyRanking.map(([uid, xp], i) => rankRow(i, d.users[uid]?.name || 'User', xp)).join('')
+                    : '<small style="color:#64748b">Heute noch keine XP</small>'}
+            </div>
+            <div class="box">
+                <h2>📆 Weekly Ranking</h2>
+                ${weeklyRanking.length
+                    ? weeklyRanking.map(([uid, xp], i) => rankRow(i, d.users[uid]?.name || 'User', xp)).join('')
+                    : '<small style="color:#64748b">Diese Woche noch keine XP</small>'}
+            </div>
+        </div>
+        <!-- Ende Feature 1 -->
 
         <div class="box">
             <h2>🔥 Top Links</h2>
@@ -1401,7 +1472,11 @@ app.get('/dashboard', (req, res) => {
                     📸 ${u.instagram ? '@' + u.instagram : '❌ kein Instagram'}<br>
                     ⭐ XP: ${u.xp || 0} | ${u.role || '-'} | ⚠️ Warns: ${u.warnings || 0}/5<br>
                     <a href="/reset-user?id=${id}" class="danger">🔴 XP Reset</a>
-                    <a href="/remove-warn?id=${id}">⚠️ Warn Reset</a>
+                    <a href="/remove-warn?id=${id}" class="warn-btn">⚠️ Warn Reset</a>
+                    <!-- NEU: XP Abziehen Buttons (Feature 4) -->
+                    <a href="/remove-xp?id=${id}&amount=10" class="xp-btn">➖ 10 XP</a>
+                    <a href="/remove-xp?id=${id}&amount=50" class="xp-btn">➖ 50 XP</a>
+                    <!-- Ende Feature 4 -->
                 </div>
             `).join('')}
         </div>
@@ -1442,6 +1517,22 @@ app.get('/delete-link', (req, res) => {
     if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
     res.redirect('/dashboard');
 });
+
+// ── NEU: XP Abziehen Route (Feature 3) ────────────────────────────────────
+app.get('/remove-xp', (req, res) => {
+    const uid = req.query.id;
+    const amount = parseInt(req.query.amount) || 0;
+    if (d.users[uid] && amount > 0) {
+        // XP abziehen, aber nicht unter 0
+        d.users[uid].xp = Math.max(0, (d.users[uid].xp || 0) - amount);
+        // Level & Badge neu berechnen (bestehende Funktionen)
+        d.users[uid].level = level(d.users[uid].xp);
+        d.users[uid].role  = badge(d.users[uid].xp);
+        speichern();
+    }
+    res.redirect('/dashboard');
+});
+// ── Ende Feature 3 ────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });

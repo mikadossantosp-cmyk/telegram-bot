@@ -25,7 +25,7 @@ let d = {
     dailyReset: null, weeklyReset: null,
     bonusLinks: {},
     wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
-    warteNachricht: {}, dmNachrichten: {},
+    warteNachricht: {}, dmNachrichten: {}, instaWarte: {},
     missionen: {}, wochenMissionen: {},
     missionQueue: {}, missionQueueVerarbeitet: null,
     missionAuswertungErledigt: {},
@@ -43,6 +43,7 @@ function laden() {
             d = Object.assign({}, d, geladen);
             for (const uid in d.users) {
                 d.users[uid].started = true;
+                if (!d.users[uid].instagram) d.users[uid].instagram = null;
                 if (istAdminId(Number(uid))) {
                     d.users[uid].xp = 0;
                     d.users[uid].level = 1;
@@ -53,6 +54,7 @@ function laden() {
                 const link = d.links[k];
                 link.likes = new Set(Array.isArray(link.likes) ? link.likes : []);
                 link.msgId = Number(k);
+                if (!link.likerNames) link.likerNames = {};
                 if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
             }
             if (!d.dailyXP) d.dailyXP = {};
@@ -62,6 +64,7 @@ function laden() {
             if (!d.wochenMissionen) d.wochenMissionen = {};
             if (!d.warteNachricht) d.warteNachricht = {};
             if (!d.dmNachrichten) d.dmNachrichten = {};
+            if (!d.instaWarte) d.instaWarte = {};
             if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { aktiv: true, gewinner: [], letzteAuslosung: null };
             if (!d.missionQueue) d.missionQueue = {};
             if (!d.gesternDailyXP) d.gesternDailyXP = {};
@@ -113,7 +116,41 @@ function speichernDebounced() {
 
 setInterval(speichern, 30000);
 laden();
+async function checkInstagramForAllUsers(bot) {
+    console.log('📸 Starte Instagram Check...');
 
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        if (!u.started) continue;
+        if (u.instagram && u.instagram.trim() !== '') continue;
+        if (d.instaWarte[uid]) continue;
+
+        try {
+            await bot.telegram.sendMessage(
+    Number(uid),
+    '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)',
+    {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+            ]
+        }
+    }
+);
+
+            d.instaWarte[uid] = true;
+
+            console.log('✅ DM gesendet an', uid);
+
+            await new Promise(r => setTimeout(r, 150));
+
+        } catch (e) {
+            console.log('❌ DM fehlgeschlagen bei', uid);
+        }
+    }
+
+    speichern();
+}
 // ================================
 // BACKUP
 // ================================
@@ -185,7 +222,7 @@ function xpAddMitDaily(uid, menge, name) {
 function user(uid, name) {
     if (!d.users[uid]) {
         d.users[uid] = {
-            name: name || '', username: null, xp: 0, level: 1,
+            name: name || '', username: null, instagram: null, xp: 0, level: 1,
             warnings: 0, started: false, links: 0, likes: 0,
             role: '🆕 New', lastDaily: null, totalLikes: 0, chats: []
         };
@@ -452,18 +489,31 @@ bot.use(async (ctx, next) => {
 // /start
 // ================================
 bot.start(async (ctx) => {
-    const uid = ctx.from.id;
-    const u = user(uid, ctx.from.first_name);
-    u.started = true;
-    if (d.warteNachricht && d.warteNachricht[uid]) {
-        try { const { chatId, msgId } = d.warteNachricht[uid]; await bot.telegram.deleteMessage(chatId, msgId); } catch (e) {}
-        delete d.warteNachricht[uid];
+const uid = ctx.from.id;
+const u = user(uid, ctx.from.first_name);
+u.started = true;
+// alte Warte-Nachrichten löschen
+if (d.warteNachricht && d.warteNachricht[uid]) {
+    try {
+        const { chatId, msgId } = d.warteNachricht[uid];
+        await bot.telegram.deleteMessage(chatId, msgId);
+    } catch (e) {}
+    delete d.warteNachricht[uid];
+}
+if (d.warte[uid]) delete d.warte[uid];
+speichern();
+// 👉 NUR in DM
+if (istPrivat(ctx.chat.type)) {
+ // 👉 Wenn kein Instagram gesetzt
+    if (!u.instagram) {
+        d.instaWarte[uid] = true;
+        speichern();
+  return ctx.reply(
+    '📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'
+        );
     }
-    if (d.warte[uid]) delete d.warte[uid];
-    speichern();
-    if (istPrivat(ctx.chat.type)) {
-        return ctx.reply('👋 Hallo ' + ctx.from.first_name + '!\n\n✅ Bot gestartet!\n🎉 Du kannst jetzt Links posten!\n\n📋 /help für alle Befehle.');
-    }
+   return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
+}
 });
 
 // ================================
@@ -523,6 +573,7 @@ bot.command('profile', async (ctx) => {
     const bonusL = d.bonusLinks[uid] || 0;
     await ctx.reply(
         '👤 *' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '*\n' +
+(u.instagram ? '📸 @' + u.instagram + '\n' : '') +
         (u.username ? '@' + u.username + '\n' : '') +
         '🏅 ' + u.role + '\n⭐ XP: ' + u.xp + '\n📅 Heute: ' + (d.dailyXP[uid] || 0) +
         '\n📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n🏆 Rang: #' + rank +
@@ -531,7 +582,22 @@ bot.command('profile', async (ctx) => {
         { parse_mode: 'Markdown' }
     );
 });
+bot.command('setinsta', async (ctx) => {
+const uid = ctx.from.id;
+const u = user(uid, ctx.from.first_name);
+// Nur in DM erlauben
+if (!istPrivat(ctx.chat.type)) {
+    return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
+}
+// Bot wartet jetzt auf neue Eingabe
+d.instaWarte[uid] = true;
+speichern();
 
+return ctx.reply(
+    '📸 Schick mir deinen neuen Instagram Namen.\n\n(z.B. max123)'
+);
+
+});
 // ================================
 // /ranking
 // ================================
@@ -624,12 +690,50 @@ bot.command('dashboard', async (ctx) => {
     t1 += 'M1: ' + m1 + ' M2: ' + m2 + ' M3: ' + m3 + '\n\n';
     t1 += 'TOP 3: ';
     top3.forEach(([uid, xp], i) => { t1 += (i + 1) + '. ' + d.users[uid].name + '(' + xp + ') '; });
-    await ctx.telegram.sendMessage(ctx.from.id, t1);
+    await ctx.telegram.sendMessage(ctx.from.id, t1, {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]
+        ]
+    }
+});
+    let tLinks = '🔗 HEUTIGE LINKS + LIKES\n\n';
+
+for (const l of hLinks) {
+    const likerListe = Object.values(l.likerNames || {});
+    
+    tLinks += '👤 ' + l.user_name + '\n';
+    tLinks += '🔗 ' + l.text + '\n';
+    tLinks += '👍 ' + likerListe.length + ' Likes\n';
+
+    if (likerListe.length > 0) {
+        tLinks += '❤️ Geliked von:\n';
+    tLinks += likerListe.map(liker => {
+    if (typeof liker === 'string') {
+        return ' - ' + liker;
+    }
+    return ' - ' + liker.name + (liker.insta ? ' (@' + liker.insta + ')' : '');
+}).join('\n') + '\n';
+    } else {
+        tLinks += '❌ Noch keine Likes\n';
+    }
+
+    tLinks += '\n----------------\n\n';
+
+    if (tLinks.length > 3500) {
+        await ctx.telegram.sendMessage(ctx.from.id, tLinks);
+        tLinks = '';
+    }
+}
+
+if (tLinks.length > 0) {
+    await ctx.telegram.sendMessage(ctx.from.id, tLinks);
+}
 
     let t2 = 'ALLE USER\n\n';
     for (const [uid, u] of alleUser.sort((a, b) => b[1].xp - a[1].xp)) {
         const m = d.missionen[uid] && d.missionen[uid].date === heute ? d.missionen[uid] : null;
-        t2 += u.name + (u.username ? ' @' + u.username : '') + '\n';
+        t2 += u.name + (u.username ? ' @' + u.username : '')  + (u.instagram ? ' | 📸 @' + u.instagram : ' | ❌ kein Insta') + '\n';
         t2 += '  ' + u.role + ' XP:' + u.xp + ' Heute:' + (d.dailyXP[uid] || 0) + '\n';
         t2 += '  Geliked:' + (gelikedSet.has(Number(uid)) ? 'Ja' : 'Nein') + ' Link:' + (d.tracker[uid] === heute ? 'Ja' : 'Nein') + ' W:' + u.warnings + '/5\n';
         if (m) t2 += '  M1:' + (m.m1 ? 'OK' : 'X') + ' M2:' + (m.m2 ? 'OK' : 'X') + ' M3:' + (m.m3 ? 'OK' : 'X') + '\n';
@@ -776,6 +880,22 @@ bot.on('new_chat_members', async (ctx) => {
 // ================================
 bot.on('message', async (ctx) => {
     try {
+        if (istPrivat(ctx.chat.type) && d.instaWarte[ctx.from.id]) {
+    const text = ctx.message.text;
+    if (!text) return;
+
+    const clean = text.replace('@', '').trim();
+    const u = user(ctx.from.id, ctx.from.first_name);
+
+    u.instagram = clean;
+    delete d.instaWarte[ctx.from.id];
+
+    speichern();
+
+    await ctx.reply('✅ Instagram gespeichert: @' + clean);
+    return;
+}
+
         if (!ctx.message || !ctx.from) return;
         if (!istGruppe(ctx.chat.type)) return;
 
@@ -895,7 +1015,7 @@ bot.on('message', async (ctx) => {
 
             d.links[msgId] = {
                 chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-                text: text, likes: new Set(), counter_msg_id: botMsg.message_id, timestamp: Date.now()
+                text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now()
             };
 
             // Erinnerung für normale User
@@ -963,6 +1083,11 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         lnk.likes.add(uid);
+
+lnk.likerNames[uid] = {
+  name: ctx.from.first_name,
+  insta: d.users[uid]?.instagram || null
+};
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;
@@ -1017,7 +1142,57 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }
 });
+bot.action('remind_insta', async (ctx) => {
+  let count = 0;
 
+  for (const [uid, u] of Object.entries(d.users)) {
+
+    if (!u.started) continue;
+    if (u.instagram && u.instagram.trim() !== '') continue;
+
+    try {
+      await bot.telegram.sendMessage(
+        Number(uid),
+        '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+            ]
+          }
+        }
+      );
+
+      count++;
+      await new Promise(r => setTimeout(r, 100));
+
+    } catch (e) {}
+  }
+
+  await ctx.answerCbQuery(`✅ ${count} User erinnert`);
+});
+ bot.on('text', async (ctx) => {
+   const uid = ctx.from.id;
+
+   if (d.instaWarte[uid]) {
+     if (!d.users[uid]) {
+       d.users[uid] = {
+         name: ctx.from.first_name,
+         xp: 0,
+         role: 'Anfänger',
+         instagram: null
+       };
+     }
+
+     d.users[uid].instagram = ctx.message.text.replace('@', '').trim();
+     d.instaWarte[uid] = false;
+
+     speichern();
+
+     await ctx.reply('✅ Instagram gespeichert: @' + d.users[uid].instagram);
+     return;
+   }
+ });
 // ================================
 // AUTO CONTENT
 // ================================
@@ -1251,6 +1426,9 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // ================================
 // START
 // ================================
-bot.launch().then(() => console.log('🤖 Bot läuft!'));
+bot.launch().then(async () => {
+    console.log('🤖 Bot läuft!');
+    await checkInstagramForAllUsers(bot);
+});
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

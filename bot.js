@@ -43,6 +43,7 @@ function laden() {
             d = Object.assign({}, d, geladen);
             for (const uid in d.users) {
                 d.users[uid].started = true;
+                if (!d.users[uid].instagram) d.users[uid].instagram = null;
                 if (istAdminId(Number(uid))) {
                     d.users[uid].xp = 0;
                     d.users[uid].level = 1;
@@ -1330,6 +1331,9 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // ================================
 // START
 // ================================
-bot.launch().then(() => console.log('🤖 Bot läuft!'));
+bot.launch().then(() => {
+    console.log('🤖 Bot läuft!');
+checkInstagramForAllUsers(bot);
+});
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

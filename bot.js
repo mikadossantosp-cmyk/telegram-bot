@@ -117,27 +117,33 @@ function speichernDebounced() {
 setInterval(speichern, 30000);
 laden();
 async function checkInstagramForAllUsers(bot) {
+    console.log('📸 Starte Instagram Check...');
+
     for (const [uid, u] of Object.entries(d.users)) {
 
-if (!u.started) continue;
-if (!u.instagram) {
-            try {
-                await bot.telegram.sendMessage(
-                    uid,
-                    '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)'
-                );
+        if (!u.started) continue;
+        if (u.instagram) continue;
+        if (d.instaWarte[uid]) continue;
 
-                d.instaWarte[uid] = true;
+        try {
+            await bot.telegram.sendMessage(
+                Number(uid),
+                '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)'
+            );
 
-                await new Promise(r => setTimeout(r, 120));
-            } catch (e) {
-                console.log('DM fehlgeschlagen bei', uid);
-            }
+            d.instaWarte[uid] = true;
+
+            console.log('✅ DM gesendet an', uid);
+
+            await new Promise(r => setTimeout(r, 150));
+
+        } catch (e) {
+            console.log('❌ DM fehlgeschlagen bei', uid);
         }
     }
-speichernDebounced();
-}
 
+    speichern();
+}
 // ================================
 // BACKUP
 // ================================

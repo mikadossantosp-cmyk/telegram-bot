@@ -684,7 +684,7 @@ bot.command('dashboard', async (ctx) => {
     if (!await istAdmin(ctx, uid)) return ctx.reply('❌ Kein Zugriff');
     await ctx.reply('📊 Admin Dashboard:', {
         reply_markup: {
-            inline_keyboard: [[{ text: '🚀 Dashboard öffnen', url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard' }]]
+            inline_keyboard: [[{ text: '🚀 Dashboard öffnen', url: 'https://site--telegram-bot--899dydmn7d7v.code.run/dashboard' }]]
         }
     });
 

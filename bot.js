@@ -1473,37 +1473,37 @@ app.get('/data', (req, res) => {
   res.json(d);
 });
 app.get('/dashboard', (req, res) => {
-  let html = `
-  <html>
-  <head>
+    let html = `
+    <html>
+    <head>
     <title>Dashboard</title>
     <style>
-      body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
-      h1 { color: #00ffcc; }
-      .user { background: #222; padding: 10px; margin: 10px 0; border-radius: 10px; }
+    body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
+    h1 { color: #00ffcc; }
+    .user { background: #222; padding: 10px; margin: 10px 0; border-radius: 10px; }
     </style>
-  </head>
-  <body>
-    <h1>🚀 User Dashboard</h1>
-  `;
+    </head>
+    <body>
+    <h1>📊 User Dashboard</h1>
+    `;
 
-  for (const [id, u] of Object.entries(d.users)) {
-    html += `
-      <div class="user">
+    for (const [id, u] of Object.entries(d.users)) {
+        html += `
+        <div class="user">
         <b>${u.name}</b><br>
-        📸 Insta: ${u.instagram ? u.instagram : '❌'}<br>
+        📸 Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
         ⭐ XP: ${u.xp}<br>
         🎭 Rolle: ${u.role}
-      </div>
+        </div>
+        `;
+    }
+
+    html += `
+    </body>
+    </html>
     `;
-  }
 
-  html += `
-  </body>
-  </html>
-  `;
-
-  res.send(html);
+    res.send(html);
 });
 const PORT = process.env.PORT || 3000;
 

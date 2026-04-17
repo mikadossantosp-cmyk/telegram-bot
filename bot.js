@@ -1463,10 +1463,10 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // ================================
 // START
 // ================================
-bot.launch().then(async () => {
-    console.log('🤖 Bot läuft!');
-    await checkInstagramForAllUsers(bot);
-});
+bot.launch();
+
+console.log('🤖 Bot läuft!');
+await checkInstagramForAllUsers(bot);
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 app.get('/data', (req, res) => {

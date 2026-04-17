@@ -210,33 +210,35 @@ function xpBisNaechstesBadge(xp) {
 function level(xp) { return Math.floor(xp / 100) + 1; }
 
 function xpAdd(uid, menge, name) {
-    if (istAdminId(uid)) return;
+    if (istAdminId(uid)) return 0;
     const u = user(uid, name);
     let finalXP = menge;
-if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
-    finalXP = Math.round(menge * d.xpEvent.multiplier);
-}
-u.xp += finalXP;
+    if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
+        finalXP = Math.round(menge * d.xpEvent.multiplier);
+    }
+    u.xp += finalXP;
     u.level = level(u.xp);
     u.role = badge(u.xp);
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
-    d.weeklyXP[uid] += menge;
+    d.weeklyXP[uid] += finalXP;
+    return finalXP;
 }
 
 function xpAddMitDaily(uid, menge, name) {
-    if (istAdminId(uid)) return;
+    if (istAdminId(uid)) return 0;
     const u = user(uid, name);
     let finalXP = menge;
-if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
-    finalXP = Math.round(menge * d.xpEvent.multiplier);
-}
-u.xp += finalXP;
+    if (d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) {
+        finalXP = Math.round(menge * d.xpEvent.multiplier);
+    }
+    u.xp += finalXP;
     u.level = level(u.xp);
     u.role = badge(u.xp);
     if (!d.dailyXP[uid]) d.dailyXP[uid] = 0;
-    d.dailyXP[uid] += menge;
+    d.dailyXP[uid] += finalXP;
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
-    d.weeklyXP[uid] += menge;
+    d.weeklyXP[uid] += finalXP;
+    return finalXP;
 }
 
 function user(uid, name) {
@@ -1063,9 +1065,10 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
         const istHeutigerLink = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
 
+        let vergebenXP = 0;
         if (!istAdminId(uid)) {
-            if (istHeutigerLink) { xpAddMitDaily(uid, 5, ctx.from.first_name); }
-            else { xpAdd(uid, 5, ctx.from.first_name); }
+            if (istHeutigerLink) { vergebenXP = xpAddMitDaily(uid, 5, ctx.from.first_name); }
+            else { vergebenXP = xpAdd(uid, 5, ctx.from.first_name); }
         }
 
         const msgKey = String(lnk.counter_msg_id);
@@ -1081,9 +1084,12 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
         const liker = user(uid, ctx.from.first_name);
         const nb = xpBisNaechstesBadge(liker.xp);
+        const eventBonus = d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1
+            ? ` (+${Math.round((d.xpEvent.multiplier - 1) * 100)}% Event)`
+            : '';
         const feedbackText = istAdminId(uid)
             ? '✅ Like registriert! (Admin)'
-            : '🎉 +5 XP!\n' + liker.role + ' | ⭐ ' + liker.xp + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
+            : `🎉 +${vergebenXP} XP${eventBonus}\n` + liker.role + ' | ⭐ ' + liker.xp + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
 
         const feedbackMsg = await ctx.reply(feedbackText);
         setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, feedbackMsg.message_id); } catch (e) {} }, 8000);

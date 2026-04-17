@@ -690,7 +690,13 @@ bot.command('dashboard', async (ctx) => {
     t1 += 'M1: ' + m1 + ' M2: ' + m2 + ' M3: ' + m3 + '\n\n';
     t1 += 'TOP 3: ';
     top3.forEach(([uid, xp], i) => { t1 += (i + 1) + '. ' + d.users[uid].name + '(' + xp + ') '; });
-    await ctx.telegram.sendMessage(ctx.from.id, t1);
+    await ctx.telegram.sendMessage(ctx.from.id, t1, {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]
+        ]
+    }
+});
     let tLinks = '🔗 HEUTIGE LINKS + LIKES\n\n';
 
 for (const l of hLinks) {
@@ -722,7 +728,7 @@ if (tLinks.length > 0) {
     let t2 = 'ALLE USER\n\n';
     for (const [uid, u] of alleUser.sort((a, b) => b[1].xp - a[1].xp)) {
         const m = d.missionen[uid] && d.missionen[uid].date === heute ? d.missionen[uid] : null;
-        t2 += u.name + (u.username ? ' @' + u.username : '') + '\n';
+        t2 += u.name + (u.username ? ' @' + u.username : '')  + (u.instagram ? ' | 📸 @' + u.instagram : ' | ❌ kein Insta') + '\n';
         t2 += '  ' + u.role + ' XP:' + u.xp + ' Heute:' + (d.dailyXP[uid] || 0) + '\n';
         t2 += '  Geliked:' + (gelikedSet.has(Number(uid)) ? 'Ja' : 'Nein') + ' Link:' + (d.tracker[uid] === heute ? 'Ja' : 'Nein') + ' W:' + u.warnings + '/5\n';
         if (m) t2 += '  M1:' + (m.m1 ? 'OK' : 'X') + ' M2:' + (m.m2 ? 'OK' : 'X') + ' M3:' + (m.m3 ? 'OK' : 'X') + '\n';
@@ -1126,6 +1132,48 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         speichernDebounced();
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }
+});
+bot.action('set_insta', async (ctx) => {
+    const uid = ctx.from.id;
+
+    d.instaWarte[uid] = true;
+    speichern();
+
+    await ctx.reply(
+        '📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)',
+        { reply_markup: { force_reply: true } }
+    );
+
+    await ctx.answerCbQuery();
+});
+bot.action('remind_insta', async (ctx) => {
+    let count = 0;
+
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        if (!u.started) continue;
+        if (u.instagram && u.instagram.trim() !== '') continue;
+
+        try {
+            await bot.telegram.sendMessage(
+                Number(uid),
+                '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+                        ]
+                    }
+                }
+            );
+
+            count++;
+            await new Promise(r => setTimeout(r, 100));
+
+        } catch (e) {}
+    }
+
+    await ctx.answerCbQuery(`✅ ${count} User erinnert`);
 });
 
 // ================================

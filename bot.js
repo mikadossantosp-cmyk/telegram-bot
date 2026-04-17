@@ -1601,22 +1601,159 @@ app.get('/dashboard', (req, res) => {
       </div>
     `;
   }
+app.get('/dashboard', (req, res) => {
 
-  html += `</div><div class="box"><h2>🔗 Links</h2>`;
+  const totalUsers = Object.keys(d.users).length;
+  const totalLinks = Object.keys(d.links).length;
+  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + (l.likes?.size || 0), 0);
+
+  const today = new Date().toDateString();
+  let todayLinks = 0;
+
+  for (const l of Object.values(d.links)) {
+    if (l.timestamp && new Date(l.timestamp).toDateString() === today) {
+      todayLinks++;
+    }
+  }
+
+  const topUsers = Object.values(d.users)
+    .sort((a, b) => (b.xp || 0) - (a.xp || 0))
+    .slice(0, 5);
+
+  const topLinks = Object.values(d.links)
+    .sort((a,b) => (b.likes?.size || 0) - (a.likes?.size || 0))
+    .slice(0,5);
+
+  const noInsta = Object.values(d.users).filter(u => !u.instagram);
+
+  let html = `
+  <html>
+  <head>
+    <title>Admin Dashboard</title>
+    <meta http-equiv="refresh" content="10">
+
+    <style>
+      body {
+        font-family: system-ui;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 20px;
+      }
+
+      .stats {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+      }
+
+      .card {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 12px;
+        flex: 1;
+        min-width: 120px;
+        text-align: center;
+      }
+
+      .box {
+        background: #1e293b;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+
+      .user {
+        padding: 10px;
+        border-bottom: 1px solid #334155;
+      }
+
+      .link {
+        background: #334155;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+      }
+
+      a {
+        color: #38bdf8;
+        text-decoration: none;
+        margin-right: 10px;
+      }
+
+      .danger { color: #ef4444; }
+    </style>
+  </head>
+
+  <body>
+
+    <h1>📊 Admin Dashboard</h1>
+
+    <div class="stats">
+      <div class="card">👤 ${totalUsers}</div>
+      <div class="card">🔗 ${totalLinks}</div>
+      <div class="card">❤️ ${totalLikes}</div>
+      <div class="card">🔥 ${todayLinks}</div>
+    </div>
+
+    <div class="box">
+      <h2>🏆 Top User</h2>
+  `;
+
+  topUsers.forEach(u => {
+    html += `${u.name || 'Unbekannt'} (${u.xp || 0} XP)<br>`;
+  });
+
+  html += `</div>
+  <div class="box">
+    <h2>🔥 Top Links</h2>`;
+
+  topLinks.forEach(l => {
+    html += `${l.text || 'Link'} (${l.likes?.size || 0} Likes)<br>`;
+  });
+
+  html += `</div>
+  <div class="box">
+    <h2>❌ Ohne Instagram</h2>`;
+
+  noInsta.forEach(u => {
+    html += `${u.name || 'User'}<br>`;
+  });
+
+  html += `</div>
+  <div class="box">
+    <h2>👤 User</h2>`;
+
+  for (const [id, u] of Object.entries(d.users)) {
+    html += `
+      <div class="user">
+        <b>${u.name || 'User'}</b> (${id})<br>
+        Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
+        XP: ${u.xp || 0} | Rolle: ${u.role || '-'}<br>
+
+        <a href="/reset-user?id=${id}" class="danger">🔴 Reset XP</a>
+        <a href="/remove-warn?id=${id}">⚠️ Warn reset</a>
+      </div>
+    `;
+  }
+
+  html += `</div>
+  <div class="box">
+    <h2>🔗 Links</h2>`;
 
   for (const [msgId, link] of Object.entries(d.links)) {
 
     html += `
       <div class="link">
         <a href="${link.text}" target="_blank">${link.text}</a><br>
-        ❤️ ${link.likes.size} Likes<br>
+        ❤️ ${link.likes?.size || 0} Likes<br>
 
         <a href="/delete-link?id=${msgId}" class="danger">🗑️ Löschen</a><br>
     `;
 
     if (link.likerNames) {
-      for (const [uid, liker] of Object.entries(link.likerNames)) {
-        html += `• ${liker.name} ${liker.insta ? '(@' + liker.insta + ')' : ''}<br>`;
+      for (const liker of Object.values(link.likerNames)) {
+        html += `• ${liker.name || 'User'} ${liker.insta ? '(@' + liker.insta + ')' : ''}<br>`;
       }
     }
 
@@ -1624,6 +1761,8 @@ app.get('/dashboard', (req, res) => {
   }
 
   html += `
+  </div>
+
   </body>
   </html>
   `;

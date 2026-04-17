@@ -119,8 +119,8 @@ laden();
 async function checkInstagramForAllUsers(bot) {
     for (const [uid, u] of Object.entries(d.users)) {
 
-        if (!u.instagram && !d.instaWarte[uid]) {
-
+if (!u.started) continue;
+if (!u.instagram) {
             try {
                 await bot.telegram.sendMessage(
                     uid,
@@ -135,8 +135,7 @@ async function checkInstagramForAllUsers(bot) {
             }
         }
     }
-
-    speichern();
+speichernDebounced();
 }
 
 // ================================
@@ -477,25 +476,27 @@ bot.use(async (ctx, next) => {
 // /start
 // ================================
 bot.start(async (ctx) => {
-    const uid = ctx.from.id;
-    const u = user(uid, ctx.from.first_name);
-    u.started = true;
-    if (d.warteNachricht && d.warteNachricht[uid]) {
-        try { const { chatId, msgId } = d.warteNachricht[uid]; await bot.telegram.deleteMessage(chatId, msgId); } catch (e) {}
-        delete d.warteNachricht[uid];
-    }
-    if (d.warte[uid]) delete d.warte[uid];
-    speichern();
-    if (istPrivat(ctx.chat.type)) {
-    const uid = ctx.from.id;
-    const u = user(uid, ctx.from.first_name);
-
+const uid = ctx.from.id;
+const u = user(uid, ctx.from.first_name);
+u.started = true;
+// alte Warte-Nachrichten löschen
+if (d.warteNachricht && d.warteNachricht[uid]) {
+    try {
+        const { chatId, msgId } = d.warteNachricht[uid];
+        await bot.telegram.deleteMessage(chatId, msgId);
+    } catch (e) {}
+    delete d.warteNachricht[uid];
+}
+if (d.warte[uid]) delete d.warte[uid];
+speichern();
+// 👉 NUR in DM
+if (istPrivat(ctx.chat.type)) {
+ // 👉 Wenn kein Instagram gesetzt
     if (!u.instagram) {
         d.instaWarte[uid] = true;
         speichern();
-
-        return ctx.reply(
-            '📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'
+  return ctx.reply(
+    '📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'
         );
     }
    return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
@@ -559,6 +560,7 @@ bot.command('profile', async (ctx) => {
     const bonusL = d.bonusLinks[uid] || 0;
     await ctx.reply(
         '👤 *' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '*\n' +
+(u.instagram ? '📸 @' + u.instagram + '\n' : '') +
         (u.username ? '@' + u.username + '\n' : '') +
         '🏅 ' + u.role + '\n⭐ XP: ' + u.xp + '\n📅 Heute: ' + (d.dailyXP[uid] || 0) +
         '\n📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n🏆 Rang: #' + rank +
@@ -567,7 +569,22 @@ bot.command('profile', async (ctx) => {
         { parse_mode: 'Markdown' }
     );
 });
+bot.command('setinsta', async (ctx) => {
+const uid = ctx.from.id;
+const u = user(uid, ctx.from.first_name);
+// Nur in DM erlauben
+if (!istPrivat(ctx.chat.type)) {
+    return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
+}
+// Bot wartet jetzt auf neue Eingabe
+d.instaWarte[uid] = true;
+speichern();
 
+return ctx.reply(
+    '📸 Schick mir deinen neuen Instagram Namen.\n\n(z.B. max123)'
+);
+
+});
 // ================================
 // /ranking
 // ================================
@@ -1331,9 +1348,10 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // ================================
 // START
 // ================================
-bot.launch().then(() => {
+bot.launch().then(async () => {
     console.log('🤖 Bot läuft!');
-checkInstagramForAllUsers(bot);
+  await 
+    checkInstagramForAllUsers(bot);
 });
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

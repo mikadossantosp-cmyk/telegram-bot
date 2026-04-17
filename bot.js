@@ -1173,27 +1173,27 @@ bot.action('remind_insta', async (ctx) => {
   await ctx.answerCbQuery(`✅ ${count} User erinnert`);
 });
  bot.on('text', async (ctx) => {
-1179   const uid = ctx.from.id;
-1180
-1181   if (d.instaWarte[uid]) {
-1182     if (!d.users[uid]) {
-1183       d.users[uid] = {
-1184         name: ctx.from.first_name,
-1185         xp: 0,
-1186         role: 'Anfänger',
-1187         instagram: null
-1188       };
-1189     }
-1190
-1191     d.users[uid].instagram = ctx.message.text.replace('@', '').trim();
-1192     d.instaWarte[uid] = false;
-1193
-1194     speichern();
-1195
-1196     await ctx.reply('✅ Instagram gespeichert: @' + d.users[uid].instagram);
-1197     return;
-1198   }
-1199 });
+   const uid = ctx.from.id;
+
+   if (d.instaWarte[uid]) {
+     if (!d.users[uid]) {
+       d.users[uid] = {
+         name: ctx.from.first_name,
+         xp: 0,
+         role: 'Anfänger',
+         instagram: null
+       };
+     }
+
+     d.users[uid].instagram = ctx.message.text.replace('@', '').trim();
+     d.instaWarte[uid] = false;
+
+     speichern();
+
+     await ctx.reply('✅ Instagram gespeichert: @' + d.users[uid].instagram);
+     return;
+   }
+ });
 // ================================
 // AUTO CONTENT
 // ================================

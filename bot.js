@@ -709,6 +709,9 @@ for (const l of hLinks) {
     if (likerListe.length > 0) {
         tLinks += '❤️ Geliked von:\n';
     tLinks += likerListe.map(liker => {
+    if (typeof liker === 'string') {
+        return ' - ' + liker;
+    }
     return ' - ' + liker.name + (liker.insta ? ' (@' + liker.insta + ')' : '');
 }).join('\n') + '\n';
     } else {

@@ -1143,48 +1143,36 @@ lnk.likerNames[uid] = {
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }
 });
-bot.action('set_insta', async (ctx) => {
-    const uid = ctx.from.id;
-
-    d.instaWarte[uid] = true;
-    speichern();
-
-    await ctx.reply(
-        '📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)',
-        { reply_markup: { force_reply: true } }
-    );
-
-    await ctx.answerCbQuery();
-});
 bot.action('remind_insta', async (ctx) => {
-    let count = 0;
+  let count = 0;
 
-    for (const [uid, u] of Object.entries(d.users)) {
+  for (const [uid, u] of Object.entries(d.users)) {
 
-        if (!u.started) continue;
-        if (u.instagram && u.instagram.trim() !== '') continue;
+    if (!u.started) continue;
+    if (u.instagram && u.instagram.trim() !== '') continue;
 
-        try {
-            await bot.telegram.sendMessage(
-                Number(uid),
-                '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)',
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
-                    }
-                }
-            );
+    try {
+      await bot.telegram.sendMessage(
+        Number(uid),
+        '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+            ]
+          }
+        }
+      );
 
-            count++;
-            await new Promise(r => setTimeout(r, 100));
+      count++;
+      await new Promise(r => setTimeout(r, 100));
 
-        } catch (e) {}
-    }
+    } catch (e) {}
+  }
 
-    await ctx.answerCbQuery(`✅ ${count} User erinnert`);
+  await ctx.answerCbQuery(`✅ ${count} User erinnert`);
 });
-1178 bot.on('text', async (ctx) => {
+ bot.on('text', async (ctx) => {
 1179   const uid = ctx.from.id;
 1180
 1181   if (d.instaWarte[uid]) {

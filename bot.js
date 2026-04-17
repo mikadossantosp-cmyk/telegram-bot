@@ -1472,10 +1472,99 @@ app.get('/dashboard', (req, res) => {
     <h1>📊 Dashboard</h1>
 
     <div class="stats">
-      <div class="card">👤 ${totalUsers} Users</div>
-      <div class="card">🔗 ${totalLinks} Links</div>
-      <div class="card">❤️ ${totalLikes} Likes</div>
-      <div class="card">🔥 Heute ${todayLinks}</div>
+app.get('/dashboard', (req, res) => {
+
+  const totalUsers = Object.keys(d.users).length;
+  const totalLinks = Object.keys(d.links).length;
+  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + l.likes.size, 0);
+
+  const today = new Date().toDateString();
+  let todayLinks = 0;
+
+  for (const l of Object.values(d.links)) {
+    if (new Date(l.timestamp).toDateString() === today) {
+      todayLinks++;
+    }
+  }
+
+  const topUsers = Object.values(d.users)
+    .sort((a, b) => b.xp - a.xp)
+    .slice(0, 5);
+
+  const topLinks = Object.values(d.links)
+    .sort((a,b) => b.likes.size - a.likes.size)
+    .slice(0,5);
+
+  const noInsta = Object.values(d.users).filter(u => !u.instagram);
+
+  let html = `
+  <html>
+  <head>
+    <title>Admin Dashboard</title>
+
+    <meta http-equiv="refresh" content="10">
+
+    <style>
+      body {
+        font-family: system-ui;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 20px;
+      }
+
+      .stats {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+
+      .card {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 12px;
+        flex: 1;
+        text-align: center;
+      }
+
+      .box {
+        background: #1e293b;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+
+      .user {
+        padding: 10px;
+        border-bottom: 1px solid #334155;
+      }
+
+      .link {
+        background: #334155;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+      }
+
+      a {
+        color: #38bdf8;
+        text-decoration: none;
+        margin-right: 10px;
+      }
+
+      .danger { color: #ef4444; }
+    </style>
+
+  </head>
+
+  <body>
+
+    <h1>📊 Admin Dashboard</h1>
+
+    <div class="stats">
+      <div class="card">👤 ${totalUsers}</div>
+      <div class="card">🔗 ${totalLinks}</div>
+      <div class="card">❤️ ${totalLikes}</div>
+      <div class="card">🔥 ${todayLinks}</div>
     </div>
 
     <div class="box">
@@ -1498,33 +1587,22 @@ app.get('/dashboard', (req, res) => {
     html += `${u.name}<br>`;
   });
 
-  html += `
-    </div>
-
-    <input type="text" id="search" placeholder="User suchen..." onkeyup="filterUsers()">
-
-    <div class="box">
-      <h2>👤 User</h2>
-  `;
+  html += `<div class="box"><h2>👤 User</h2>`;
 
   for (const [id, u] of Object.entries(d.users)) {
     html += `
       <div class="user">
         <b>${u.name}</b> (${id})<br>
         Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
-        XP: ${u.xp} | Rolle: ${u.role}
+        XP: ${u.xp} | Rolle: ${u.role}<br>
+
+        <a href="/reset-user?id=${id}" class="danger">🔴 Reset XP</a>
+        <a href="/remove-warn?id=${id}">⚠️ Warn reset</a>
       </div>
     `;
   }
 
-  html += `
-    </div>
-
-    <input type="text" id="linkSearch" placeholder="Links suchen..." onkeyup="filterLinks()">
-
-    <div class="box">
-      <h2>🔗 Links</h2>
-  `;
+  html += `</div><div class="box"><h2>🔗 Links</h2>`;
 
   for (const [msgId, link] of Object.entries(d.links)) {
 
@@ -1532,14 +1610,13 @@ app.get('/dashboard', (req, res) => {
       <div class="link">
         <a href="${link.text}" target="_blank">${link.text}</a><br>
         ❤️ ${link.likes.size} Likes<br>
+
+        <a href="/delete-link?id=${msgId}" class="danger">🗑️ Löschen</a><br>
     `;
 
     if (link.likerNames) {
       for (const [uid, liker] of Object.entries(link.likerNames)) {
-        html += `
-          • ${liker.name} ${liker.insta ? '(@' + liker.insta + ')' : ''}
-          <br>
-        `;
+        html += `• ${liker.name} ${liker.insta ? '(@' + liker.insta + ')' : ''}<br>`;
       }
     }
 
@@ -1547,13 +1624,48 @@ app.get('/dashboard', (req, res) => {
   }
 
   html += `
-    </div>
-
   </body>
   </html>
   `;
 
   res.send(html);
+});
+
+
+// ================= ADMIN ROUTES =================
+
+app.get('/reset-user', (req, res) => {
+  const uid = req.query.id;
+
+  if (d.users[uid]) {
+    d.users[uid].xp = 0;
+    d.users[uid].level = 1;
+    speichern();
+  }
+
+  res.redirect('/dashboard');
+});
+
+app.get('/remove-warn', (req, res) => {
+  const uid = req.query.id;
+
+  if (d.users[uid]) {
+    d.users[uid].warnings = 0;
+    speichern();
+  }
+
+  res.redirect('/dashboard');
+});
+
+app.get('/delete-link', (req, res) => {
+  const msgId = req.query.id;
+
+  if (d.links[msgId]) {
+    delete d.links[msgId];
+    speichern();
+  }
+
+  res.redirect('/dashboard');
 });
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

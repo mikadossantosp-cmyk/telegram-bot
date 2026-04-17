@@ -1359,38 +1359,76 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 app.get('/data', (req, res) => { res.json(d); });
 
 app.get('/dashboard', (req, res) => {
-    let html = `
-    <html>
-    <head>
-        <title>Dashboard</title>
-        <style>
-            body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
-            .user { background: #222; padding: 10px; margin: 10px 0; border-radius: 8px; }
-        </style>
-    </head>
-    <body>
-        <h1>📊 User Dashboard</h1>
+  let html = `
+  <html>
+  <head>
+    <title>Dashboard</title>
+    <style>
+      body { font-family: Arial; background: #0f172a; color: #fff; padding: 20px; }
+      h1 { color: #38bdf8; }
+      .box { background: #1e293b; padding: 15px; margin-bottom: 20px; border-radius: 10px; }
+      .user { margin-bottom: 10px; }
+      .link { margin-bottom: 15px; padding: 10px; background: #334155; border-radius: 8px; }
+      .likes { color: #22c55e; }
+      .small { font-size: 12px; color: #94a3b8; }
+    </style>
+  </head>
+  <body>
+
+  <h1>📊 Dashboard</h1>
+
+  <div class="box">
+    <h2>👤 User</h2>
+  `;
+
+  for (const [id, u] of Object.entries(d.users)) {
+    html += `
+      <div class="user">
+        <b>${u.name}</b> (${id})<br>
+        Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
+        XP: ${u.xp} | Rolle: ${u.role}
+      </div>
+    `;
+  }
+
+  html += `
+  </div>
+
+  <div class="box">
+    <h2>🔗 Links</h2>
+  `;
+
+  for (const [msgId, link] of Object.entries(d.links)) {
+    html += `
+      <div class="link">
+        <b>Link:</b><br>
+        <a href="${link.text}" target="_blank">${link.text}</a><br><br>
+
+        <span class="likes">❤️ Likes: ${link.likes.size}</span><br>
+        <div class="small">User:</div>
     `;
 
-    for (const [id, u] of Object.entries(d.users)) {
+    if (link.likerNames) {
+      for (const [uid, liker] of Object.entries(link.likerNames)) {
         html += `
-        <div class="user">
-            <b>${u.name}</b><br>
-            Instagram: ${u.instagram ? '@' + u.instagram : '❌'}<br>
-            XP: ${u.xp}<br>
-            Rolle: ${u.role}
-        </div>
+          • ${liker.name} ${liker.insta ? '(@' + liker.insta + ')' : ''}
+          <br>
         `;
+      }
     }
 
-    html += `
-    </body>
-    </html>
-    `;
+    html += `</div>`;
+  }
 
-    res.send(html);
+  html += `
+  </div>
+
+  </body>
+  </html>
+  `;
+
+  res.send(html);
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('🌐 Dashboard läuft auf Port ' + PORT);

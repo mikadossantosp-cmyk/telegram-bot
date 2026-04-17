@@ -859,6 +859,25 @@ bot.command('ankuendigung', async (ctx) => {
     await ctx.reply('📢 *Updates!*\n\n✅ XP permanent\n✅ Missionen\n✅ Badges\n✅ Gewinnspiel\n✅ Ranking System\n\nViel Spaß! 🎉', { parse_mode: 'Markdown' });
 });
 bot.command('time', (ctx) => { ctx.reply('🕒 ' + new Date().toString()); });
+bot.command('dashboard', async (ctx) => {
+  const uid = ctx.from.id;
+
+  if (!isAdminId(uid)) {
+    return ctx.reply('❌ Kein Zugriff');
+  }
+
+  await ctx.reply('📊 Admin Dashboard:', {
+  reply_markup: {
+    inline_keyboard: [
+      [
+        {
+          text: '🚀 Dashboard öffnen',
+          url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard'
+        }
+      ]
+    ]
+  }
+});
 
 // ================================
 // NEUE MITGLIEDER

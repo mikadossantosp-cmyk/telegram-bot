@@ -1172,7 +1172,6 @@ bot.action('remind_insta', async (ctx) => {
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
-                        ]
                     }
                 }
             );

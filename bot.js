@@ -122,7 +122,7 @@ async function checkInstagramForAllUsers(bot) {
     for (const [uid, u] of Object.entries(d.users)) {
 
         if (!u.started) continue;
-        if (u.instagram) continue;
+        if (u.instagram && u.instagram.trim() !== '') continue;
         if (d.instaWarte[uid]) continue;
 
         try {
@@ -1356,8 +1356,7 @@ process.on('uncaughtException', (error) => { console.log('Uncaught:', error.mess
 // ================================
 bot.launch().then(async () => {
     console.log('🤖 Bot läuft!');
-  await 
-    checkInstagramForAllUsers(bot);
+    await checkInstagramForAllUsers(bot);
 });
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

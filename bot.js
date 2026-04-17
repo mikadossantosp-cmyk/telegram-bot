@@ -895,7 +895,7 @@ bot.on('message', async (ctx) => {
 
             d.links[msgId] = {
                 chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-                text: text, likes: new Set(), counter_msg_id: botMsg.message_id, timestamp: Date.now()
+                text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now()
             };
 
             // Erinnerung für normale User
@@ -963,6 +963,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         lnk.likes.add(uid);
+        lnk.likerNames[uid] = ctx.from.first_name;
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;

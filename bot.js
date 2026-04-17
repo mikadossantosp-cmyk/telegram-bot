@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
-
+import express from 'express';
 const BOT_TOKEN = process.env.BOT_TOKEN || "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 if (!BOT_TOKEN || BOT_TOKEN === "DEIN_BOT_TOKEN") {
     console.error("❌ BOT TOKEN FEHLT!");

@@ -1359,28 +1359,105 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 app.get('/data', (req, res) => { res.json(d); });
 
 app.get('/dashboard', (req, res) => {
+
+  const totalUsers = Object.keys(d.users).length;
+  const totalLinks = Object.keys(d.links).length;
+  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + l.likes.size, 0);
+
   let html = `
   <html>
   <head>
     <title>Dashboard</title>
+
     <style>
-      body { font-family: Arial; background: #0f172a; color: #fff; padding: 20px; }
-      h1 { color: #38bdf8; }
-      .box { background: #1e293b; padding: 15px; margin-bottom: 20px; border-radius: 10px; }
-      .user { margin-bottom: 10px; }
-      .link { margin-bottom: 15px; padding: 10px; background: #334155; border-radius: 8px; }
-      .likes { color: #22c55e; }
-      .small { font-size: 12px; color: #94a3b8; }
+      body {
+        font-family: system-ui;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 20px;
+      }
+
+      h1 {
+        margin-bottom: 20px;
+      }
+
+      .stats {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+
+      .card {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 12px;
+        flex: 1;
+        text-align: center;
+        font-size: 18px;
+      }
+
+      .box {
+        background: #1e293b;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+
+      .user {
+        padding: 8px 0;
+        border-bottom: 1px solid #334155;
+      }
+
+      .link {
+        background: #334155;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+      }
+
+      a {
+        color: #38bdf8;
+      }
+
+      input {
+        padding: 10px;
+        width: 100%;
+        margin-bottom: 15px;
+        border-radius: 8px;
+        border: none;
+      }
     </style>
+
+    <script>
+      function filterUsers() {
+        let input = document.getElementById("search").value.toLowerCase();
+        let users = document.getElementsByClassName("user");
+
+        for (let u of users) {
+          u.style.display = u.innerText.toLowerCase().includes(input) ? "" : "none";
+        }
+      }
+    </script>
+
   </head>
+
   <body>
 
-  <h1>📊 Dashboard</h1>
+    <h1>📊 Dashboard</h1>
 
-  <div class="box">
-    <h2>👤 User</h2>
+    <div class="stats">
+      <div class="card">👤 ${totalUsers} Users</div>
+      <div class="card">🔗 ${totalLinks} Links</div>
+      <div class="card">❤️ ${totalLikes} Likes</div>
+    </div>
+
+    <input type="text" id="search" placeholder="User suchen..." onkeyup="filterUsers()">
+
+    <div class="box">
+      <h2>👤 User</h2>
   `;
 
+  // USER LISTE
   for (const [id, u] of Object.entries(d.users)) {
     html += `
       <div class="user">
@@ -1392,20 +1469,19 @@ app.get('/dashboard', (req, res) => {
   }
 
   html += `
-  </div>
+    </div>
 
-  <div class="box">
-    <h2>🔗 Links</h2>
+    <div class="box">
+      <h2>🔗 Links</h2>
   `;
 
+  // LINKS
   for (const [msgId, link] of Object.entries(d.links)) {
+
     html += `
       <div class="link">
-        <b>Link:</b><br>
-        <a href="${link.text}" target="_blank">${link.text}</a><br><br>
-
-        <span class="likes">❤️ Likes: ${link.likes.size}</span><br>
-        <div class="small">User:</div>
+        <a href="${link.text}" target="_blank">${link.text}</a><br>
+        ❤️ ${link.likes.size} Likes<br>
     `;
 
     if (link.likerNames) {
@@ -1421,7 +1497,7 @@ app.get('/dashboard', (req, res) => {
   }
 
   html += `
-  </div>
+    </div>
 
   </body>
   </html>

@@ -708,7 +708,9 @@ for (const l of hLinks) {
 
     if (likerListe.length > 0) {
         tLinks += '❤️ Geliked von:\n';
-        tLinks += likerListe.map(n => ' - ' + n).join('\n') + '\n';
+    tLinks += likerListe.map(liker => {
+    return ' - ' + liker.name + (liker.insta ? ' (@' + liker.insta + ')' : '');
+}).join('\n') + '\n';
     } else {
         tLinks += '❌ Noch keine Likes\n';
     }
@@ -1078,7 +1080,12 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         lnk.likes.add(uid);
-        lnk.likerNames[uid] = ctx.from.first_name;
+        const likerUser = user(uid, ctx.from.first_name);
+
+lnk.likerNames[uid] = {
+    name: ctx.from.first_name,
+    insta: likerUser.instagram || null
+};
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;

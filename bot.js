@@ -127,9 +127,16 @@ async function checkInstagramForAllUsers(bot) {
 
         try {
             await bot.telegram.sendMessage(
-                Number(uid),
-                '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)'
-            );
+    Number(uid),
+    '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)',
+    {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]
+            ]
+        }
+    }
+);
 
             d.instaWarte[uid] = true;
 

@@ -63,6 +63,7 @@ function laden() {
             if (!d.wochenMissionen) d.wochenMissionen = {};
             if (!d.warteNachricht) d.warteNachricht = {};
             if (!d.dmNachrichten) d.dmNachrichten = {};
+            if (!d.instaWarte) d.instaWarte = {};
             if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { aktiv: true, gewinner: [], letzteAuslosung: null };
             if (!d.missionQueue) d.missionQueue = {};
             if (!d.gesternDailyXP) d.gesternDailyXP = {};
@@ -114,6 +115,28 @@ function speichernDebounced() {
 
 setInterval(speichern, 30000);
 laden();
+async function checkInstagramForAllUsers(bot) {
+    for (const [uid, u] of Object.entries(d.users)) {
+
+        if (!u.instagram && !d.instaWarte[uid]) {
+
+            try {
+                await bot.telegram.sendMessage(
+                    uid,
+                    '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)'
+                );
+
+                d.instaWarte[uid] = true;
+
+                await new Promise(r => setTimeout(r, 120));
+            } catch (e) {
+                console.log('DM fehlgeschlagen bei', uid);
+            }
+        }
+    }
+
+    speichern();
+}
 
 // ================================
 // BACKUP

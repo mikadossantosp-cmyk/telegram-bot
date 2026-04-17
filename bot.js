@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 import express from 'express';
+
 const BOT_TOKEN = process.env.BOT_TOKEN || "7909817546:AAF5W5gY-sKl_SNA7Xu45QT54Pr5a5SASzs";
 if (!BOT_TOKEN || BOT_TOKEN === "DEIN_BOT_TOKEN") {
     console.error("❌ BOT TOKEN FEHLT!");
@@ -578,9 +579,7 @@ bot.command('profile', async (ctx) => {
 // ================================
 bot.command('setinsta', async (ctx) => {
     const uid = ctx.from.id;
-    if (!istPrivat(ctx.chat.type)) {
-        return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
-    }
+    if (!istPrivat(ctx.chat.type)) return ctx.reply('❌ Bitte nutze den Befehl im privaten Chat mit dem Bot.');
     d.instaWarte[uid] = true;
     speichern();
     return ctx.reply('📸 Schick mir deinen neuen Instagram Namen.\n\n(z.B. max123)');
@@ -652,18 +651,14 @@ bot.command('stats', async (ctx) => {
 });
 
 // ================================
-// /dashboard (Bot Command)
+// /dashboard
 // ================================
 bot.command('dashboard', async (ctx) => {
     const uid = ctx.from.id;
-    if (!await istAdmin(ctx, uid)) {
-        return ctx.reply('❌ Kein Zugriff');
-    }
+    if (!await istAdmin(ctx, uid)) return ctx.reply('❌ Kein Zugriff');
     await ctx.reply('📊 Admin Dashboard:', {
         reply_markup: {
-            inline_keyboard: [
-                [{ text: '🚀 Dashboard öffnen', url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard' }]
-            ]
+            inline_keyboard: [[{ text: '🚀 Dashboard öffnen', url: 'https://p01--telegram-bot-test--899dydmn7d7v.code.run/dashboard' }]]
         }
     });
 
@@ -691,18 +686,14 @@ bot.command('dashboard', async (ctx) => {
     top3.forEach(([uid, xp], i) => { t1 += (i + 1) + '. ' + d.users[uid].name + '(' + xp + ') '; });
     await ctx.telegram.sendMessage(ctx.from.id, t1, {
         reply_markup: {
-            inline_keyboard: [
-                [{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]
-            ]
+            inline_keyboard: [[{ text: '📸 Alle ohne Insta erinnern', callback_data: 'remind_insta' }]]
         }
     });
 
     let tLinks = '🔗 HEUTIGE LINKS + LIKES\n\n';
     for (const l of hLinks) {
         const likerListe = Object.values(l.likerNames || {});
-        tLinks += '👤 ' + l.user_name + '\n';
-        tLinks += '🔗 ' + l.text + '\n';
-        tLinks += '👍 ' + likerListe.length + ' Likes\n';
+        tLinks += '👤 ' + l.user_name + '\n🔗 ' + l.text + '\n👍 ' + likerListe.length + ' Likes\n';
         if (likerListe.length > 0) {
             tLinks += '❤️ Geliked von:\n';
             tLinks += likerListe.map(liker => {
@@ -713,10 +704,7 @@ bot.command('dashboard', async (ctx) => {
             tLinks += '❌ Noch keine Likes\n';
         }
         tLinks += '\n----------------\n\n';
-        if (tLinks.length > 3500) {
-            await ctx.telegram.sendMessage(ctx.from.id, tLinks);
-            tLinks = '';
-        }
+        if (tLinks.length > 3500) { await ctx.telegram.sendMessage(ctx.from.id, tLinks); tLinks = ''; }
     }
     if (tLinks.length > 0) await ctx.telegram.sendMessage(ctx.from.id, tLinks);
 
@@ -1289,7 +1277,6 @@ async function zeitCheck() {
         const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
         if (h === 3 && m === 0 && d._lastEvents['backup'] !== eventKey) { d._lastEvents['backup'] = eventKey; await backup(); }
-
         if (h === 6 && m === 0 && d._lastEvents['regeln'] !== eventKey) {
             d._lastEvents['regeln'] = eventKey;
             gruppen.forEach(g => {
@@ -1300,7 +1287,6 @@ async function zeitCheck() {
             });
             await gesternRankingPosten();
         }
-
         if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) { d._lastEvents['toplinks'] = eventKey; gruppen.forEach(g => topLinks(g.id)); }
         if (h === 12 && m === 0 && d._lastEvents['missionen'] !== eventKey) { d._lastEvents['missionen'] = eventKey; await missionenAuswerten(); }
         if (h === 22 && m === 0 && d._lastEvents['abendwarnung'] !== eventKey) { d._lastEvents['abendwarnung'] = eventKey; await abendM1Warnung(); }
@@ -1340,473 +1326,133 @@ process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason)
 process.on('uncaughtException', (error) => { console.log('Uncaught:', error.message); });
 
 // ================================
+// EXPRESS SERVER & DASHBOARD
+// ================================
+app.get('/data', (req, res) => { res.json(d); });
+
+app.get('/dashboard', (req, res) => {
+    const totalUsers = Object.keys(d.users).length;
+    const totalLinks = Object.keys(d.links).length;
+    const totalLikes = Object.values(d.links).reduce((sum, l) => sum + (l.likes?.size || 0), 0);
+    const today = new Date().toDateString();
+    let todayLinks = 0;
+    for (const l of Object.values(d.links)) {
+        if (l.timestamp && new Date(l.timestamp).toDateString() === today) todayLinks++;
+    }
+    const topUsers = Object.values(d.users).sort((a, b) => (b.xp || 0) - (a.xp || 0)).slice(0, 5);
+    const topLinksList = Object.values(d.links).sort((a, b) => (b.likes?.size || 0) - (a.likes?.size || 0)).slice(0, 5);
+    const noInsta = Object.values(d.users).filter(u => !u.instagram);
+
+    let html = `
+    <html>
+    <head>
+        <title>Admin Dashboard</title>
+        <meta http-equiv="refresh" content="10">
+        <style>
+            body { font-family: system-ui; background: #0f172a; color: #e2e8f0; padding: 20px; }
+            .stats { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+            .card { background: #1e293b; padding: 15px; border-radius: 12px; flex: 1; min-width: 120px; text-align: center; font-size: 20px; font-weight: bold; }
+            .box { background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+            .user { padding: 10px; border-bottom: 1px solid #334155; }
+            .link { background: #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+            a { color: #38bdf8; text-decoration: none; margin-right: 10px; }
+            .danger { color: #ef4444; }
+            input { padding: 10px; width: 100%; margin-bottom: 15px; border-radius: 8px; border: none; background: #334155; color: white; }
+            h2 { margin-top: 0; }
+        </style>
+        <script>
+            function filterUsers() {
+                let input = document.getElementById("search").value.toLowerCase();
+                let users = document.getElementsByClassName("user");
+                for (let u of users) u.style.display = u.innerText.toLowerCase().includes(input) ? "" : "none";
+            }
+        </script>
+    </head>
+    <body>
+        <h1>📊 Admin Dashboard</h1>
+        <div class="stats">
+            <div class="card">👤 ${totalUsers}</div>
+            <div class="card">🔗 ${totalLinks}</div>
+            <div class="card">❤️ ${totalLikes}</div>
+            <div class="card">🔥 ${todayLinks}</div>
+        </div>
+
+        <div class="box">
+            <h2>🏆 Top User</h2>
+            ${topUsers.map(u => `${u.name || 'User'} — ${u.xp || 0} XP`).join('<br>')}
+        </div>
+
+        <div class="box">
+            <h2>🔥 Top Links</h2>
+            ${topLinksList.map(l => `<a href="${l.text}" target="_blank">${l.text}</a> — ${l.likes?.size || 0} Likes`).join('<br>')}
+        </div>
+
+        <div class="box">
+            <h2>❌ Ohne Instagram (${noInsta.length})</h2>
+            ${noInsta.map(u => u.name || 'User').join('<br>')}
+        </div>
+
+        <div class="box">
+            <h2>👤 Alle User</h2>
+            <input type="text" id="search" placeholder="User suchen..." onkeyup="filterUsers()">
+            ${Object.entries(d.users).sort((a, b) => (b[1].xp || 0) - (a[1].xp || 0)).map(([id, u]) => `
+                <div class="user">
+                    <b>${u.name || 'User'}</b> (${id})<br>
+                    📸 ${u.instagram ? '@' + u.instagram : '❌ kein Instagram'}<br>
+                    ⭐ XP: ${u.xp || 0} | ${u.role || '-'} | ⚠️ Warns: ${u.warnings || 0}/5<br>
+                    <a href="/reset-user?id=${id}" class="danger">🔴 XP Reset</a>
+                    <a href="/remove-warn?id=${id}">⚠️ Warn Reset</a>
+                </div>
+            `).join('')}
+        </div>
+
+        <div class="box">
+            <h2>🔗 Links</h2>
+            ${Object.entries(d.links).map(([msgId, link]) => `
+                <div class="link">
+                    <a href="${link.text}" target="_blank">${link.text}</a><br>
+                    👤 ${link.user_name} | ❤️ ${link.likes?.size || 0} Likes<br>
+                    ${link.likerNames ? Object.values(link.likerNames).map(liker =>
+                        `• ${liker.name || 'User'}${liker.insta ? ' (@' + liker.insta + ')' : ''}`
+                    ).join('<br>') : ''}
+                    <br><a href="/delete-link?id=${msgId}" class="danger">🗑️ Löschen</a>
+                </div>
+            `).join('')}
+        </div>
+    </body>
+    </html>`;
+
+    res.send(html);
+});
+
+app.get('/reset-user', (req, res) => {
+    const uid = req.query.id;
+    if (d.users[uid]) { d.users[uid].xp = 0; d.users[uid].level = 1; speichern(); }
+    res.redirect('/dashboard');
+});
+
+app.get('/remove-warn', (req, res) => {
+    const uid = req.query.id;
+    if (d.users[uid]) { d.users[uid].warnings = 0; speichern(); }
+    res.redirect('/dashboard');
+});
+
+app.get('/delete-link', (req, res) => {
+    const msgId = req.query.id;
+    if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
+    res.redirect('/dashboard');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
+
+// ================================
 // START
 // ================================
 bot.launch();
 console.log('🤖 Bot läuft!');
 
-// FIX: checkInstagramForAllUsers in async IIFE wrappen
-(async () => {
-    await checkInstagramForAllUsers(bot);
-})();
+(async () => { await checkInstagramForAllUsers(bot); })();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-// ================================
-// EXPRESS SERVER
-// ================================
-app.get('/data', (req, res) => { res.json(d); });
-
-app.get('/dashboard', (req, res) => {
-
-  const totalUsers = Object.keys(d.users).length;
-  const totalLinks = Object.keys(d.links).length;
-  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + l.likes.size, 0);
-
-  const today = new Date().toDateString();
-  let todayLinks = 0;
-
-  for (const l of Object.values(d.links)) {
-    if (new Date(l.timestamp).toDateString() === today) {
-      todayLinks++;
-    }
-  }
-
-  const topUsers = Object.values(d.users)
-    .sort((a, b) => b.xp - a.xp)
-    .slice(0, 5);
-
-  const topLinks = Object.values(d.links)
-    .sort((a,b) => b.likes.size - a.likes.size)
-    .slice(0,5);
-
-  const noInsta = Object.values(d.users).filter(u => !u.instagram);
-
-  let html = `
-  <html>
-  <head>
-    <title>Dashboard</title>
-
-    <meta http-equiv="refresh" content="10">
-
-    <style>
-      body {
-        font-family: system-ui;
-        background: #0f172a;
-        color: #e2e8f0;
-        padding: 20px;
-      }
-
-      h1 { margin-bottom: 20px; }
-
-      .stats {
-        display: flex;
-        gap: 15px;
-        margin-bottom: 20px;
-      }
-
-      .card {
-        background: #1e293b;
-        padding: 15px;
-        border-radius: 12px;
-        flex: 1;
-        text-align: center;
-        font-size: 18px;
-      }
-
-      .box {
-        background: #1e293b;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-      }
-
-      .user {
-        padding: 8px 0;
-        border-bottom: 1px solid #334155;
-      }
-
-      .link {
-        background: #334155;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-      }
-
-      a { color: #38bdf8; }
-
-      input {
-        padding: 10px;
-        width: 100%;
-        margin-bottom: 15px;
-        border-radius: 8px;
-        border: none;
-      }
-    </style>
-
-    <script>
-      function filterUsers() {
-        let input = document.getElementById("search").value.toLowerCase();
-        let users = document.getElementsByClassName("user");
-
-        for (let u of users) {
-          u.style.display = u.innerText.toLowerCase().includes(input) ? "" : "none";
-        }
-      }
-
-      function filterLinks() {
-        let input = document.getElementById("linkSearch").value.toLowerCase();
-        let links = document.getElementsByClassName("link");
-
-        for (let l of links) {
-          l.style.display = l.innerText.toLowerCase().includes(input) ? "" : "none";
-        }
-      }
-    </script>
-
-  </head>
-
-  <body>
-
-    <h1>📊 Dashboard</h1>
-
-    <div class="stats">
-app.get('/dashboard', (req, res) => {
-
-  const totalUsers = Object.keys(d.users).length;
-  const totalLinks = Object.keys(d.links).length;
-  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + l.likes.size, 0);
-
-  const today = new Date().toDateString();
-  let todayLinks = 0;
-
-  for (const l of Object.values(d.links)) {
-    if (new Date(l.timestamp).toDateString() === today) {
-      todayLinks++;
-    }
-  }
-
-  const topUsers = Object.values(d.users)
-    .sort((a, b) => b.xp - a.xp)
-    .slice(0, 5);
-
-  const topLinks = Object.values(d.links)
-    .sort((a,b) => b.likes.size - a.likes.size)
-    .slice(0,5);
-
-  const noInsta = Object.values(d.users).filter(u => !u.instagram);
-
-  let html = `
-  <html>
-  <head>
-    <title>Admin Dashboard</title>
-
-    <meta http-equiv="refresh" content="10">
-
-    <style>
-      body {
-        font-family: system-ui;
-        background: #0f172a;
-        color: #e2e8f0;
-        padding: 20px;
-      }
-
-      .stats {
-        display: flex;
-        gap: 15px;
-        margin-bottom: 20px;
-      }
-
-      .card {
-        background: #1e293b;
-        padding: 15px;
-        border-radius: 12px;
-        flex: 1;
-        text-align: center;
-      }
-
-      .box {
-        background: #1e293b;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-      }
-
-      .user {
-        padding: 10px;
-        border-bottom: 1px solid #334155;
-      }
-
-      .link {
-        background: #334155;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-      }
-
-      a {
-        color: #38bdf8;
-        text-decoration: none;
-        margin-right: 10px;
-      }
-
-      .danger { color: #ef4444; }
-    </style>
-
-  </head>
-
-  <body>
-
-    <h1>📊 Admin Dashboard</h1>
-
-    <div class="stats">
-      <div class="card">👤 ${totalUsers}</div>
-      <div class="card">🔗 ${totalLinks}</div>
-      <div class="card">❤️ ${totalLikes}</div>
-      <div class="card">🔥 ${todayLinks}</div>
-    </div>
-
-    <div class="box">
-      <h2>🏆 Top User</h2>
-  `;
-
-  topUsers.forEach(u => {
-    html += `${u.name} (${u.xp} XP)<br>`;
-  });
-
-  html += `</div><div class="box"><h2>🔥 Top Links</h2>`;
-
-  topLinks.forEach(l => {
-    html += `${l.text} (${l.likes.size} Likes)<br>`;
-  });
-
-  html += `</div><div class="box"><h2>❌ Ohne Instagram</h2>`;
-
-  noInsta.forEach(u => {
-    html += `${u.name}<br>`;
-  });
-
-  html += `<div class="box"><h2>👤 User</h2>`;
-
-  for (const [id, u] of Object.entries(d.users)) {
-    html += `
-      <div class="user">
-        <b>${u.name}</b> (${id})<br>
-        Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
-        XP: ${u.xp} | Rolle: ${u.role}<br>
-
-        <a href="/reset-user?id=${id}" class="danger">🔴 Reset XP</a>
-        <a href="/remove-warn?id=${id}">⚠️ Warn reset</a>
-      </div>
-    `;
-  }
-app.get('/dashboard', (req, res) => {
-
-  const totalUsers = Object.keys(d.users).length;
-  const totalLinks = Object.keys(d.links).length;
-  const totalLikes = Object.values(d.links).reduce((sum, l) => sum + (l.likes?.size || 0), 0);
-
-  const today = new Date().toDateString();
-  let todayLinks = 0;
-
-  for (const l of Object.values(d.links)) {
-    if (l.timestamp && new Date(l.timestamp).toDateString() === today) {
-      todayLinks++;
-    }
-  }
-
-  const topUsers = Object.values(d.users)
-    .sort((a, b) => (b.xp || 0) - (a.xp || 0))
-    .slice(0, 5);
-
-  const topLinks = Object.values(d.links)
-    .sort((a,b) => (b.likes?.size || 0) - (a.likes?.size || 0))
-    .slice(0,5);
-
-  const noInsta = Object.values(d.users).filter(u => !u.instagram);
-
-  let html = `
-  <html>
-  <head>
-    <title>Admin Dashboard</title>
-    <meta http-equiv="refresh" content="10">
-
-    <style>
-      body {
-        font-family: system-ui;
-        background: #0f172a;
-        color: #e2e8f0;
-        padding: 20px;
-      }
-
-      .stats {
-        display: flex;
-        gap: 15px;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-      }
-
-      .card {
-        background: #1e293b;
-        padding: 15px;
-        border-radius: 12px;
-        flex: 1;
-        min-width: 120px;
-        text-align: center;
-      }
-
-      .box {
-        background: #1e293b;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-      }
-
-      .user {
-        padding: 10px;
-        border-bottom: 1px solid #334155;
-      }
-
-      .link {
-        background: #334155;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-      }
-
-      a {
-        color: #38bdf8;
-        text-decoration: none;
-        margin-right: 10px;
-      }
-
-      .danger { color: #ef4444; }
-    </style>
-  </head>
-
-  <body>
-
-    <h1>📊 Admin Dashboard</h1>
-
-    <div class="stats">
-      <div class="card">👤 ${totalUsers}</div>
-      <div class="card">🔗 ${totalLinks}</div>
-      <div class="card">❤️ ${totalLikes}</div>
-      <div class="card">🔥 ${todayLinks}</div>
-    </div>
-
-    <div class="box">
-      <h2>🏆 Top User</h2>
-  `;
-
-  topUsers.forEach(u => {
-    html += `${u.name || 'Unbekannt'} (${u.xp || 0} XP)<br>`;
-  });
-
-  html += `</div>
-  <div class="box">
-    <h2>🔥 Top Links</h2>`;
-
-  topLinks.forEach(l => {
-    html += `${l.text || 'Link'} (${l.likes?.size || 0} Likes)<br>`;
-  });
-
-  html += `</div>
-  <div class="box">
-    <h2>❌ Ohne Instagram</h2>`;
-
-  noInsta.forEach(u => {
-    html += `${u.name || 'User'}<br>`;
-  });
-
-  html += `</div>
-  <div class="box">
-    <h2>👤 User</h2>`;
-
-  for (const [id, u] of Object.entries(d.users)) {
-    html += `
-      <div class="user">
-        <b>${u.name || 'User'}</b> (${id})<br>
-        Insta: ${u.instagram ? '@' + u.instagram : '❌'}<br>
-        XP: ${u.xp || 0} | Rolle: ${u.role || '-'}<br>
-
-        <a href="/reset-user?id=${id}" class="danger">🔴 Reset XP</a>
-        <a href="/remove-warn?id=${id}">⚠️ Warn reset</a>
-      </div>
-    `;
-  }
-
-  html += `</div>
-  <div class="box">
-    <h2>🔗 Links</h2>`;
-
-  for (const [msgId, link] of Object.entries(d.links)) {
-
-    html += `
-      <div class="link">
-        <a href="${link.text}" target="_blank">${link.text}</a><br>
-        ❤️ ${link.likes?.size || 0} Likes<br>
-
-        <a href="/delete-link?id=${msgId}" class="danger">🗑️ Löschen</a><br>
-    `;
-
-    if (link.likerNames) {
-      for (const liker of Object.values(link.likerNames)) {
-        html += `• ${liker.name || 'User'} ${liker.insta ? '(@' + liker.insta + ')' : ''}<br>`;
-      }
-    }
-
-    html += `</div>`;
-  }
-
-  html += `
-  </div>
-
-  </body>
-  </html>
-  `;
-
-  res.send(html);
-});
-
-
-// ================= ADMIN ROUTES =================
-
-app.get('/reset-user', (req, res) => {
-  const uid = req.query.id;
-
-  if (d.users[uid]) {
-    d.users[uid].xp = 0;
-    d.users[uid].level = 1;
-    speichern();
-  }
-
-  res.redirect('/dashboard');
-});
-
-app.get('/remove-warn', (req, res) => {
-  const uid = req.query.id;
-
-  if (d.users[uid]) {
-    d.users[uid].warnings = 0;
-    speichern();
-  }
-
-  res.redirect('/dashboard');
-});
-
-app.get('/delete-link', (req, res) => {
-  const msgId = req.query.id;
-
-  if (d.links[msgId]) {
-    delete d.links[msgId];
-    speichern();
-  }
-
-  res.redirect('/dashboard');
-});
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log('🌐 Dashboard läuft auf Port ' + PORT);
-});

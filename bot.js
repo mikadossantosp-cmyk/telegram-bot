@@ -1453,8 +1453,9 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 app.get('/data', (req, res) => {
   res.json(d);
 });
+const PORT = process.env.PORT || 3000;
 
-app.listen(3000, () => {
-  console.log('Dashboard läuft auf Port 3000');
+app.listen(PORT, () => {
+  console.log('🌐 Dashboard läuft auf Port ' + PORT);
 });
 

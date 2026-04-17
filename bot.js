@@ -1083,11 +1083,10 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         lnk.likes.add(uid);
-        const likerUser = user(uid, ctx.from.first_name);
 
 lnk.likerNames[uid] = {
-    name: ctx.from.first_name,
-    insta: likerUser.instagram || null
+  name: ctx.from.first_name,
+  insta: d.users[uid]?.instagram || null
 };
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);

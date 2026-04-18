@@ -585,18 +585,27 @@ bot.command('missionen', async (ctx) => {
 bot.command('profile', async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    const sorted = Object.entries(d.users).filter(([id]) => !istAdminId(id)).sort((a, b) => b[1].xp - a[1].xp);
+
+    const sorted = Object.entries(d.users)
+        .filter(([id]) => !istAdminId(id))
+        .sort((a, b) => b[1].xp - a[1].xp);
+
     const rank = sorted.findIndex(x => x[0] == uid) + 1;
     const bonusL = d.bonusLinks[uid] || 0;
+
     await ctx.reply(
-        '👤 *' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '*\n' +
+        '👤 <b>' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '</b>\n' +
         (u.instagram ? '📸 @' + u.instagram + '\n' : '') +
         (u.username ? '@' + u.username + '\n' : '') +
-        '🏅 ' + u.role + '\n⭐ XP: ' + u.xp + '\n📅 Heute: ' + (d.dailyXP[uid] || 0) +
-        '\n📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n🏆 Rang: #' + rank +
-        '\n🔗 Links: ' + u.links + (bonusL > 0 ? '\n🎁 Bonus: ' + bonusL : '') +
-        '\n👍 Likes: ' + u.totalLikes + '\n⚠️ Warns: ' + u.warnings + '/5',
-        { parse_mode: 'Markdown' }
+        '🏅 ' + u.role + '\n' +
+        '⭐ XP: ' + u.xp + '\n' +
+        '📅 Heute: ' + (d.dailyXP[uid] || 0) + '\n' +
+        '📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n' +
+        '🏆 Rang: #' + rank + '\n' +
+        '🔗 Links: ' + u.links + (bonusL > 0 ? '\n🎁 Bonus: ' + bonusL : '') +
+        '\n👍 Likes: ' + u.totalLikes + '\n' +
+        '⚠️ Warns: ' + u.warnings + '/5',
+        { parse_mode: 'HTML' }
     );
 });
 

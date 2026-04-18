@@ -599,6 +599,7 @@ bot.command('profile', async (ctx) => {
         (u.username ? '@' + u.username + '\n' : '') +
         '🏅 ' + u.role + '\n' +
         '⭐ XP: ' + u.xp + '\n' +
+        '👍 Likes heute: ' + likesHeute + '\n' +
         '📅 Heute: ' + (d.dailyXP[uid] || 0) + '\n' +
         '📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n' +
         '🏆 Rang: #' + rank + '\n' +

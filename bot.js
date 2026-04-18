@@ -593,6 +593,9 @@ bot.command('profile', async (ctx) => {
     const rank = sorted.findIndex(x => x[0] == uid) + 1;
     const bonusL = d.bonusLinks[uid] || 0;
 
+    const mission = getMission(uid);
+    const likesHeute = mission.likesGegeben || 0;
+
     await ctx.reply(
         '👤 <b>' + u.name + (istAdminId(uid) ? ' ⚙️ Admin' : '') + '</b>\n' +
         (u.instagram ? '📸 @' + u.instagram + '\n' : '') +
@@ -603,8 +606,9 @@ bot.command('profile', async (ctx) => {
         '📅 Heute: ' + (d.dailyXP[uid] || 0) + '\n' +
         '📆 Woche: ' + (d.weeklyXP[uid] || 0) + '\n' +
         '🏆 Rang: #' + rank + '\n' +
-        '🔗 Links: ' + u.links + (bonusL > 0 ? '\n🎁 Bonus: ' + bonusL : '') +
-        '\n👍 Likes: ' + u.totalLikes + '\n' +
+        '🔗 Links: ' + u.links +
+        (bonusL > 0 ? '\n🎁 Bonus: ' + bonusL : '') +
+        '\n👍 Likes gesamt: ' + u.totalLikes + '\n' +
         '⚠️ Warns: ' + u.warnings + '/5',
         { parse_mode: 'HTML' }
     );

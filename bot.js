@@ -662,7 +662,7 @@ bot.command('daily', async (ctx) => {
     }
     const bonus = Math.floor(Math.random() * 20) + 10;
     u.lastDaily = jetzt;
-    xpAdd(uid, bonus, ctx.from.first_name);
+    xpAddMitDaily(uid, bonus, ctx.from.first_name);
     speichern();
     await ctx.reply('🎁 *Daily!*\n\n+' + bonus + ' XP!\n⭐ ' + u.xp + '\n🏅 ' + u.role, { parse_mode: 'Markdown' });
 });

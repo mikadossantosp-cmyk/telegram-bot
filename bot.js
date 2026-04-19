@@ -1902,6 +1902,39 @@ app.get('/remove-xp', (req, res) => {
     res.redirect('/dashboard');
 });
 
+// ================================
+// BRIDGE ENDPOINT
+// ================================
+app.use(express.json());
+
+app.post('/bridge-event', async (req, res) => {
+    const secret = req.headers['x-bridge-secret'];
+    if (secret !== (process.env.BRIDGE_SECRET || 'geheimer-key')) 
+        return res.status(403).json({ error: 'Forbidden' });
+
+    const event = req.body;
+    if (!event || !event.type || !event.userId) 
+        return res.status(400).json({ error: 'Ungültig' });
+
+    const uid  = String(event.userId);
+    const name = event.userName || 'Unbekannt';
+
+    if (!d.users[uid]) user(uid, name);
+
+    if (event.type === 'post_forwarded') {
+        xpAddMitDaily(uid, event.xp || 10, name);
+    }
+    if (event.type === 'like_given') {
+        xpAddMitDaily(uid, event.xp || 2, name);
+    }
+    if (event.type === 'like_received') {
+        xpAddMitDaily(uid, event.xp || 5, name);
+    }
+
+    speichernDebounced();
+    console.log(`[BRIDGE] ${event.type} → User ${uid} +${event.xp} XP`);
+    return res.status(200).json({ ok: true });
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

@@ -1900,7 +1900,84 @@ app.get('/remove-xp', (req, res) => {
     }
     res.redirect('/dashboard');
 });
+// ================================
+// BRIDGE ENDPOINT
+// ================================
+app.use(express.json());
 
+app.post('/bridge-event', async (req, res) => {
+    const secret = req.headers['x-bridge-secret'];
+    if (secret !== (process.env.BRIDGE_SECRET || 'geheimer-key'))
+        return res.status(403).json({ error: 'Forbidden' });
+
+    const event = req.body;
+    if (!event || !event.type || !event.userId)
+        return res.status(400).json({ error: 'Ungültig' });
+
+    const uid  = String(event.userId);
+    const name = event.userName || 'Unbekannt';
+
+    if (!d.users[uid]) user(uid, name);
+
+    if (event.type === 'post_forwarded') {
+        if (event.meta && event.meta.groupBMsgId && event.meta.groupBChatId) {
+            const msgId = event.meta.groupBMsgId;
+            const linkData = {
+                chat_id:        event.meta.groupBChatId,
+                user_id:        Number(event.userId),
+                user_name:      event.userName,
+                text:           event.meta.linkText || '',
+                likes:          new Set(),
+                likerNames:     {},
+                counter_msg_id: msgId,
+                timestamp:      Date.now()
+            };
+
+            // Link in d.links speichern
+            d.links[msgId] = linkData;
+
+            // Duplikat verhindern
+            const url = event.meta.linkText || '';
+            if (url && !d.gepostet.includes(url)) {
+                d.gepostet.push(url);
+                if (d.gepostet.length > 2000) d.gepostet.shift();
+            }
+
+            // Kein XP für Poster — aber Link-Counter erhöhen
+            if (!istAdminId(Number(uid))) {
+                d.users[uid].links = (d.users[uid].links || 0) + 1;
+            }
+
+            speichernDebounced();
+
+            // DM an alle User senden
+            await sendeLinkAnAlle(linkData);
+        }
+    }
+
+    if (event.type === 'like_given') {
+        xpAddMitDaily(uid, event.xp || 5, name);
+    }
+
+    if (event.type === 'like_received') {
+        // Poster bekommt keine XP
+    }
+
+    speichernDebounced();
+    console.log(`[BRIDGE] ${event.type} → User ${uid} +${event.xp} XP`);
+    return res.status(200).json({ ok: true });
+});
+
+// XP Event Status Endpoint für Bridge Bot
+app.get('/xp-event-status', (req, res) => {
+    const secret = req.headers['x-bridge-secret'];
+    if (secret !== (process.env.BRIDGE_SECRET || 'geheimer-key'))
+        return res.status(403).json({ error: 'Forbidden' });
+    res.json({
+        aktiv:      d.xpEvent ? d.xpEvent.aktiv : false,
+        multiplier: d.xpEvent ? d.xpEvent.multiplier : 1,
+    });
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

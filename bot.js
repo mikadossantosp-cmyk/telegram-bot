@@ -1922,15 +1922,25 @@ app.post('/bridge-event', async (req, res) => {
     if (!d.users[uid]) user(uid, name);
 
     if (event.type === 'post_forwarded') {
-        xpAddMitDaily(uid, event.xp || 10, name);
+    if (event.meta && event.meta.groupBMsgId && event.meta.groupBChatId) {
+        const linkData = {
+            chat_id: event.meta.groupBChatId,
+            user_id: Number(event.userId),
+            user_name: event.userName,
+            text: event.meta.linkText || '',
+            likes: new Set(),
+            counter_msg_id: event.meta.groupBMsgId,
+            timestamp: Date.now()
+        };
+        await sendeLinkAnAlle(linkData);
     }
-    if (event.type === 'like_given') {
-        xpAddMitDaily(uid, event.xp || 2, name);
-    }
-    if (event.type === 'like_received') {
-        xpAddMitDaily(uid, event.xp || 5, name);
-    }
-
+}
+if (event.type === 'like_given') {
+    xpAddMitDaily(uid, event.xp || 5, name);
+}
+if (event.type === 'like_received') {
+    // Poster bekommt keine XP
+}
     speichernDebounced();
     console.log(`[BRIDGE] ${event.type} → User ${uid} +${event.xp} XP`);
     return res.status(200).json({ ok: true });

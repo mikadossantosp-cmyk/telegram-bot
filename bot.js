@@ -1322,7 +1322,7 @@ async function zeitCheck() {
         if (!d._lastEvents) d._lastEvents = {};
 
         // ============================
-        // BACKUP (BLEIBT)
+        // BACKUP
         // ============================
         if (h === 3 && m === 0 && d._lastEvents['backup'] !== eventKey) {
             d._lastEvents['backup'] = eventKey;
@@ -1330,7 +1330,7 @@ async function zeitCheck() {
         }
 
         // ============================
-        // TOP LINKS (OPTIONAL BLEIBT)
+        // TOP LINKS
         // ============================
         if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) {
             d._lastEvents['toplinks'] = eventKey;
@@ -1339,7 +1339,7 @@ async function zeitCheck() {
         }
 
         // ============================
-        // MISSIONEN AUSWERTUNG (BLEIBT)
+        // MISSIONEN AUSWERTUNG
         // ============================
         if (h === 12 && m === 0 && d._lastEvents['missionen'] !== eventKey) {
             d._lastEvents['missionen'] = eventKey;
@@ -1347,7 +1347,7 @@ async function zeitCheck() {
         }
 
         // ============================
-        // ABEND WARNUNG (BLEIBT)
+        // ABEND WARNUNG
         // ============================
         if (h === 22 && m === 0 && d._lastEvents['abendwarnung'] !== eventKey) {
             d._lastEvents['abendwarnung'] = eventKey;
@@ -1355,7 +1355,7 @@ async function zeitCheck() {
         }
 
         // ============================
-        // LIKE REMINDER (BLEIBT)
+        // LIKE REMINDER
         // ============================
         if (h === 23 && m === 0 && d._lastEvents['reminder'] !== eventKey) {
             d._lastEvents['reminder'] = eventKey;
@@ -1363,7 +1363,15 @@ async function zeitCheck() {
         }
 
         // ============================
-        // ALTE LINKS LÖSCHEN (BLEIBT)
+        // 🔥 DAILY RANKING + RESET (WICHTIG)
+        // ============================
+        if (h === 23 && m === 55 && d._lastEvents['dailyRanking'] !== eventKey) {
+            d._lastEvents['dailyRanking'] = eventKey;
+            await dailyRankingAbschluss();
+        }
+
+        // ============================
+        // ALTE LINKS LÖSCHEN
         // ============================
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
@@ -1389,7 +1397,7 @@ async function zeitCheck() {
         }
 
         // ============================
-        // EVENT CACHE CLEANUP (BLEIBT)
+        // EVENT CACHE CLEANUP
         // ============================
         const heuteStr = jetzt.toDateString();
         for (const key of Object.keys(d._lastEvents)) {

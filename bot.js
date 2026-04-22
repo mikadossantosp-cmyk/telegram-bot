@@ -1529,39 +1529,43 @@ app.post('/bridge-event', async (req, res) => {
     const event = req.body;
     if (!event?.type || !event?.userId) return res.status(400).json({ error: 'Ungültig' });
 
-    const uid  = String(event.userId);
-    const name = event.userName || 'Unbekannt';
-    if (!d.users[uid]) user(uid, name);
+    // Sofort antworten damit Bridge Bot nicht timeout bekommt
+    res.status(200).json({ ok: true });
 
-    if (event.type === 'post_forwarded') {
-        if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {
-            const msgId = event.meta.groupBMsgId;
-            const linkData = {
-                chat_id: event.meta.groupBChatId, user_id: Number(event.userId),
-                user_name: event.userName, text: event.meta.linkText || '',
-                likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now()
-            };
-            d.links[msgId] = linkData;
-            const url = event.meta.linkText || '';
-            if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
-            if (!istAdminId(Number(uid))) d.users[uid].links = (d.users[uid].links || 0) + 1;
-            speichernDebounced();
-            await sendeLinkAnAlle(linkData);
+    // Rest im Hintergrund verarbeiten
+    try {
+        const uid  = String(event.userId);
+        const name = event.userName || 'Unbekannt';
+        if (!d.users[uid]) user(uid, name);
+
+        if (event.type === 'post_forwarded') {
+            if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {
+                const msgId = event.meta.groupBMsgId;
+                const linkData = {
+                    chat_id: event.meta.groupBChatId, user_id: Number(event.userId),
+                    user_name: event.userName, text: event.meta.linkText || '',
+                    likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now()
+                };
+                d.links[msgId] = linkData;
+                const url = event.meta.linkText || '';
+                if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
+                if (!istAdminId(Number(uid))) d.users[uid].links = (d.users[uid].links || 0) + 1;
+                speichernDebounced();
+                await sendeLinkAnAlle(linkData);
+            }
         }
-    }
 
-    if (event.type === 'like_given') {
-        xpAddMitDaily(uid, event.xp || 5, name);
-        // FIX: Mission auch für Bridge-Likes zählen
-        if (!istAdminId(Number(uid)) && event.meta?.linkText) {
-            const mission = getMission(uid);
-            if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
-            await checkMissionen(uid, name);
+        if (event.type === 'like_given') {
+            xpAddMitDaily(uid, event.xp || 5, name);
+            if (!istAdminId(Number(uid)) && event.meta?.linkText) {
+                const mission = getMission(uid);
+                if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
+                await checkMissionen(uid, name);
+            }
         }
-    }
 
-    speichernDebounced();
-    return res.status(200).json({ ok: true });
+        speichernDebounced();
+    } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });
 
 // FIX: XP Event als announced markieren (vom Announcer aufgerufen)

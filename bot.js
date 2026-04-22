@@ -1909,7 +1909,7 @@ app.use(express.json());
 
 app.post('/bridge-event', async (req, res) => {
     const secret = req.headers['x-bridge-secret'];
-    if (secret !== process.env.BRIDGE_SECRET))
+    if (secret !== process.env.BRIDGE_SECRET)
         return res.status(403).json({ error: 'Forbidden' });
 
     const event = req.body;
@@ -1973,7 +1973,7 @@ app.post('/bridge-event', async (req, res) => {
 // XP Event Status Endpoint für Bridge Bot
 app.get('/xp-event-status', (req, res) => {
     const secret = req.headers['x-bridge-secret'];
-    if (secret !== process.env.BRIDGE_SECRET))
+    if (secret !== process.env.BRIDGE_SECRET)
         return res.status(403).json({ error: 'Forbidden' });
     res.json({
         aktiv:      d.xpEvent ? d.xpEvent.aktiv : false,

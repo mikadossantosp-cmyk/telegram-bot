@@ -84,6 +84,10 @@ function laden() {
             if (!d[key]) d[key] = val;
         }
 
+        // FIX: Links nach dem Laden auf max 500 trimmen (verhindert RAM-Overflow nach Crash)
+        const linkKeys = Object.keys(d.links).sort((a, b) => d.links[a].timestamp - d.links[b].timestamp);
+        while (linkKeys.length > 500) { delete d.links[linkKeys.shift()]; }
+
         console.log('✅ Daten geladen');
     } catch (e) { console.log('Ladefehler:', e.message); }
 }
@@ -1144,6 +1148,12 @@ async function zeitCheck() {
         };
 
         if (h === 3  && m === 0)  einmalig('backup',       () => backup());
+        // FIX: Wöchentlicher Reset der Wochenmissionen jeden Montag um 00:05
+        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
+            d.wochenMissionen = {};
+            console.log('✅ Wochenmissionen resettet');
+            speichern();
+        });
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
@@ -1203,6 +1213,9 @@ setInterval(zeitCheck, 60000);
 // EXPRESS & WEB DASHBOARD
 // ================================
 app.get('/data', (req, res) => {
+    // FIX: Secret-Schutz damit nicht jeder die Userdaten sehen kann
+    const secret = req.headers['x-bridge-secret'] || req.query.secret;
+    if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });
     // Likes als Arrays serialisieren für externe Leser
     const out = Object.assign({}, d);
     out.links = {};

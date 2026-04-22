@@ -14,7 +14,9 @@ const app = express();
 
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
-
+const GROUP_A_ID = Number(process.env.GROUP_A_ID);
+const GROUP_B_ID = Number(process.env.GROUP_B_ID);
+const DASHBOARD_URL = process.env.DASHBOARD_URL;
 // ================================
 // DATEN
 // ================================
@@ -697,7 +699,7 @@ bot.command('dashboard', async (ctx) => {
     if (!await istAdmin(ctx, uid)) return ctx.reply('❌ Kein Zugriff');
     await ctx.reply('📊 Admin Dashboard:', {
         reply_markup: {
-            inline_keyboard: [[{ text: '🚀 Dashboard öffnen', url: 'https://site--telegram-bot--899dydmn7d7v.code.run/dashboard' }]]
+            inline_keyboard: [[{ text: '🚀 Dashboard öffnen', url: DASHBOARD_URL }]]
         }
     });
 
@@ -908,11 +910,11 @@ bot.on('message', async (ctx) => {
         const text = ctx.message.text || ctx.message.caption || '';
 
         if (!hatLink(text)) {
-            if (ctx.chat.id === -1003800312818) {
+          if (ctx.chat.id === GROUP_A_ID) {
                 const istAdminMsg = await istAdmin(ctx, uid);
                 if (!istAdminMsg) {
                     try {
-                        await ctx.forwardMessage(-1003906557227);
+                        await ctx.forwardMessage(GROUP_B_ID);
                         await ctx.deleteMessage();
                         const hinweis = await ctx.reply('📨 *' + ctx.from.first_name + '*, deine Nachricht wurde weitergeleitet!\n\n👉 [Hier klicken](https://t.me/c/3906557227/1)', { parse_mode: 'Markdown' });
                         setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, hinweis.message_id); } catch (e) {} }, 30000);
@@ -1907,7 +1909,7 @@ app.use(express.json());
 
 app.post('/bridge-event', async (req, res) => {
     const secret = req.headers['x-bridge-secret'];
-    if (secret !== (process.env.BRIDGE_SECRET || 'geheimer-key'))
+    if (secret !== process.env.BRIDGE_SECRET))
         return res.status(403).json({ error: 'Forbidden' });
 
     const event = req.body;
@@ -1971,7 +1973,7 @@ app.post('/bridge-event', async (req, res) => {
 // XP Event Status Endpoint für Bridge Bot
 app.get('/xp-event-status', (req, res) => {
     const secret = req.headers['x-bridge-secret'];
-    if (secret !== (process.env.BRIDGE_SECRET || 'geheimer-key'))
+    if (secret !== process.env.BRIDGE_SECRET))
         return res.status(403).json({ error: 'Forbidden' });
     res.json({
         aktiv:      d.xpEvent ? d.xpEvent.aktiv : false,

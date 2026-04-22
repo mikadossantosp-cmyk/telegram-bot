@@ -2,17 +2,17 @@ import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 import express from 'express';
 
-const BOT_TOKEN = process.env.BOT_TOKEN || "8406939789:AAHDq3RHOf-nAaUVCL4ZeMduB_KYiBD0i7M";
+const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN || BOT_TOKEN === "DEIN_BOT_TOKEN") {
     console.error("❌ BOT TOKEN FEHLT!");
     process.exit(1);
 }
-const DATA_FILE = '/data/daten.json';
+const DATA_FILE = process.env.DATA_FILE || '/data/daten.json';
 process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 
-const ADMIN_IDS = new Set([1094738615]);
+const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
 // ================================

@@ -13,10 +13,11 @@ const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
-function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 const GROUP_A_ID = Number(process.env.GROUP_A_ID);
 const GROUP_B_ID = Number(process.env.GROUP_B_ID);
 const DASHBOARD_URL = process.env.DASHBOARD_URL;
+function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
+
 // ================================
 // DATEN
 // ================================

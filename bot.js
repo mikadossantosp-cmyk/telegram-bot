@@ -999,6 +999,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
                         msgId:     msgId,
                         likeCount: anz,
                         mapKey:    'B_' + msgId,
+                        botMsgId:  lnk.counter_msg_id,
                     })
                 }).catch(e => console.log('Bridge sync failed:', e.message));
             } catch (e) {}

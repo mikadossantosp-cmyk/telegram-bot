@@ -1256,20 +1256,6 @@ async function dailyRankingAbschluss() {
 }
 
 // ================================
-// GESTERN RANKING
-// ================================
-async function gesternRankingPosten() {
-    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-    const sorted = Object.entries(d.gesternDailyXP).filter(([uid]) => d.users[uid] && !istAdminId(uid)).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    if (!sorted.length) return;
-    const b = ['🥇', '🥈', '🥉'];
-    let text = '🌅 *VORTAGS RANKING*\n\n';
-    if (sorted[0]) text += '🎉 *' + d.users[sorted[0][0]].name + '* war gestern der Beste!\n\n';
-    sorted.forEach(([uid, xp], i) => { text += (b[i] || (i+1) + '.') + ' *' + d.users[uid].name + '*\n   ⭐ ' + xp + ' XP\n\n'; });
-    gruppen.forEach(g => { bot.telegram.sendMessage(g.id, text, { parse_mode: 'Markdown' }).catch(() => {}); });
-}
-
-// ================================
 // GEWINNSPIEL
 // ================================
 async function wochenGewinnspiel() {

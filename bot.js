@@ -1317,33 +1317,59 @@ async function zeitCheck() {
         const jetzt = new Date();
         const h = jetzt.getHours();
         const m = jetzt.getMinutes();
-        const wochentag = jetzt.getDay();
         const eventKey = h + ':' + m + ':' + jetzt.toDateString();
+
         if (!d._lastEvents) d._lastEvents = {};
-        const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
 
-        if (h === 3 && m === 0 && d._lastEvents['backup'] !== eventKey) { d._lastEvents['backup'] = eventKey; await backup(); }
-        if (h === 6 && m === 0 && d._lastEvents['regeln'] !== eventKey) {
-            d._lastEvents['regeln'] = eventKey;
-            gruppen.forEach(g => {
-                bot.telegram.sendMessage(g.id,
-                    '📜 *Regeln*\n\n1️⃣ 1 Link pro Tag\n2️⃣ Keine Duplikate\n3️⃣ Bot starten\n4️⃣ 5 Warns = Ban\n5️⃣ Respekt\n\n👍 Jeden Link liken & kommentieren!\n🔍 Tägliche Kontrollen',
-                    { parse_mode: 'Markdown' }
-                ).catch(() => {});
-            });
-            await gesternRankingPosten();
+        // ============================
+        // BACKUP (BLEIBT)
+        // ============================
+        if (h === 3 && m === 0 && d._lastEvents['backup'] !== eventKey) {
+            d._lastEvents['backup'] = eventKey;
+            await backup();
         }
-        if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) { d._lastEvents['toplinks'] = eventKey; gruppen.forEach(g => topLinks(g.id)); }
-        if (h === 12 && m === 0 && d._lastEvents['missionen'] !== eventKey) { d._lastEvents['missionen'] = eventKey; await missionenAuswerten(); }
-        if (h === 22 && m === 0 && d._lastEvents['abendwarnung'] !== eventKey) { d._lastEvents['abendwarnung'] = eventKey; await abendM1Warnung(); }
-        if (h === 23 && m === 0 && d._lastEvents['reminder'] !== eventKey) { d._lastEvents['reminder'] = eventKey; await likeErinnerung(); }
-        if (h === 23 && m === 55 && d._lastEvents['dailyRanking'] !== eventKey) { d._lastEvents['dailyRanking'] = eventKey; await dailyRankingAbschluss(); }
-        if (wochentag === 0 && h === 20 && m === 0 && d._lastEvents['gewinnspiel'] !== eventKey) { d._lastEvents['gewinnspiel'] = eventKey; await wochenGewinnspiel(); }
 
+        // ============================
+        // TOP LINKS (OPTIONAL BLEIBT)
+        // ============================
+        if (h === 7 && m === 5 && d._lastEvents['toplinks'] !== eventKey) {
+            d._lastEvents['toplinks'] = eventKey;
+            const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
+            gruppen.forEach(g => topLinks(g.id));
+        }
+
+        // ============================
+        // MISSIONEN AUSWERTUNG (BLEIBT)
+        // ============================
+        if (h === 12 && m === 0 && d._lastEvents['missionen'] !== eventKey) {
+            d._lastEvents['missionen'] = eventKey;
+            await missionenAuswerten();
+        }
+
+        // ============================
+        // ABEND WARNUNG (BLEIBT)
+        // ============================
+        if (h === 22 && m === 0 && d._lastEvents['abendwarnung'] !== eventKey) {
+            d._lastEvents['abendwarnung'] = eventKey;
+            await abendM1Warnung();
+        }
+
+        // ============================
+        // LIKE REMINDER (BLEIBT)
+        // ============================
+        if (h === 23 && m === 0 && d._lastEvents['reminder'] !== eventKey) {
+            d._lastEvents['reminder'] = eventKey;
+            await likeErinnerung();
+        }
+
+        // ============================
+        // ALTE LINKS LÖSCHEN (BLEIBT)
+        // ============================
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
             if (Date.now() - l.timestamp > zweiTage) {
                 bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id).catch(() => {});
+
                 const mk = String(l.counter_msg_id);
                 if (d.dmNachrichten && d.dmNachrichten[mk]) {
                     for (const [uid2, dmId] of Object.entries(d.dmNachrichten[mk])) {
@@ -1351,61 +1377,29 @@ async function zeitCheck() {
                     }
                     delete d.dmNachrichten[mk];
                 }
+
                 const lu = linkUrl(l.text);
-                if (lu) { const idx = d.gepostet.indexOf(lu); if (idx !== -1) d.gepostet.splice(idx, 1); }
+                if (lu) {
+                    const idx = d.gepostet.indexOf(lu);
+                    if (idx !== -1) d.gepostet.splice(idx, 1);
+                }
+
                 delete d.links[k];
             }
         }
 
+        // ============================
+        // EVENT CACHE CLEANUP (BLEIBT)
+        // ============================
         const heuteStr = jetzt.toDateString();
-        for (const key of Object.keys(d._lastEvents)) { if (!key.endsWith(heuteStr)) delete d._lastEvents[key]; }
-
-        // XP EVENT SYSTEM
-        if (d.xpEvent && d.xpEvent.start && d.xpEvent.end) {
-            const now = Date.now();
-            const percent = Math.round((d.xpEvent.multiplier - 1) * 100);
-            const dauerMin = Math.round((d.xpEvent.end - d.xpEvent.start) / 60000);
-            const endZeit = new Date(d.xpEvent.end).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-
-            if (!d.xpEvent.announced && now >= d.xpEvent.start - 1800000 && now < d.xpEvent.start) {
-                d.xpEvent.announced = true;
-                gruppen.forEach(g => {
-                    bot.telegram.sendMessage(g.id,
-                        `📢 *XP EVENT kommt!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten`,
-                        { parse_mode: 'Markdown' }
-                    ).catch(() => {});
-                });
-                speichern();
-            }
-
-            if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
-                d.xpEvent.aktiv = true;
-                gruppen.forEach(g => {
-                    bot.telegram.sendMessage(g.id,
-                        `🚀 *XP EVENT GESTARTET!*\n\n🔥 +${percent}% XP\n⏱️ Dauer: ${dauerMin} Minuten\n🕒 Ende: ${endZeit}`,
-                        { parse_mode: 'Markdown' }
-                    ).catch(() => {});
-                });
-                speichern();
-            }
-
-            if (d.xpEvent.aktiv && now > d.xpEvent.end) {
-                d.xpEvent.aktiv = false;
-                gruppen.forEach(g => {
-                    bot.telegram.sendMessage(g.id,
-                        `⏱️ *XP EVENT BEENDET*\n\n🔥 Event vorbei\n📉 XP wieder normal`,
-                        { parse_mode: 'Markdown' }
-                    ).catch(() => {});
-                });
-                speichern();
-            }
+        for (const key of Object.keys(d._lastEvents)) {
+            if (!key.endsWith(heuteStr)) delete d._lastEvents[key];
         }
 
-    } catch (e) { console.log('ZeitCheck Fehler:', e.message); }
+    } catch (e) {
+        console.log('ZeitCheck Fehler:', e.message);
+    }
 }
-
-setInterval(zeitCheck, 60000);
-
 // ================================
 // GLOBALER ERROR HANDLER
 // ================================

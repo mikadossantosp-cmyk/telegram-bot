@@ -8,12 +8,15 @@ import express from 'express';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
-const DATA_FILE    = process.env.DATA_FILE || '/data/daten.json';
-const DASHBOARD_URL = process.env.DASHBOARD_URL || '';
-const BRIDGE_SECRET = process.env.BRIDGE_SECRET || 'geheimer-key';
-const ADMIN_IDS    = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
-const GROUP_A_ID   = Number(process.env.GROUP_A_ID);
-const GROUP_B_ID   = Number(process.env.GROUP_B_ID);
+const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
+const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
+const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
+// Bridge Bot URL — damit dieser Bot neue Links an Bridge meldet
+const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
+const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
+const GROUP_A_ID     = Number(process.env.GROUP_A_ID);
+const GROUP_B_ID     = Number(process.env.GROUP_B_ID);
+const MEINE_GRUPPE   = 'B'; // Deutsch
 
 process.env.TZ = 'Europe/Berlin';
 
@@ -883,6 +886,26 @@ bot.on('message', async (ctx) => {
                 delete d.links[oldest];
             }
             await sendeLinkAnAlle(d.links[msgId]);
+
+            // Bridge Bot informieren damit Link nach Gruppe C (EN) weitergeleitet wird
+            if (BRIDGE_BOT_URL) {
+                try {
+                    await fetch(BRIDGE_BOT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
+                        body: JSON.stringify({
+                            fromGroup: MEINE_GRUPPE,
+                            msgId:     msgId,
+                            chatId:    ctx.chat.id,
+                            botMsgId:  botMsg.message_id,
+                            linkText:  text,
+                            userName:  ctx.from.first_name,
+                            userId:    uid,
+                            username:  ctx.from.username || null,
+                        })
+                    });
+                } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
+            }
         } else {
             d.links[msgId] = {
                 chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,

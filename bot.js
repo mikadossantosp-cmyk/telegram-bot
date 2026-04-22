@@ -987,6 +987,23 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
             );
         } catch (e) {}
 
+        // Bridge Bot informieren um Like Counter in anderer Gruppe zu updaten
+        if (BRIDGE_BOT_URL) {
+            try {
+                const bridgeSyncUrl = BRIDGE_BOT_URL.replace('/new-link-from-group', '/sync-like');
+                fetch(bridgeSyncUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
+                    body: JSON.stringify({
+                        fromGroup: MEINE_GRUPPE,
+                        msgId:     msgId,
+                        likeCount: anz,
+                        mapKey:    'B_' + lnk.counter_msg_id,
+                    })
+                }).catch(e => console.log('Bridge sync failed:', e.message));
+            } catch (e) {}
+        }
+
         speichernDebounced();
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }

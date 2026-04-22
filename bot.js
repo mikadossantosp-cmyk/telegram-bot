@@ -998,7 +998,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
                         fromGroup: MEINE_GRUPPE,
                         msgId:     msgId,
                         likeCount: anz,
-                        mapKey:    'B_' + lnk.counter_msg_id,
+                        mapKey:    'B_' + msgId,
                     })
                 }).catch(e => console.log('Bridge sync failed:', e.message));
             } catch (e) {}

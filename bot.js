@@ -1204,27 +1204,54 @@ async function sendeLinkAnAlle(linkData) {
 // DAILY RANKING ABSCHLUSS
 // ================================
 async function dailyRankingAbschluss() {
-    const gruppen = Object.values(d.chats).filter(c => istGruppe(c.type));
-    const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0 && !istAdminId(uid)).sort((a, b) => b[1] - a[1]);
+    const sorted = Object.entries(d.dailyXP)
+        .filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0 && !istAdminId(uid))
+        .sort((a, b) => b[1] - a[1]);
+
     if (!sorted.length) return;
-    const bel = [{ xp: 10, links: 1, text: '🥇' }, { xp: 5, links: 0, text: '🥈' }, { xp: 2, links: 0, text: '🥉' }];
-    let rankText = '🏆 *TAGES RANKING*\n\n';
+
+    const bel = [
+        { xp: 10, links: 1, text: '🥇' },
+        { xp: 5,  links: 0, text: '🥈' },
+        { xp: 2,  links: 0, text: '🥉' }
+    ];
+
+    // 🧠 Gewinner bekommen XP + Bonus
     for (let i = 0; i < Math.min(3, sorted.length); i++) {
         const [uid, xp] = sorted[i];
         const u = d.users[uid];
         const b = bel[i];
+
         xpAdd(uid, b.xp, u.name);
-        if (b.links > 0) { if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0; d.bonusLinks[uid] += b.links; }
-        rankText += b.text + ' *' + u.name + '*\n   ⭐ ' + xp + ' XP | +' + b.xp + ' Bonus' + (b.links > 0 ? ' + Extra Link!' : '') + '\n\n';
-        try { await bot.telegram.sendMessage(Number(uid), '🎉 *' + b.text + ' im Ranking!*\n+' + b.xp + ' XP' + (b.links > 0 ? '\n🔗 Extra Link morgen!' : ''), { parse_mode: 'Markdown' }); } catch (e) {}
+
+        if (b.links > 0) {
+            if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
+            d.bonusLinks[uid] += b.links;
+        }
+
+        // Optional: DM an Gewinner
+        try {
+            await bot.telegram.sendMessage(
+                Number(uid),
+                `🎉 *${b.text} im Tagesranking!*\n\n+${b.xp} XP` +
+                (b.links > 0 ? `\n🔗 Extra Link für morgen!` : ''),
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {}
     }
+
+    // 🔥 WICHTIG: Daten sichern für Announcer
     d.gesternDailyXP = Object.assign({}, d.dailyXP);
-    gruppen.forEach(g => { bot.telegram.sendMessage(g.id, rankText, { parse_mode: 'Markdown' }).catch(() => {}); });
+
+    // ❌ KEIN POST IN GRUPPEN MEHR
+
+    // 🔄 Reset
     d.dailyXP = {};
     d.tracker = {};
     d.counter = {};
     d.badgeTracker = {};
     d.dailyReset = Date.now();
+
     speichern();
 }
 

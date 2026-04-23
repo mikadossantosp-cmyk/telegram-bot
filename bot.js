@@ -1658,13 +1658,42 @@ if (userId) uid = String(userId);
         }
 
         if (event.type === 'like_given') {
-            xpAddMitDaily(uid, event.xp || 5, name);
-            if (!istAdminId(Number(uid)) && event.meta?.linkText) {
-                const mission = getMission(uid);
-                if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
-                await checkMissionen(uid, name);
-            }
-        }
+    const { mapKey } = event.meta || {};
+    if (!mapKey) return;
+
+    let link = d.links[mapKey];
+
+    // fallback wenn gruppe anders ist
+    if (!link) {
+        const msgId = mapKey.split('_')[1];
+        link = Object.values(d.links)
+            .find(l => String(l.counter_msg_id) === String(msgId));
+    }
+
+    if (!link) return;
+
+    const uidNum = Number(uid);
+
+    // 🔥 DAS IST DER WICHTIGE FIX
+    if (!link.likes) link.likes = new Set();
+    link.likes.add(uidNum);
+
+    if (!link.likerNames) link.likerNames = {};
+    link.likerNames[uidNum] = {
+        name: name,
+        insta: d.users[uid]?.instagram || null
+    };
+
+    xpAddMitDaily(uid, event.xp || 5, name);
+
+    if (!istAdminId(uid)) {
+        const mission = getMission(uid);
+        if (istInstagramLink(link.text)) mission.likesGegeben++;
+        await checkMissionen(uid, name);
+    }
+
+    speichernDebounced();
+}
         if (event.type === 'like_update') {
     const { mapKey, likeCount } = event.meta || {};
     if (!mapKey) return;
@@ -1681,7 +1710,12 @@ if (userId) uid = String(userId);
     if (!link) return;
 
     // nur Anzeige
-    link.likesCount = likeCount;
+    // 🔥 SICHERSTELLEN dass likes existiert
+if (!link.likes) link.likes = new Set();
+
+// ❗ NICHT überschreiben!
+// nur Anzeige speichern
+link.likesCount = likeCount;
 
     const heute = new Date().toDateString();
 
@@ -1692,10 +1726,10 @@ if (userId) uid = String(userId);
 
         // 🔥 FIX: eigene Links rausfiltern
         const heuteLinks = Object.values(d.links).filter(l =>
-            istInstagramLink(l.text) &&
-            new Date(l.timestamp).toDateString() === heute &&
-            l.user_id !== Number(uid)
-        );
+    istInstagramLink(l.text) &&
+    new Date(l.timestamp).toDateString() === heute &&
+    l.chat_id === GROUP_B_ID // 🔥 NUR Gruppe B
+);
 
         const gesamt = heuteLinks.length;
 

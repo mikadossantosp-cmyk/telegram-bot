@@ -904,6 +904,18 @@ bot.on('message', async (ctx) => {
                             username:  ctx.from.username || null,
                         })
                     });
+                    // Echte Bot Message ID an Bridge melden
+                    const updateUrl = BRIDGE_BOT_URL.replace('/new-link-from-group', '/update-msg-id');
+                    fetch(updateUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
+                        body: JSON.stringify({
+                            fromGroup:    MEINE_GRUPPE,
+                            mapKey:       MEINE_GRUPPE + '_' + msgId,
+                            realBotMsgId: botMsg.message_id,
+                        })
+                    }).catch(e => {});
+                    console.log('Bridge Meldung: msgId=' + msgId + ' botMsgId=' + botMsg.message_id);
                 } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
             }
         } else {

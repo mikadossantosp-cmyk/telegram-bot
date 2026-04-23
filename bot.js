@@ -1012,7 +1012,7 @@ const geliked = heuteLinks.filter(l => {
     if (l.likes && l.likes.has(uid)) return true;
 
     // 🔥 Bridge Likes zählen auch
-    if (typeof l.likesCount === "number" && l.likesCount > 0) return true;
+    if (typeof l.likesCount === "number") return true;
 
     return false;
 }).length;
@@ -1669,41 +1669,24 @@ if (userId) uid = String(userId);
         }
         if (event.type === 'like_update') {
     const { mapKey, likeCount } = event.meta || {};
-    if (!mapKey || typeof likeCount !== 'number') return;
+    if (!mapKey) return;
 
-    // 🔥 DIREKT mapKey verwenden
     let link = d.links[mapKey];
 
-    // 🔥 FALLBACK (dein alter Weg als Backup)
+    // 🔥 fallback wenn falsche gruppe (B/C)
     if (!link) {
         const msgId = mapKey.split('_')[1];
-        link = d.links[msgId] || Object.values(d.links)
+        link = Object.values(d.links)
             .find(l => String(l.counter_msg_id) === String(msgId));
     }
 
-    if (link) {
-        link.likesCount = likeCount;
-        try {
-            await bot.telegram.editMessageText(
-                link.chat_id,
-                link.counter_msg_id,
-                null,
-                '🔗 ' + link.text + '\n\n👍 ' + likeCount + ' Likes',
-                {
-                    reply_markup: Markup.inlineKeyboard([
-                        [Markup.button.callback('👍 Like  |  ' + likeCount, 'like_' + link.counter_msg_id)]
-                    ]).reply_markup
-                }
-            );
-        } catch (e) {
-            console.log('Update error:', e.message);
-        }
-    } else {
-        console.log('❌ Link nicht gefunden für mapKey:', mapKey);
-    }
+    if (!link) return;
+
+    // 🔥 DAS IST DER WICHTIGE TEIL
+    link.likesCount = likeCount;
 
     speichernDebounced();
-}
+        }
     } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });
 

@@ -369,6 +369,7 @@ async function missionenAuswerten() {
             }
         }
         if (gesamtGestern > 0 && prozentGestern >= 0.8) {
+            mission.m2 = true;
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
             if (wMission.letzterTag !== gestern) {
@@ -377,6 +378,7 @@ async function missionenAuswerten() {
             }
         }
         if (gesamtGestern > 0 && gelikedGestern === gesamtGestern) {
+            mission.m3 = true;
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP');
             if (wMission.letzterTag !== gestern) {
@@ -995,6 +997,14 @@ if (!lnk) {
         // Mission zählen
         if (!istAdminId(uid)) {
             const mission = getMission(uid);
+            const heuteLinks = Object.values(d.links)
+    .filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
+
+const geliked = heuteLinks.filter(l => l.likes.has(uid)).length;
+const gesamt = heuteLinks.length;
+
+if (gesamt > 0 && geliked / gesamt >= 0.8) mission.m2 = true;
+if (gesamt > 0 && geliked === gesamt) mission.m3 = true;
             if (istHeutigerLink && istInstagramLink(lnk.text)) mission.likesGegeben++;
             await checkMissionen(uid, ctx.from.first_name);
         }

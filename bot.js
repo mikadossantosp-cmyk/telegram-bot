@@ -355,6 +355,7 @@ async function missionenAuswerten() {
         const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(Number(uid))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
         const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
+        const mission = getMission(uid);
 
         if (queue.m1Pending) {
             xpAdd(uid, 5, name);
@@ -368,7 +369,7 @@ async function missionenAuswerten() {
                 }
             }
         }
-        if (gesamtGestern > 0 && prozentGestern >= 0.8) {
+        if (minLinksVorhanden && prozentGestern >= 0.8) {
             mission.m2 = true;
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
@@ -377,7 +378,7 @@ async function missionenAuswerten() {
                 if (wMission.m2Tage >= 7) { xpAdd(uid, 15, name); meldungen.push('🏆 *Wochen-M2!* +15 XP'); wMission.m2Tage = 0; }
             }
         }
-        if (gesamtGestern > 0 && gelikedGestern === gesamtGestern) {
+        if (minLinksVorhanden && gelikedGestern === gesamtGestern) {
             mission.m3 = true;
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP');

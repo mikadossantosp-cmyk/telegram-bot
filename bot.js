@@ -1008,9 +1008,12 @@ const heuteLinks = Object.values(d.links)
 const gesamt = heuteLinks.length;
 
 const geliked = heuteLinks.filter(l => {
-    if (l.user_id === uid) return false;
+    // 🔥 WICHTIG: eigener Like zählt
     if (l.likes && l.likes.has(uid)) return true;
-    if (l.likesCount && l.likesCount > 0) return true;
+
+    // 🔥 Bridge Likes zählen auch
+    if (typeof l.likesCount === "number" && l.likesCount > 0) return true;
+
     return false;
 }).length;
 

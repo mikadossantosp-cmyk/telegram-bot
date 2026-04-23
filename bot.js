@@ -1576,20 +1576,39 @@ if (userId) uid = String(userId);
         if (uid && !d.users[uid]) user(uid, name);
 
         if (event.type === 'post_forwarded') {
-            if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {
-                const msgId = event.meta.groupBMsgId;
-                const linkData = {
-                    chat_id: event.meta.groupBChatId, user_id: Number(event.userId),
-                    user_name: event.userName, text: event.meta.linkText || '',
-                    likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now()
-                };
-                d.links[msgId] = linkData;
-                const url = event.meta.linkText || '';
-                if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
-                if (!istAdminId(Number(uid))) d.users[uid].links = (d.users[uid].links || 0) + 1;
-                speichernDebounced();
-                await sendeLinkAnAlle(linkData);
-            }
+    if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {
+
+        const msgId = event.meta.groupBMsgId;
+
+        const linkData = {
+            chat_id: event.meta.groupBChatId,
+            user_id: Number(event.userId),
+            user_name: event.userName,
+            text: event.meta.linkText || '',
+            likes: new Set(),
+            likerNames: {},
+            counter_msg_id: msgId,
+            timestamp: Date.now()
+        };
+
+        // ✅ WICHTIG: mapKey verwenden
+        const mapKey = MEINE_GRUPPE + '_' + msgId;
+
+        d.links[mapKey] = linkData;
+
+        const url = event.meta.linkText || '';
+        if (url && !d.gepostet.includes(url)) {
+            d.gepostet.push(url);
+            if (d.gepostet.length > 2000) d.gepostet.shift();
+        }
+
+        if (!istAdminId(Number(uid))) {
+            d.users[uid].links = (d.users[uid].links || 0) + 1;
+        }
+
+        speichernDebounced();
+        await sendeLinkAnAlle(linkData);
+    }
         }
 
         if (event.type === 'like_given') {
@@ -1604,13 +1623,14 @@ if (userId) uid = String(userId);
     const { mapKey, likeCount } = event.meta || {};
     if (!mapKey || typeof likeCount !== 'number') return;
 
-    const msgId = mapKey.split('_')[1];
+    // 🔥 DIREKT mapKey verwenden
+    let link = d.links[mapKey];
 
-    let link = d.links[msgId];
-
-    // 🔥 FIX: fallback Suche
+    // 🔥 FALLBACK (dein alter Weg als Backup)
     if (!link) {
-        link = Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+        const msgId = mapKey.split('_')[1];
+        link = d.links[msgId] || Object.values(d.links)
+            .find(l => String(l.counter_msg_id) === String(msgId));
     }
 
     if (link) {
@@ -1624,7 +1644,7 @@ if (userId) uid = String(userId);
                 '🔗 ' + link.text + '\n\n👍 ' + likeCount + ' Likes',
                 {
                     reply_markup: Markup.inlineKeyboard([
-                        [Markup.button.callback('👍 Like  |  ' + likeCount, 'like_' + msgId)]
+                        [Markup.button.callback('👍 Like  |  ' + likeCount, 'like_' + link.counter_msg_id)]
                     ]).reply_markup
                 }
             );
@@ -1632,7 +1652,7 @@ if (userId) uid = String(userId);
             console.log('Update error:', e.message);
         }
     } else {
-        console.log('❌ Link nicht gefunden für like_update:', msgId);
+        console.log('❌ Link nicht gefunden für mapKey:', mapKey);
     }
 
     speichernDebounced();

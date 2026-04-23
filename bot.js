@@ -1007,12 +1007,7 @@ const heuteLinks = Object.values(d.links)
 
 const gesamt = heuteLinks.length;
 
-const geliked = heuteLinks.filter(l => {
-    if (l.likesCount !== undefined) {
-        return l.likesCount > 0;
-    }
-    return l.likes.has(uid);
-}).length;
+const geliked = heuteLinks.filter(l => l.likes.has(uid)).length;
 
 if (gesamt > 0 && geliked / gesamt >= 0.8) mission.m2 = true;
 if (gesamt > 0 && geliked === gesamt) mission.m3 = true;

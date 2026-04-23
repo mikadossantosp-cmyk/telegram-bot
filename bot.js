@@ -304,7 +304,36 @@ function getMission(uid) {
     }
     return d.missionen[uid];
 }
+function updateMissionProgress(uid) {
+    if (istAdminId(uid)) return;
 
+    const heute = new Date().toDateString();
+    const mission = getMission(uid);
+
+    const heuteLinks = Object.values(d.links).filter(l =>
+        istInstagramLink(l.text) &&
+        new Date(l.timestamp).toDateString() === heute &&
+        l.user_id !== Number(uid)
+    );
+
+    heuteLinks.forEach(l => {
+        if (!l.likes) l.likes = new Set();
+    });
+
+    const gesamt = heuteLinks.length;
+
+    const geliked = heuteLinks.filter(l =>
+        l.likes.has(Number(uid))
+    ).length;
+
+    if (gesamt > 0) {
+        mission.m2 = geliked / gesamt >= 0.8;
+        mission.m3 = geliked === gesamt;
+    } else {
+        mission.m2 = false;
+        mission.m3 = false;
+    }
+}
 function getWochenMission(uid) {
     if (!d.wochenMissionen[uid]) {
         d.wochenMissionen[uid] = { m1Tage: 0, m2Tage: 0, m3Tage: 0, letzterTag: null };
@@ -1000,23 +1029,7 @@ if (!lnk) {
         // Mission zählen
         if (!istAdminId(uid)) {
             const mission = getMission(uid);
-            
-const heuteLinks = Object.values(d.links)
-    .filter(l =>
-        istInstagramLink(l.text) &&
-        new Date(l.timestamp).toDateString() === new Date().toDateString()
-    );
-
-const gesamt = heuteLinks.length;
-const geliked = heuteLinks.filter(l => {
-    // nur eigene Likes zählen!
-    return l.likes && l.likes.has(uid);
-}).length;
-
-if (gesamt > 0) {
-    if (geliked / gesamt >= 0.8) mission.m2 = true;
-    if (geliked === gesamt) mission.m3 = true;
-}
+            updateMissionProgress(uid);
             if (istHeutigerLink && istInstagramLink(lnk.text)) mission.likesGegeben++;
             await checkMissionen(uid, ctx.from.first_name);
         }
@@ -1687,20 +1700,23 @@ if (userId) uid = String(userId);
     xpAddMitDaily(uid, event.xp || 5, name);
 
     if (!istAdminId(uid)) {
-        const mission = getMission(uid);
-     if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
-        await checkMissionen(uid, name);
-    }
+    const mission = getMission(uid);
+
+    updateMissionProgress(uid); // 🔥 DAS FEHLT
+
+    if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
+
+    await checkMissionen(uid, name);
+}
 
     speichernDebounced();
 }
-        if (event.type === 'like_update') {
+if (event.type === 'like_update') {
     const { mapKey, likeCount } = event.meta || {};
     if (!mapKey) return;
 
     let link = d.links[mapKey];
 
-    // fallback
     if (!link) {
         const msgId = mapKey.split('_')[1];
         link = Object.values(d.links)
@@ -1709,40 +1725,18 @@ if (userId) uid = String(userId);
 
     if (!link) return;
 
-    // nur Anzeige
-    // 🔥 SICHERSTELLEN dass likes existiert
-if (!link.likes) link.likes = new Set();
+    if (!link.likes) link.likes = new Set();
 
-// ❗ NICHT überschreiben!
-// nur Anzeige speichern
-link.likesCount = likeCount;
+    link.likesCount = likeCount;
 
-    const heute = new Date().toDateString();
-
+    // 🔥 NEU: Missionen korrekt updaten
     for (const uid in d.users) {
         if (istAdminId(uid)) continue;
-
-        const mission = getMission(uid);
-
-        // 🔥 FIX: eigene Links rausfiltern
-        const heuteLinks = Object.values(d.links).filter(l =>
-    istInstagramLink(l.text) &&
-    new Date(l.timestamp).toDateString() === heute
-);
-        const gesamt = heuteLinks.length;
-
-        const geliked = heuteLinks.filter(l =>
-            l.likes && l.likes.has(Number(uid))
-        ).length;
-
-        if (gesamt > 0) {
-            mission.m2 = geliked / gesamt >= 0.8;
-            mission.m3 = geliked === gesamt;
-        }
+        updateMissionProgress(uid);
     }
 
     speichernDebounced();
-        }
+}
     } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });
 

@@ -1605,11 +1605,15 @@ if (userId) uid = String(userId);
     if (!mapKey || typeof likeCount !== 'number') return;
 
     const msgId = mapKey.split('_')[1];
-    const link = d.links[msgId];
+
+    let link = d.links[msgId];
+
+    // 🔥 FIX: fallback Suche
+    if (!link) {
+        link = Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+    }
 
     if (link) {
-
-        // 🔥 Likes im Speicher richtig setzen (wichtig für Dashboard & Rankings)
         link.likes = new Set(Array.from({ length: likeCount }, (_, i) => i));
 
         try {
@@ -1627,6 +1631,8 @@ if (userId) uid = String(userId);
         } catch (e) {
             console.log('Update error:', e.message);
         }
+    } else {
+        console.log('❌ Link nicht gefunden für like_update:', msgId);
     }
 
     speichernDebounced();

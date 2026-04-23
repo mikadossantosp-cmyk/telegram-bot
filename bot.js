@@ -863,13 +863,19 @@ bot.on('message', async (ctx) => {
                     { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + msgId)]]).reply_markup }
                 );
             } catch (e) { console.log('Fehler beim Posten:', e.message); speichern(); return; }
+const mapKey = MEINE_GRUPPE + '_' + msgId;
 
-            d.links[msgId] = {
-                chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-                text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now()
-            };
-
-            if (!istAdminId(uid)) {
+d.links[mapKey] = {
+    chat_id: ctx.chat.id,
+    user_id: uid,
+    user_name: ctx.from.first_name,
+    text: text,
+    likes: new Set(),
+    likerNames: {},
+    counter_msg_id: botMsg.message_id,
+    timestamp: Date.now()
+};
+         if (!istAdminId(uid)) {
                 try {
                     const erin = await bot.telegram.sendMessage(ctx.chat.id,
                         '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
@@ -885,7 +891,7 @@ bot.on('message', async (ctx) => {
                 const oldest = linkKeys.sort((a, b) => d.links[a].timestamp - d.links[b].timestamp)[0];
                 delete d.links[oldest];
             }
-            await sendeLinkAnAlle(d.links[msgId]);
+            await sendeLinkAnAlle(d.links[mapKey]);
 
             // Bridge Bot informieren damit Link nach Gruppe C (EN) weitergeleitet wird
             if (BRIDGE_BOT_URL) {
@@ -919,10 +925,17 @@ bot.on('message', async (ctx) => {
                 } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
             }
         } else {
-            d.links[msgId] = {
-                chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-                text: text, likes: new Set(), counter_msg_id: msgId, timestamp: Date.now()
-            };
+            const mapKey = MEINE_GRUPPE + '_' + msgId;
+
+d.links[mapKey] = {
+    chat_id: ctx.chat.id,
+    user_id: uid,
+    user_name: ctx.from.first_name,
+    text: text,
+    likes: new Set(),
+    counter_msg_id: msgId,
+    timestamp: Date.now()
+};
         }
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }

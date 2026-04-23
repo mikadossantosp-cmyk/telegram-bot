@@ -1728,7 +1728,7 @@ link.likesCount = likeCount;
         const heuteLinks = Object.values(d.links).filter(l =>
     istInstagramLink(l.text) &&
     new Date(l.timestamp).toDateString() === heute &&
-    l.chat_id === GROUP_B_ID // 🔥 NUR Gruppe B
+    (l.groupBChatId || l.chat_id) === GROUP_B_ID // 🔥 NUR Gruppe B
 );
 
         const gesamt = heuteLinks.length;

@@ -948,16 +948,27 @@ const likeInProgress = new Set();
 
 bot.action(/^like_(\d+)$/, async (ctx) => {
     const msgId = parseInt(ctx.match[1]);
-    const uid = ctx.from.id;
-    const likeKey = msgId + '_' + uid;
+const uid = ctx.from.id;
+const mapKey = MEINE_GRUPPE + '_' + msgId;
+const likeKey = msgId + '_' + uid;
 
+let lnk = d.links[mapKey];
+
+// 🔁 Fallback für alte Links
+if (!lnk) {
+    lnk = d.links[msgId] || Object.values(d.links)
+        .find(l => String(l.counter_msg_id) === String(msgId));
+}
+
+if (!lnk) {
+    try { await ctx.answerCbQuery('❌ Link nicht mehr vorhanden.'); } catch (e) {}
+    return;
+}
     if (likeInProgress.has(likeKey)) { try { await ctx.answerCbQuery(); } catch (e) {} return; }
     likeInProgress.add(likeKey);
     setTimeout(() => likeInProgress.delete(likeKey), 5000);
 
     try {
-        if (!d.links[msgId]) { try { await ctx.answerCbQuery('❌ Link nicht mehr vorhanden.'); } catch (e) {} return; }
-        const lnk = d.links[msgId];
         if (uid === lnk.user_id) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
         if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('❌ Bereits geliked!'); } catch (e) {} return; }
 
@@ -1023,7 +1034,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
                         fromGroup: MEINE_GRUPPE,
                         msgId:     msgId,
                         likeCount: anz,
-                        mapKey:    'B_' + msgId,
+                      mapKey: MEINE_GRUPPE + '_' + msgId,
                         botMsgId:  lnk.counter_msg_id,
                     })
                 }).catch(e => console.log('Bridge sync failed:', e.message));

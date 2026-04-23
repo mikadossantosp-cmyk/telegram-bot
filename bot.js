@@ -1602,12 +1602,16 @@ if (userId) uid = String(userId);
         }
         if (event.type === 'like_update') {
     const { mapKey, likeCount } = event.meta || {};
-    if (!mapKey || typeof likeCount !== 'number') return res.json({ ok: false });
+    if (!mapKey || typeof likeCount !== 'number') return;
 
     const msgId = mapKey.split('_')[1];
     const link = d.links[msgId];
 
     if (link) {
+
+        // 🔥 Likes im Speicher richtig setzen (wichtig für Dashboard & Rankings)
+        link.likes = new Set(Array.from({ length: likeCount }, (_, i) => i));
+
         try {
             await bot.telegram.editMessageText(
                 link.chat_id,
@@ -1624,8 +1628,9 @@ if (userId) uid = String(userId);
             console.log('Update error:', e.message);
         }
     }
-        }
-     speichernDebounced();
+
+    speichernDebounced();
+}
     } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });
 

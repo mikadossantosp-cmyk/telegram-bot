@@ -1727,9 +1727,8 @@ link.likesCount = likeCount;
         // 🔥 FIX: eigene Links rausfiltern
         const heuteLinks = Object.values(d.links).filter(l =>
     istInstagramLink(l.text) &&
-    new Date(l.timestamp).toDateString() === heute &&
+    new Date(l.timestamp).toDateString() === heute
 );
-
         const gesamt = heuteLinks.length;
 
         const geliked = heuteLinks.filter(l =>

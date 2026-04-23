@@ -957,6 +957,7 @@ const likeKey = msgId + '_' + uid;
     console.log('LIKE DEBUG:', msgId, uid, mapKey);
 
 let lnk = d.links[mapKey];
+    console.log('LINK FOUND?', !!lnk);
 
 // 🔁 Fallback für alte Links
 if (!lnk) {

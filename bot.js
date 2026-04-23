@@ -1001,8 +1001,12 @@ if (!lnk) {
             const heuteLinks = Object.values(d.links)
     .filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
 
-const geliked = heuteLinks.filter(l => l.likes.has(uid)).length;
-const gesamt = heuteLinks.length;
+const geliked = heuteLinks.filter(l => {
+    if (l.likesCount !== undefined) {
+        return l.likesCount > 0;
+    }
+    return l.likes.has(uid);
+}).length;
 
 if (gesamt > 0 && geliked / gesamt >= 0.8) mission.m2 = true;
 if (gesamt > 0 && geliked === gesamt) mission.m3 = true;
@@ -1669,8 +1673,7 @@ if (userId) uid = String(userId);
     }
 
     if (link) {
-        link.likes = new Set(Array.from({ length: likeCount }, (_, i) => i));
-
+        link.likesCount = likeCount;
         try {
             await bot.telegram.editMessageText(
                 link.chat_id,

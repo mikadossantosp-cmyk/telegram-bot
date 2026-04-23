@@ -1001,6 +1001,14 @@ if (!lnk) {
             const heuteLinks = Object.values(d.links)
     .filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
 
+const heuteLinks = Object.values(d.links)
+    .filter(l =>
+        istInstagramLink(l.text) &&
+        new Date(l.timestamp).toDateString() === new Date().toDateString()
+    );
+
+const gesamt = heuteLinks.length;
+
 const geliked = heuteLinks.filter(l => {
     if (l.likesCount !== undefined) {
         return l.likesCount > 0;

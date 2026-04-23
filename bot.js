@@ -1556,15 +1556,21 @@ app.get('/xp-event-status', (req, res) => {
 // Bridge Events empfangen
 app.post('/bridge-event', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const event = req.body;
-    if (!event?.type || !event?.userId) return res.status(400).json({ error: 'Ungültig' });
+    console.log('📩 RAW EVENT:', req.body);
 
+const event = req.body?.event || req.body;
+const userId = event.userId || event.user_id;
+
+if (!event?.type || !userId) {
+    console.log('❌ INVALID EVENT:', req.body);
+    return res.status(400).json({ error: 'Ungültig' });
+}
     // Sofort antworten damit Bridge Bot nicht timeout bekommt
     res.status(200).json({ ok: true });
 
     // Rest im Hintergrund verarbeiten
     try {
-        const uid  = String(event.userId);
+        const uid = String(userId);
         const name = event.userName || 'Unbekannt';
         if (!d.users[uid]) user(uid, name);
 

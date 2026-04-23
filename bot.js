@@ -954,6 +954,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 const uid = ctx.from.id;
 const mapKey = MEINE_GRUPPE + '_' + msgId;
 const likeKey = msgId + '_' + uid;
+    console.log('LIKE DEBUG:', msgId, uid, mapKey);
 
 let lnk = d.links[mapKey];
 

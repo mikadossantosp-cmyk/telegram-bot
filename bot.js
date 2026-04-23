@@ -1669,7 +1669,7 @@ if (userId) uid = String(userId);
 
     let link = d.links[mapKey];
 
-    // 🔥 fallback wenn falsche gruppe (B/C)
+    // fallback
     if (!link) {
         const msgId = mapKey.split('_')[1];
         link = Object.values(d.links)
@@ -1678,33 +1678,36 @@ if (userId) uid = String(userId);
 
     if (!link) return;
 
-// Likes Count speichern (ok)
-link.likesCount = likeCount;
+    // nur Anzeige
+    link.likesCount = likeCount;
 
-// 🔥 NEU: Missionen für alle User neu berechnen
-for (const uid in d.users) {
-    if (istAdminId(uid)) continue;
+    const heute = new Date().toDateString();
 
-    const mission = getMission(uid);
+    for (const uid in d.users) {
+        if (istAdminId(uid)) continue;
 
-    const heuteLinks = Object.values(d.links).filter(l =>
-        istInstagramLink(l.text) &&
-        new Date(l.timestamp).toDateString() === new Date().toDateString()
-    );
+        const mission = getMission(uid);
 
-    const gesamt = heuteLinks.length;
+        // 🔥 FIX: eigene Links rausfiltern
+        const heuteLinks = Object.values(d.links).filter(l =>
+            istInstagramLink(l.text) &&
+            new Date(l.timestamp).toDateString() === heute &&
+            l.user_id !== Number(uid)
+        );
 
-    const geliked = heuteLinks.filter(l =>
-        l.likes && l.likes.has(Number(uid))
-    ).length;
+        const gesamt = heuteLinks.length;
 
-    if (gesamt > 0) {
-        if (geliked / gesamt >= 0.8) mission.m2 = true;
-        if (geliked === gesamt) mission.m3 = true;
+        const geliked = heuteLinks.filter(l =>
+            l.likes && l.likes.has(Number(uid))
+        ).length;
+
+        if (gesamt > 0) {
+            mission.m2 = geliked / gesamt >= 0.8;
+            mission.m3 = geliked === gesamt;
+        }
     }
-}
 
-speichernDebounced();
+    speichernDebounced();
         }
     } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });

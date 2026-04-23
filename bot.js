@@ -1593,8 +1593,32 @@ app.post('/bridge-event', async (req, res) => {
                 await checkMissionen(uid, name);
             }
         }
+        if (event.type === 'like_update') {
+    const { mapKey, likeCount } = event.meta || {};
+    if (!mapKey || typeof likeCount !== 'number') return res.json({ ok: false });
 
-        speichernDebounced();
+    const msgId = mapKey.split('_')[1];
+    const link = d.links[msgId];
+
+    if (link) {
+        try {
+            await bot.telegram.editMessageText(
+                link.chat_id,
+                link.counter_msg_id,
+                null,
+                '🔗 ' + link.text + '\n\n👍 ' + likeCount + ' Likes',
+                {
+                    reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.callback('👍 Like  |  ' + likeCount, 'like_' + msgId)]
+                    ]).reply_markup
+                }
+            );
+        } catch (e) {
+            console.log('Update error:', e.message);
+        }
+    }
+        }
+     speichernDebounced();
     } catch (e) { console.log('Bridge event Fehler:', e.message); }
 });
 

@@ -1561,7 +1561,7 @@ app.post('/bridge-event', async (req, res) => {
 const event = req.body?.event || req.body;
 const userId = event.userId || event.user_id;
 
-if (!event?.type || !userId) {
+if (!event?.type) {
     console.log('❌ INVALID EVENT:', req.body);
     return res.status(400).json({ error: 'Ungültig' });
 }
@@ -1570,9 +1570,10 @@ if (!event?.type || !userId) {
 
     // Rest im Hintergrund verarbeiten
     try {
-        const uid = String(userId);
+        let uid = null;
+if (userId) uid = String(userId);
         const name = event.userName || 'Unbekannt';
-        if (!d.users[uid]) user(uid, name);
+        if (uid && !d.users[uid]) user(uid, name);
 
         if (event.type === 'post_forwarded') {
             if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {

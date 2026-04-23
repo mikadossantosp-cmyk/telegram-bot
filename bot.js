@@ -998,9 +998,7 @@ if (!lnk) {
         // Mission zählen
         if (!istAdminId(uid)) {
             const mission = getMission(uid);
-            const heuteLinks = Object.values(d.links)
-    .filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
-
+            
 const heuteLinks = Object.values(d.links)
     .filter(l =>
         istInstagramLink(l.text) &&

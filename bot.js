@@ -1688,7 +1688,7 @@ if (userId) uid = String(userId);
 
     if (!istAdminId(uid)) {
         const mission = getMission(uid);
-        if (istInstagramLink(link.text)) mission.likesGegeben++;
+     if (istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
         await checkMissionen(uid, name);
     }
 
@@ -1728,7 +1728,6 @@ link.likesCount = likeCount;
         const heuteLinks = Object.values(d.links).filter(l =>
     istInstagramLink(l.text) &&
     new Date(l.timestamp).toDateString() === heute &&
-    (l.groupBChatId || l.chat_id) === GROUP_B_ID // 🔥 NUR Gruppe B
 );
 
         const gesamt = heuteLinks.length;

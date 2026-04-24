@@ -9,7 +9,6 @@ const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
-const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
 const GROUP_A_ID     = Number(process.env.GROUP_A_ID);
 const GROUP_B_ID     = Number(process.env.GROUP_B_ID);
@@ -20,19 +19,6 @@ process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-const dashboardSessions = new Map();
-function generateSessionId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
-function isAuthenticated(req) {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/dashSession=([^;]+)/);
-    return match ? dashboardSessions.has(match[1]) : false;
-}
-function getSessionId(req) {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/dashSession=([^;]+)/);
-    return match ? match[1] : null;
-}
 
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
@@ -123,12 +109,6 @@ function speichernDebounced() {
 setInterval(speichern, 30000);
 laden();
 
-async function sendeAdminNotification(text) {
-    for (const adminId of ADMIN_IDS) {
-        try { await bot.telegram.sendMessage(adminId, '🔔 ' + text, { parse_mode: 'Markdown' }); } catch (e) {}
-    }
-}
-
 async function checkInstagramForAllUsers() {
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || (u.instagram && u.instagram.trim() !== '') || d.instaWarte[uid]) continue;
@@ -156,7 +136,6 @@ async function backup() {
 }
 
 function badge(xp) {
-    if (xp >= 5000) return '👑 Elite';
     if (xp >= 1000) return '🏅 Erfahrener';
     if (xp >= 500)  return '⬆️ Aufsteiger';
     if (xp >= 50)   return '📘 Anfänger';
@@ -167,7 +146,6 @@ function xpBisNaechstesBadge(xp) {
     if (xp < 50)   return { ziel: '📘 Anfänger',   fehlend: 50 - xp };
     if (xp < 500)  return { ziel: '⬆️ Aufsteiger', fehlend: 500 - xp };
     if (xp < 1000) return { ziel: '🏅 Erfahrener', fehlend: 1000 - xp };
-    if (xp < 5000) return { ziel: '👑 Elite',       fehlend: 5000 - xp };
     return null;
 }
 function level(xp) { return Math.floor(xp / 100) + 1; }
@@ -177,13 +155,9 @@ function xpAdd(uid, menge, name) {
     const u = user(uid, name);
     let finalXP = menge;
     if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalXP = Math.round(menge * d.xpEvent.multiplier);
-    const alteBadge = u.role;
     u.xp += finalXP; u.level = level(u.xp); u.role = badge(u.xp);
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
     d.weeklyXP[uid] += finalXP;
-    if (alteBadge !== u.role && alteBadge) {
-        sendeAdminNotification('🏅 *Badge Aufstieg!*\n\n👤 ' + (u.name||uid) + '\n' + alteBadge + ' → ' + u.role + '\n⭐ ' + u.xp + ' XP');
-    }
     return finalXP;
 }
 
@@ -583,7 +557,6 @@ bot.command('warn', async (ctx) => {
     u.warnings = (u.warnings || 0) + 1; speichern();
     await ctx.reply('⚠️ Warn an *' + u.name + '*: ' + u.warnings + '/5', { parse_mode: 'Markdown' });
     try { await bot.telegram.sendMessage(userId, '⚠️ *Verwarnung!*\nWarn: ' + u.warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
-    if ((u.warnings||0) >= 5) sendeAdminNotification('🚨 *5 Warns erreicht!*\n\n👤 ' + u.name + '\n🆔 ' + userId + '\n⚠️ Ban möglich!');
 });
 
 bot.command('unban', async (ctx) => {
@@ -630,7 +603,6 @@ bot.on('new_chat_members', async (ctx) => {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard([Markup.button.url('📩 Bot starten', 'https://t.me/' + info.username + '?start=gruppe')]).reply_markup
         });
-        sendeAdminNotification('👋 *Neuer User beigetreten!*\n\n👤 ' + m.first_name + (m.username ? ' @' + m.username : '') + '\n🆔 ' + m.id + '\n👥 Gesamt: ' + Object.keys(d.users).length + ' User');
     }
 });
 
@@ -998,21 +970,7 @@ async function zeitCheck() {
             return fn();
         };
         if (h === 3  && m === 0)  einmalig('backup',       () => backup());
-        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
-            d.wochenMissionen = {};
-            let eliteCount = 0;
-            for (const [uid, u] of Object.entries(d.users)) {
-                if (istAdminId(uid) || !u.started) continue;
-                if (u.xp >= 5000) {
-                    if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
-                    d.bonusLinks[uid] += 1;
-                    eliteCount++;
-                    bot.telegram.sendMessage(Number(uid), '👑 *Elite Bonus!*\n\n🎁 Du hast als Elite-Mitglied deinen wöchentlichen Extra-Link erhalten!', { parse_mode: 'Markdown' }).catch(() => {});
-                }
-            }
-            console.log('✅ Elite Bonus vergeben an ' + eliteCount + ' User');
-            speichern();
-        });
+        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => { d.wochenMissionen = {}; console.log('✅ Wochenmissionen resettet'); speichern(); });
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
@@ -1043,32 +1001,6 @@ async function zeitCheck() {
 
 setInterval(zeitCheck, 60000);
 
-
-app.get('/login', (req, res) => {
-    if (isAuthenticated(req)) return res.redirect('/dashboard');
-    const err = (req.headers.referer||'').includes('error') || false;
-    res.send('<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#0a0f1a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center}.box{background:#111827;border:1px solid #1e2d45;border-radius:16px;padding:40px;width:100%;max-width:380px}.logo{text-align:center;font-size:40px;margin-bottom:8px}.title{text-align:center;font-size:20px;font-weight:700;margin-bottom:4px}.sub{text-align:center;font-size:13px;color:#64748b;margin-bottom:28px}label{display:block;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;margin-bottom:6px}input{width:100%;background:#1a2235;border:1px solid #2a3a55;color:#e2e8f0;border-radius:8px;padding:12px 16px;font-size:14px;outline:none;margin-bottom:16px}button{width:100%;background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:13px;font-size:14px;font-weight:600;cursor:pointer}.error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#ef4444;border-radius:8px;padding:12px;font-size:13px;margin-bottom:16px}</style></head><body><div class="box"><div class="logo">📊</div><div class="title">Admin Dashboard</div><div class="sub">Telegram Bot Control Panel</div>' + (req.query.error ? '<div class="error">❌ Falsches Passwort</div>' : '') + '<form method="POST" action="/login"><label>Passwort</label><input type="password" name="password" placeholder="••••••••" autofocus required><button type="submit">🔐 Einloggen</button></form></div></body></html>');
-});
-
-app.post('/login', (req, res) => {
-    if (req.body.password === DASHBOARD_PASSWORD) {
-        const sid = generateSessionId();
-        dashboardSessions.set(sid, { createdAt: Date.now() });
-        setTimeout(() => dashboardSessions.delete(sid), 24*60*60*1000);
-        res.setHeader('Set-Cookie', 'dashSession=' + sid + '; HttpOnly; Path=/; Max-Age=86400');
-        res.redirect('/dashboard');
-    } else {
-        res.redirect('/login?error=1');
-    }
-});
-
-app.get('/logout', (req, res) => {
-    const sid = getSessionId(req);
-    if (sid) dashboardSessions.delete(sid);
-    res.setHeader('Set-Cookie', 'dashSession=; HttpOnly; Path=/; Max-Age=0');
-    res.redirect('/login');
-});
-
 app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;
     if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });
@@ -1079,288 +1011,143 @@ app.get('/data', (req, res) => {
 });
 
 app.get('/dashboard', (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
     const today = new Date().toDateString();
     const now   = new Date();
     const allUsers   = Object.entries(d.users);
     const totalUsers = allUsers.length;
     const totalLinks = Object.keys(d.links).length;
-    const totalLikes = Object.values(d.links).reduce((s,l) => s+(l.likes?.size||0), 0);
+    const totalLikes = Object.values(d.links).reduce((s, l) => s + (l.likes?.size || 0), 0);
     let todayLinks = 0;
-    for (const l of Object.values(d.links)) if (l.timestamp && new Date(l.timestamp).toDateString()===today) todayLinks++;
+    for (const l of Object.values(d.links)) if (l.timestamp && new Date(l.timestamp).toDateString() === today) todayLinks++;
     const gelikedSet = new Set();
-    Object.values(d.links).filter(l=>new Date(l.timestamp).toDateString()===today).forEach(l=>l.likes.forEach(uid=>gelikedSet.add(uid)));
-    const started     = allUsers.filter(([,u])=>u.started).length;
-    const activeToday = allUsers.filter(([uid])=>d.dailyXP[uid]>0).length;
-    const withWarns   = allUsers.filter(([,u])=>(u.warnings||0)>0).length;
-    const noInsta     = allUsers.filter(([,u])=>!u.instagram).map(([,u])=>u);
-    let m1c=0,m2c=0,m3c=0;
-    for (const [uid,m] of Object.entries(d.missionen)) { if (istAdminId(uid)||m.date!==today) continue; if(m.m1)m1c++;if(m.m2)m2c++;if(m.m3)m3c++; }
-    const medals = ['🥇','🥈','🥉'];
-    const gesamtRanking = Object.entries(d.users).filter(([uid])=>!istAdminId(uid)).sort((a,b)=>(b[1].xp||0)-(a[1].xp||0)).slice(0,10);
-    const dailyRanking  = Object.entries(d.dailyXP).filter(([uid])=>d.users[uid]&&!istAdminId(uid)).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    const weeklyRanking = Object.entries(d.weeklyXP).filter(([uid])=>d.users[uid]&&!istAdminId(uid)).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    const topLinksList  = Object.values(d.links).sort((a,b)=>(b.likes?.size||0)-(a.likes?.size||0)).slice(0,5);
-    const eliteUser     = Object.entries(d.users).filter(([uid,u])=>!istAdminId(uid)&&(u.xp||0)>=5000);
-    const erfahreneUser = Object.entries(d.users).filter(([uid,u])=>!istAdminId(uid)&&(u.xp||0)>=1000&&(u.xp||0)<5000);
-    const topAllzeit    = Object.entries(d.users).filter(([uid])=>!istAdminId(uid)).sort((a,b)=>(b[1].xp||0)-(a[1].xp||0)).slice(0,3);
-    const topLinksHof   = Object.entries(d.users).filter(([uid])=>!istAdminId(uid)).sort((a,b)=>(b[1].links||0)-(a[1].links||0)).slice(0,3);
-    const topLikesHof   = Object.entries(d.users).filter(([uid])=>!istAdminId(uid)).sort((a,b)=>(b[1].totalLikes||0)-(a[1].totalLikes||0)).slice(0,3);
-    const usersWithWarns = Object.entries(d.users).filter(([,u])=>(u.warnings||0)>0).sort((a,b)=>(b[1].warnings||0)-(a[1].warnings||0));
-    const nextReset = new Date(); nextReset.setHours(23,55,0,0);
-    if (now>nextReset) nextReset.setDate(nextReset.getDate()+1);
-    const msLeft = nextReset-now;
-    const hLeft = Math.floor(msLeft/3600000);
-    const mLeft = Math.floor((msLeft%3600000)/60000);
-    const evtAktiv    = d.xpEvent?.aktiv||false;
-    const evtPct      = d.xpEvent?.multiplier?Math.round((d.xpEvent.multiplier-1)*100):0;
-    const evtEndStr   = d.xpEvent?.end?new Date(d.xpEvent.end).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):'—';
-    const evtStartStr = d.xpEvent?.start?new Date(d.xpEvent.start).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):'—';
-    const rankRow = (i,name,val) => `<div class="rank-row"><span class="rank-pos">${medals[i]||`<span style="font-size:11px;color:var(--muted)">#${i+1}</span>`}</span><span class="rank-name">${name}</span><span class="rank-xp">${val}</span></div>`;
+    Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === today).forEach(l => l.likes.forEach(uid => gelikedSet.add(uid)));
+    const started     = allUsers.filter(([, u]) => u.started).length;
+    const activeToday = allUsers.filter(([uid]) => d.dailyXP[uid] > 0).length;
+    const withWarns   = allUsers.filter(([, u]) => (u.warnings || 0) > 0).length;
+    const noInsta     = allUsers.filter(([, u]) => !u.instagram).map(([, u]) => u);
+    let m1c = 0, m2c = 0, m3c = 0;
+    for (const [uid, m] of Object.entries(d.missionen)) {
+        if (istAdminId(uid) || m.date !== today) continue;
+        if (m.m1) m1c++; if (m.m2) m2c++; if (m.m3) m3c++;
+    }
+    const medals        = ['🥇', '🥈', '🥉'];
+    const gesamtRanking = Object.entries(d.users).filter(([uid]) => !istAdminId(uid)).sort((a, b) => (b[1].xp || 0) - (a[1].xp || 0)).slice(0, 10);
+    const dailyRanking  = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && !istAdminId(uid)).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const weeklyRanking = Object.entries(d.weeklyXP).filter(([uid]) => d.users[uid] && !istAdminId(uid)).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const topLinksList  = Object.values(d.links).sort((a, b) => (b.likes?.size || 0) - (a.likes?.size || 0)).slice(0, 5);
+    const rankRow = (i, name, xp) => `<div class="rank-row"><span class="rank-pos">${medals[i] || `<span class="rank-num">#${i + 1}</span>`}</span><span class="rank-name">${name}</span><span class="rank-xp">${xp} XP</span></div>`;
+    const evtAktiv    = d.xpEvent?.aktiv || false;
+    const evtPct      = d.xpEvent?.multiplier ? Math.round((d.xpEvent.multiplier - 1) * 100) : 0;
+    const evtEndStr   = d.xpEvent?.end   ? new Date(d.xpEvent.end).toLocaleTimeString('de-DE',   { hour: '2-digit', minute: '2-digit' }) : '—';
+    const evtStartStr = d.xpEvent?.start ? new Date(d.xpEvent.start).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '—';
 
     res.send(`<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Dashboard</title><meta http-equiv="refresh" content="30">
+<title>Admin Dashboard</title><meta http-equiv="refresh" content="15">
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0a0f1a;--surface:#111827;--surface2:#1a2235;--surface3:#212d42;--border:#1e2d45;--border2:#2a3a55;--text:#e2e8f0;--muted:#64748b;--muted2:#94a3b8;--green:#10b981;--green-bg:rgba(16,185,129,.1);--blue:#3b82f6;--blue-bg:rgba(59,130,246,.1);--amber:#f59e0b;--amber-bg:rgba(245,158,11,.1);--red:#ef4444;--red-bg:rgba(239,68,68,.1);--purple:#8b5cf6;--purple-bg:rgba(139,92,246,.1);--radius:14px;--radius-sm:8px}
-body{font-family:-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;padding-bottom:70px}
-.page{max-width:1400px;margin:0 auto;padding:20px 14px}
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:10px}
-.header-left{display:flex;align-items:center;gap:12px}
-.header-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:20px}
-.header-title{font-size:18px;font-weight:700}.header-sub{font-size:11px;color:var(--muted)}
-.header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.header-time{font-size:12px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);padding:5px 12px;border-radius:20px}
-.logout-btn{font-size:12px;color:var(--red);background:var(--red-bg);border:1px solid rgba(239,68,68,.3);padding:5px 12px;border-radius:20px;text-decoration:none}
-.live-dot{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;margin-right:5px;animation:blink 2s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.nav-tabs{display:flex;gap:3px;margin-bottom:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:4px;overflow-x:auto;scrollbar-width:none}
-.nav-tab{padding:7px 14px;border-radius:9px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap;border:none;background:none}
-.nav-tab.active{background:var(--blue);color:#fff}
-.tab-content{display:none}.tab-content.active{display:block}
-.section-title{font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
-.mb-20{margin-bottom:20px}
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;position:relative;overflow:hidden}
-.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.stat-card.c-green::before{background:var(--green)}.stat-card.c-blue::before{background:var(--blue)}.stat-card.c-amber::before{background:var(--amber)}.stat-card.c-red::before{background:var(--red)}.stat-card.c-purple::before{background:var(--purple)}
-.stat-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;margin-bottom:10px}
-.stat-icon.c-green{background:var(--green-bg)}.stat-icon.c-blue{background:var(--blue-bg)}.stat-icon.c-amber{background:var(--amber-bg)}.stat-icon.c-red{background:var(--red-bg)}.stat-icon.c-purple{background:var(--purple-bg)}
-.stat-value{font-size:24px;font-weight:800;line-height:1}.stat-label{font-size:11px;color:var(--muted);margin-top:3px}.stat-sub{font-size:10px;color:var(--muted);margin-top:2px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:14px}
-.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
-.card-title{font-size:13px;font-weight:600}.card-body{padding:16px}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-@media(max-width:900px){.grid-3{grid-template-columns:1fr 1fr}}
-@media(max-width:600px){.grid-2,.grid-3{grid-template-columns:1fr}}
-.rank-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}.rank-row:last-child{border-bottom:none}
-.rank-pos{width:22px;text-align:center;font-size:14px;flex-shrink:0}
-.rank-name{flex:1;font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rank-xp{font-size:11px;font-weight:700;color:var(--amber);white-space:nowrap}
-.search-row{padding:10px 16px;border-bottom:1px solid var(--border)}
-.search-input{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:9px 13px;font-size:13px;outline:none}
-.user-table-wrap{max-height:600px;overflow-y:auto;scrollbar-width:thin}
-.user-row{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}.user-row:hover{background:var(--surface2)}
-.user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;color:#fff}
-.user-info{flex:1;min-width:0}
-.user-name{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.user-meta{font-size:10px;color:var(--muted);margin-top:1px}
-.user-xp{text-align:right;min-width:65px}
-.user-xp-val{font-size:12px;font-weight:700;color:var(--amber)}
-.user-xp-sub{font-size:10px;color:var(--muted)}
-.user-actions{display:flex;gap:3px;flex-wrap:wrap}
-.abtn{font-size:10px;font-weight:600;padding:3px 7px;border-radius:5px;text-decoration:none;white-space:nowrap;cursor:pointer;border:none}
-.abtn.red{color:var(--red);background:var(--red-bg)}.abtn.amber{color:var(--amber);background:var(--amber-bg)}.abtn.muted{color:var(--muted2);background:var(--surface3)}.abtn.green{color:var(--green);background:var(--green-bg)}
-.progress-wrap{background:var(--surface3);border-radius:3px;height:3px;margin-top:3px;overflow:hidden}
-.progress-bar{height:3px;border-radius:3px;background:linear-gradient(90deg,var(--blue),var(--purple))}
-.badge-pill{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px}
-.bp-new{background:var(--surface3);color:var(--muted2)}.bp-anf{background:var(--blue-bg);color:var(--blue)}.bp-auf{background:var(--purple-bg);color:var(--purple)}.bp-erf{background:var(--amber-bg);color:var(--amber)}.bp-elite{background:rgba(245,158,11,.2);color:#f59e0b;border:1px solid rgba(245,158,11,.4)}
-.warn-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;background:var(--red-bg);color:var(--red)}
-.link-item{padding:10px 0;border-bottom:1px solid var(--border)}.link-item:last-child{border-bottom:none}
-.link-url{color:var(--blue);font-size:12px;font-weight:500;word-break:break-all;text-decoration:none}
-.link-meta{font-size:10px;color:var(--muted);margin-top:2px}
-.liker-tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:var(--surface3);margin:2px}
-.like-badge{font-size:11px;font-weight:700;background:var(--red-bg);color:var(--red);padding:2px 8px;border-radius:20px}
-.mission-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.mission-item{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;text-align:center}
-.mission-id{font-size:9px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:5px}
-.mission-count{font-size:28px;font-weight:800;line-height:1}
-.m1{color:var(--green)}.m2{color:var(--blue)}.m3{color:var(--amber)}
-.mission-sub{font-size:9px;color:var(--muted);margin-top:2px}
-.event-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:500px){.event-form-grid{grid-template-columns:1fr}}
-.form-group{display:flex;flex-direction:column;gap:5px}.form-group.full{grid-column:1/-1}
-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.5px;text-transform:uppercase}
-input[type=number],input[type=datetime-local],input[type=text],select,textarea{background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:9px 13px;font-size:13px;width:100%;outline:none}
-textarea{resize:vertical;min-height:70px}
-.btn{display:inline-flex;align-items:center;gap:5px;padding:9px 16px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;cursor:pointer;border:none;text-decoration:none}
-.btn-primary{background:var(--blue);color:#fff}.btn-danger{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.3)}.btn-green{background:var(--green-bg);color:var(--green);border:1px solid rgba(16,185,129,.3)}
-.event-status-row{display:flex;gap:14px;padding:10px 16px;background:var(--surface2);border-top:1px solid var(--border);flex-wrap:wrap}
-.event-stat-label{font-size:9px;color:var(--muted);text-transform:uppercase}
-.event-stat-value{font-size:14px;font-weight:700;margin-top:2px}
-.hof-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;text-align:center;margin-bottom:6px}
-.hof-medal{font-size:24px;margin-bottom:4px}.hof-name{font-size:12px;font-weight:600}.hof-val{font-size:11px;color:var(--amber);margin-top:2px}
-.countdown{font-size:28px;font-weight:800;color:var(--amber);text-align:center;padding:14px}
-.countdown-sub{font-size:11px;color:var(--muted);text-align:center}
-.bar-chart{display:flex;align-items:flex-end;gap:6px;height:70px;padding:0 2px}
-.bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
-.bar{width:100%;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--blue),var(--purple));min-height:3px}
-.bar-label{font-size:9px;color:var(--muted);white-space:nowrap}
-.tag{display:inline-block;font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px}
-.tag.green{background:var(--green-bg);color:var(--green)}.tag.red{background:var(--red-bg);color:var(--red)}.tag.muted{background:var(--surface3);color:var(--muted2)}.tag.amber{background:var(--amber-bg);color:var(--amber)}
-.empty{text-align:center;padding:24px;color:var(--muted);font-size:12px}
-.bonus-item{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}.bonus-item:last-child{border-bottom:none}
-.bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:6px 0;z-index:100}
-@media(max-width:768px){.bottom-nav{display:flex;justify-content:space-around}}
-.bnav-item{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:9px;color:var(--muted);cursor:pointer;padding:3px 8px;border:none;background:none}
-.bnav-item.active{color:var(--blue)}.bnav-icon{font-size:18px}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#0a0f1a;--surface:#111827;--surface2:#1a2235;--surface3:#212d42;--border:#1e2d45;--border2:#2a3a55;--text:#e2e8f0;--muted:#64748b;--muted2:#94a3b8;--green:#10b981;--green-bg:rgba(16,185,129,.1);--blue:#3b82f6;--blue-bg:rgba(59,130,246,.1);--amber:#f59e0b;--amber-bg:rgba(245,158,11,.1);--red:#ef4444;--red-bg:rgba(239,68,68,.1);--purple:#8b5cf6;--purple-bg:rgba(139,92,246,.1);--radius:14px;--radius-sm:8px}
+  body{font-family:-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6}
+  .page{max-width:1400px;margin:0 auto;padding:24px 20px 60px}
+  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:12px}
+  .header-left{display:flex;align-items:center;gap:14px}
+  .header-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:20px}
+  .header-title{font-size:20px;font-weight:700}.header-sub{font-size:12px;color:var(--muted)}
+  .header-time{font-size:12px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);padding:6px 14px;border-radius:20px}
+  .live-dot{display:inline-block;width:7px;height:7px;background:var(--green);border-radius:50%;margin-right:6px;animation:blink 2s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+  .section-title{font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;position:relative;overflow:hidden}
+  .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+  .stat-card.c-green::before{background:var(--green)}.stat-card.c-blue::before{background:var(--blue)}.stat-card.c-amber::before{background:var(--amber)}.stat-card.c-red::before{background:var(--red)}.stat-card.c-purple::before{background:var(--purple)}
+  .stat-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:14px}
+  .stat-icon.c-green{background:var(--green-bg)}.stat-icon.c-blue{background:var(--blue-bg)}.stat-icon.c-amber{background:var(--amber-bg)}.stat-icon.c-red{background:var(--red-bg)}.stat-icon.c-purple{background:var(--purple-bg)}
+  .stat-value{font-size:28px;font-weight:800;line-height:1}.stat-label{font-size:12px;color:var(--muted);margin-top:5px}.stat-sub{font-size:11px;color:var(--muted);margin-top:3px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .card-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+  .card-title{font-size:14px;font-weight:600}.card-body{padding:20px}
+  .event-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:28px;overflow:hidden}
+  .event-card.active{border-color:rgba(16,185,129,.4);box-shadow:0 0 0 1px rgba(16,185,129,.15)}
+  .event-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px}
+  .event-title{font-size:14px;font-weight:600}
+  .badge-pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px}
+  .badge-pill.active{background:var(--green-bg);color:var(--green);border:1px solid rgba(16,185,129,.3)}
+  .badge-pill.inactive{background:var(--surface3);color:var(--muted);border:1px solid var(--border)}
+  .event-body{padding:20px}
+  .event-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:600px){.event-form-grid{grid-template-columns:1fr}}
+  .form-group{display:flex;flex-direction:column;gap:6px}.form-group.full{grid-column:1/-1}
+  label{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;text-transform:uppercase}
+  input[type=number],input[type=datetime-local],select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:10px 14px;font-size:14px;width:100%;outline:none;-webkit-appearance:none}
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer;border:none;text-decoration:none}
+  .btn-primary{background:var(--blue);color:#fff}.btn-danger{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+  .event-status-row{display:flex;gap:20px;padding:14px 20px;background:var(--surface2);border-top:1px solid var(--border);flex-wrap:wrap}
+  .event-stat-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .event-stat-value{font-size:16px;font-weight:700;margin-top:2px}
+  .mission-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .mission-item{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;text-align:center}
+  .mission-id{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:8px}
+  .mission-count{font-size:36px;font-weight:800;line-height:1}.m1{color:var(--green)}.m2{color:var(--blue)}.m3{color:var(--amber)}
+  .mission-sub{font-size:11px;color:var(--muted);margin-top:4px}
+  .rankings-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
+  @media(max-width:900px){.rankings-grid{grid-template-columns:1fr}}
+  .rank-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}.rank-row:last-child{border-bottom:none}
+  .rank-pos{width:26px;text-align:center;font-size:16px;flex-shrink:0}.rank-num{font-size:11px;color:var(--muted);font-weight:700}
+  .rank-name{flex:1;font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rank-xp{font-size:12px;font-weight:700;color:var(--amber);white-space:nowrap}
+  .link-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}.link-item:last-child{border-bottom:none}
+  .link-rank{width:22px;font-size:16px;text-align:center}.link-info{flex:1;min-width:0}
+  .link-url{color:var(--blue);font-size:12px;font-weight:500;text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .link-meta{font-size:11px;color:var(--muted);margin-top:2px}.like-badge{font-size:12px;font-weight:700;background:var(--red-bg);color:var(--red);padding:3px 10px;border-radius:20px}
+  .user-table-wrap{max-height:520px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+  .search-row{padding:14px 20px;border-bottom:1px solid var(--border)}
+  .search-input{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;outline:none}
+  .user-row{display:flex;align-items:center;gap:12px;padding:11px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}.user-row:hover{background:var(--surface2)}.user-row:last-child{border-bottom:none}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;color:#fff}
+  .user-info{flex:1;min-width:0}.user-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .user-meta{font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .user-xp{font-size:13px;font-weight:700;color:var(--amber);white-space:nowrap;text-align:right;min-width:60px}.user-xp-sub{font-size:10px;color:var(--muted);text-align:right}
+  .warn-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.25)}
+  .user-actions{display:flex;gap:5px;flex-wrap:wrap}
+  .action-link{font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px;text-decoration:none;white-space:nowrap}
+  .action-link.c-red{color:var(--red);background:var(--red-bg)}.action-link.c-amber{color:var(--amber);background:var(--amber-bg)}.action-link.c-muted{color:var(--muted2);background:var(--surface3)}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:28px}
+  @media(max-width:768px){.two-col{grid-template-columns:1fr}}
+  .mb-28{margin-bottom:28px}.empty-state{text-align:center;padding:32px;color:var(--muted);font-size:13px}
+  .insta-warn{background:var(--amber-bg);border:1px solid rgba(245,158,11,.3);border-radius:var(--radius-sm);padding:12px 16px;font-size:13px;color:var(--amber);margin-bottom:14px}
+  .tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
+  .tag.green{background:var(--green-bg);color:var(--green)}.tag.red{background:var(--red-bg);color:var(--red)}.tag.muted{background:var(--surface3);color:var(--muted2)}
+  .liker-tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--surface3);margin:2px}
 </style>
-<script>
-function showTab(id){document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.nav-tab,.bnav-item').forEach(t=>t.classList.remove('active'));document.getElementById('tab-'+id).classList.add('active');document.querySelectorAll('[data-tab="'+id+'"]').forEach(el=>el.classList.add('active'));localStorage.setItem('activeTab',id);}
-function filterUsers(){const q=document.getElementById('search').value.toLowerCase();document.querySelectorAll('.user-row').forEach(r=>{r.style.display=r.innerText.toLowerCase().includes(q)?'':'none'});}
-window.onload=()=>{showTab(localStorage.getItem('activeTab')||'overview');};
-</script>
+<script>function filterUsers(){const q=document.getElementById('search').value.toLowerCase();document.querySelectorAll('.user-row').forEach(r=>{r.style.display=r.innerText.toLowerCase().includes(q)?'':'none'})}</script>
 </head>
 <body><div class="page">
-
-<div class="header">
-  <div class="header-left"><div class="header-logo">📊</div><div><div class="header-title">Admin Dashboard</div><div class="header-sub">Main Bot DE</div></div></div>
-  <div class="header-right">
+  <div class="header">
+    <div class="header-left"><div class="header-logo">📊</div><div><div class="header-title">Admin Dashboard</div><div class="header-sub">Telegram Bot Control Panel</div></div></div>
     <div class="header-time"><span class="live-dot"></span>${now.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'short'})} · ${now.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}</div>
-    <a href="/logout" class="logout-btn">🚪 Logout</a>
   </div>
-</div>
-
-<div class="nav-tabs">
-  <button class="nav-tab" data-tab="overview" onclick="showTab('overview')">📊 Übersicht</button>
-  <button class="nav-tab" data-tab="users" onclick="showTab('users')">👥 User</button>
-  <button class="nav-tab" data-tab="links" onclick="showTab('links')">🔗 Links</button>
-  <button class="nav-tab" data-tab="missions" onclick="showTab('missions')">🎯 Missionen</button>
-  <button class="nav-tab" data-tab="ranking" onclick="showTab('ranking')">🏆 Rankings</button>
-  <button class="nav-tab" data-tab="events" onclick="showTab('events')">⚡ Events</button>
-  <button class="nav-tab" data-tab="actions" onclick="showTab('actions')">⚙️ Aktionen</button>
-</div>
-
-<!-- ÜBERSICHT -->
-<div id="tab-overview" class="tab-content">
-  <div class="stats-grid mb-20">
+  <div class="section-title">Übersicht</div>
+  <div class="stats-grid mb-28">
     <div class="stat-card c-blue"><div class="stat-icon c-blue">👥</div><div class="stat-value">${totalUsers}</div><div class="stat-label">Gesamt User</div><div class="stat-sub">${started} gestartet</div></div>
     <div class="stat-card c-green"><div class="stat-icon c-green">⚡</div><div class="stat-value">${activeToday}</div><div class="stat-label">Aktiv heute</div></div>
     <div class="stat-card c-amber"><div class="stat-icon c-amber">🔗</div><div class="stat-value">${todayLinks}</div><div class="stat-label">Links heute</div><div class="stat-sub">${totalLinks} gesamt</div></div>
     <div class="stat-card c-red"><div class="stat-icon c-red">❤️</div><div class="stat-value">${totalLikes}</div><div class="stat-label">Likes gesamt</div></div>
-    <div class="stat-card c-purple"><div class="stat-icon c-purple">⚠️</div><div class="stat-value">${withWarns}</div><div class="stat-label">Mit Warns</div><div class="stat-sub">${noInsta.length} ohne Insta</div></div>
-    <div class="stat-card c-amber"><div class="stat-icon c-amber">👑</div><div class="stat-value">${eliteUser.length}</div><div class="stat-label">Elite User</div><div class="stat-sub">${erfahreneUser.length} Erfahrene</div></div>
+    <div class="stat-card c-purple"><div class="stat-icon c-purple">⚠️</div><div class="stat-value">${withWarns}</div><div class="stat-label">User mit Warns</div><div class="stat-sub">${noInsta.length} ohne Instagram</div></div>
   </div>
-
-  <div class="grid-2 mb-20">
-    <div class="card"><div class="card-header"><div class="card-title">📈 XP heute</div></div><div class="card-body"><div style="font-size:36px;font-weight:800;color:var(--amber);text-align:center;padding:10px">${Object.values(d.dailyXP).reduce((s,x)=>s+x,0)}</div><div style="font-size:11px;color:var(--muted);text-align:center">XP heute vergeben</div></div></div>
-    <div class="card"><div class="card-header"><div class="card-title">⏰ Nächster Reset</div></div><div class="card-body"><div class="countdown">${hLeft}h ${mLeft}m</div><div class="countdown-sub">bis Tagesreset (23:55)</div><div style="margin-top:12px;font-size:11px;color:var(--muted)"><div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)"><span>Mission Auswertung</span><span style="color:var(--blue)">12:00</span></div><div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)"><span>Gewinnspiel</span><span style="color:var(--amber)">So. 20:00</span></div><div style="display:flex;justify-content:space-between;padding:5px 0"><span>Elite Bonus</span><span style="color:#f59e0b">Mo. 00:05</span></div></div></div></div>
-  </div>
-
-  <div class="section-title">🏆 Hall of Fame</div>
-  <div class="grid-3 mb-20">
-    <div class="card"><div class="card-header"><div class="card-title">⭐ Top XP</div></div><div class="card-body">${topAllzeit.map(([,u],i)=>`<div class="hof-card"><div class="hof-medal">${medals[i]}</div><div class="hof-name">${u.name||'?'}</div><div class="hof-val">${u.xp||0} XP</div></div>`).join('')}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">🔗 Meiste Links</div></div><div class="card-body">${topLinksHof.map(([,u],i)=>`<div class="hof-card"><div class="hof-medal">${medals[i]}</div><div class="hof-name">${u.name||'?'}</div><div class="hof-val">${u.links||0} Links</div></div>`).join('')}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">❤️ Meiste Likes</div></div><div class="card-body">${topLikesHof.map(([,u],i)=>`<div class="hof-card"><div class="hof-medal">${medals[i]}</div><div class="hof-name">${u.name||'?'}</div><div class="hof-val">${u.totalLikes||0} Likes</div></div>`).join('')}</div></div>
-  </div>
-
-  <div class="grid-2 mb-20">
-    <div class="card"><div class="card-header"><div class="card-title">👑 Elite User (${eliteUser.length})</div></div><div class="card-body">${eliteUser.length?eliteUser.map(([,u])=>`<div class="rank-row"><span class="badge-pill bp-elite">👑</span><span class="rank-name" style="margin-left:6px">${u.name}</span><span class="rank-xp">${u.xp} XP</span></div>`).join(''):'<div class="empty">Noch kein Elite User</div>'}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">🏅 Erfahrene (${erfahreneUser.length})</div></div><div class="card-body">${erfahreneUser.slice(0,5).map(([,u])=>`<div class="rank-row"><span class="badge-pill bp-erf">🏅</span><span class="rank-name" style="margin-left:6px">${u.name}</span><span class="rank-xp">${u.xp} XP</span></div>`).join('')||'<div class="empty">Keine Erfahrenen</div>'}</div></div>
-  </div>
-</div>
-
-<!-- USER -->
-<div id="tab-users" class="tab-content">
-  <div class="card mb-20">
-    <div class="search-row"><input type="text" id="search" class="search-input" placeholder="🔍 User suchen..." onkeyup="filterUsers()"></div>
-    <div class="user-table-wrap">
-      ${Object.entries(d.users).sort((a,b)=>(b[1].xp||0)-(a[1].xp||0)).map(([id,u])=>{
-        const initials=(u.name||'?').slice(0,2).toUpperCase();
-        const hasLiked=gelikedSet.has(Number(id));
-        const hasLink=d.tracker[id]===today;
-        const mData=d.missionen[id]?.date===today?d.missionen[id]:null;
-        const nb=xpBisNaechstesBadge(u.xp||0);
-        const progress=nb?Math.round(((u.xp||0)/((u.xp||0)+nb.fehlend))*100):100;
-        const bc=u.role?.includes('Elite')?'bp-elite':u.role?.includes('Erfahrener')?'bp-erf':u.role?.includes('Aufsteiger')?'bp-auf':u.role?.includes('Anfänger')?'bp-anf':'bp-new';
-        return `<div class="user-row">
-          <div class="user-avatar">${initials}</div>
-          <div class="user-info">
-            <div class="user-name">${u.name||'Unbekannt'}${u.username?` <span style="color:var(--muted);font-size:10px">@${u.username}</span>`:''}</div>
-            <div class="user-meta">${u.instagram?'📸 @'+u.instagram:'<span style="color:var(--red)">❌ kein Insta</span>'} · <span class="badge-pill ${bc}">${u.role||'🆕'}</span> · <span style="color:${hasLiked?'var(--green)':'var(--red)'}">Like:${hasLiked?'✓':'✗'}</span> · <span style="color:${hasLink?'var(--blue)':'var(--muted)'}">Link:${hasLink?'✓':'✗'}</span>${mData?` · M${mData.m1?'1✓':'1✗'} M${mData.m2?'2✓':'2✗'} M${mData.m3?'3✓':'3✗'}`:''}</div>
-            ${nb?`<div class="progress-wrap"><div class="progress-bar" style="width:${progress}%"></div></div><div style="font-size:9px;color:var(--muted);margin-top:1px">Noch ${nb.fehlend} XP bis ${nb.ziel}</div>`:`<div style="font-size:9px;color:#f59e0b;margin-top:1px">👑 Maximales Level!</div>`}
-          </div>
-          <div class="user-xp"><div class="user-xp-val">${u.xp||0} XP</div><div class="user-xp-sub">Heute: ${d.dailyXP[id]||0}</div><div class="user-xp-sub">Woche: ${d.weeklyXP[id]||0}</div></div>
-          ${(u.warnings||0)>0?`<span class="warn-badge">⚠️${u.warnings}</span>`:''}
-          <div class="user-actions">
-            <a href="/reset-user?id=${id}" class="abtn red">Reset</a>
-            <a href="/add-warn?id=${id}" class="abtn red">Warn+</a>
-            <a href="/remove-warn?id=${id}" class="abtn amber">Warn−</a>
-            <a href="/remove-xp?id=${id}&amount=10" class="abtn muted">−10XP</a>
-            <a href="/give-bonus?id=${id}" class="abtn green">+Link</a>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-  </div>
-
-  <div class="section-title">⚠️ Warn Center (${usersWithWarns.length})</div>
-  <div class="card mb-20"><div class="card-body">${usersWithWarns.length?usersWithWarns.map(([id,u])=>`<div class="bonus-item"><div><div style="font-size:12px;font-weight:600">${u.name||'?'}</div><div style="font-size:10px;color:var(--muted)">${u.xp||0} XP</div></div><div style="display:flex;align-items:center;gap:6px"><span class="warn-badge">⚠️ ${u.warnings}/5</span><a href="/remove-warn?id=${id}" class="abtn amber">Entfernen</a></div></div>`).join(''):'<div class="empty">✅ Keine Warns</div>'}</div></div>
-
-  <div class="section-title">🎁 Bonus Links</div>
-  <div class="card"><div class="card-body">${Object.entries(d.bonusLinks||{}).length?Object.entries(d.bonusLinks||{}).map(([id,count])=>`<div class="bonus-item"><div><div style="font-size:12px;font-weight:600">${d.users[id]?.name||'?'}</div></div><span class="tag amber">${count} Bonus Link${count>1?'s':''}</span></div>`).join(''):'<div class="empty">Keine Bonus Links</div>'}</div></div>
-</div>
-
-<!-- LINKS -->
-<div id="tab-links" class="tab-content">
-  <div class="card"><div class="card-body">${Object.entries(d.links).length===0?'<div class="empty">Keine Links</div>':Object.entries(d.links).sort((a,b)=>(b[1].timestamp||0)-(a[1].timestamp||0)).map(([msgId,link])=>{
-    const likerIds=Array.from(link.likes||[]);
-    const allLikers=likerIds.map(lid=>{const ln=link.likerNames?.[lid];if(ln)return ln;const u=d.users[String(lid)];return u?{name:u.name,insta:u.instagram}:{name:'User '+lid,insta:null};});
-    const isToday=new Date(link.timestamp).toDateString()===today;
-    return `<div class="link-item"><div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:0"><a href="${link.text}" target="_blank" class="link-url">${link.text}</a><div class="link-meta">👤 ${link.user_name} · ❤️ ${link.likes?.size||0} · ${new Date(link.timestamp).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})} ${isToday?'<span class="tag green">Heute</span>':''}</div>${allLikers.length>0?`<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:2px">${allLikers.map(l=>`<span class="liker-tag">${l.name||'User'}${l.insta?' @'+l.insta:''}</span>`).join('')}</div>`:'<div style="font-size:10px;color:var(--muted);margin-top:3px">Noch keine Likes</div>'}</div><div style="display:flex;gap:4px;align-items:center"><span class="like-badge">❤️${link.likes?.size||0}</span><a href="/delete-link?id=${msgId}" class="abtn red">🗑️</a></div></div></div>`;
-  }).join('')}</div></div>
-</div>
-
-<!-- MISSIONEN -->
-<div id="tab-missions" class="tab-content">
-  <div class="mission-grid mb-20">
-    <div class="mission-item"><div class="mission-id">MISSION 1</div><div class="mission-count m1">${m1c}</div><div class="mission-sub">erfüllt</div></div>
-    <div class="mission-item"><div class="mission-id">MISSION 2</div><div class="mission-count m2">${m2c}</div><div class="mission-sub">erfüllt</div></div>
-    <div class="mission-item"><div class="mission-id">MISSION 3</div><div class="mission-count m3">${m3c}</div><div class="mission-sub">erfüllt</div></div>
-  </div>
-  <div class="grid-2">
-    <div class="card"><div class="card-header"><div class="card-title">✅ M1 erfüllt</div></div><div class="card-body">${Object.entries(d.missionen).filter(([uid,m])=>m.date===today&&m.m1&&!istAdminId(uid)).map(([uid])=>`<div class="rank-row"><span class="tag green">✅</span><span class="rank-name" style="margin-left:6px">${d.users[uid]?.name||'?'}</span></div>`).join('')||'<div class="empty">Noch niemand</div>'}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">❌ M1 offen (mit Link)</div></div><div class="card-body">${Object.entries(d.users).filter(([uid,u])=>!istAdminId(uid)&&u.started&&d.tracker[uid]===today&&!(d.missionen[uid]?.m1)).map(([uid,u])=>`<div class="rank-row"><span class="tag red">❌</span><span class="rank-name" style="margin-left:6px">${u.name||'?'}</span><a href="/remind-user?id=${uid}" class="abtn amber">DM</a></div>`).join('')||'<div class="empty">✅ Alle erfüllt</div>'}</div></div>
-  </div>
-</div>
-
-<!-- RANKINGS -->
-<div id="tab-ranking" class="tab-content">
-  <div class="grid-3">
-    <div class="card"><div class="card-header"><div class="card-title">🏆 Gesamt</div></div><div class="card-body">${gesamtRanking.length?gesamtRanking.map(([,u],i)=>rankRow(i,u.name||'User',(u.xp||0)+' XP')).join(''):'<div class="empty">Keine Daten</div>'}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">📅 Daily</div></div><div class="card-body">${dailyRanking.length?dailyRanking.map(([uid,xp],i)=>rankRow(i,d.users[uid]?.name||'User',xp+' XP')).join(''):'<div class="empty">Heute keine XP</div>'}</div></div>
-    <div class="card"><div class="card-header"><div class="card-title">📆 Weekly</div></div><div class="card-body">${weeklyRanking.length?weeklyRanking.map(([uid,xp],i)=>rankRow(i,d.users[uid]?.name||'User',xp+' XP')).join(''):'<div class="empty">Keine XP diese Woche</div>'}</div></div>
-  </div>
-</div>
-
-<!-- EVENTS -->
-<div id="tab-events" class="tab-content">
-  <div class="card ${evtAktiv?'active':''}">
-    <div class="card-header"><div class="card-title">⚡ XP Event</div><span class="tag ${evtAktiv?'green':'muted'}">${evtAktiv?'🟢 AKTIV':'⭕ INAKTIV'}</span></div>
-    <div class="card-body">
-      <form action="/create-xp-event" method="get"><div class="event-form-grid">
-        <div class="form-group"><label>Bonus (%)</label><input type="number" name="percent" placeholder="z.B. 50" min="1" max="500" required></div>
-        <div class="form-group"><label>Dauer (Min)</label><input type="number" name="duration" placeholder="z.B. 120" min="1" required></div>
-        <div class="form-group"><label>Start</label><select name="startType" onchange="document.getElementById('ct').style.display=this.value==='custom'?'block':'none'"><option value="now">Sofort</option><option value="custom">Geplant</option></select></div>
-        <div class="form-group" id="ct" style="display:none"><label>Startzeit</label><input type="datetime-local" name="startCustom"></div>
-        <div class="form-group full" style="display:flex;gap:8px;flex-wrap:wrap"><button type="submit" class="btn btn-primary">🚀 Starten</button><a href="/stop-xp-event" class="btn btn-danger">🛑 Stoppen</a></div>
-      </div></form>
-    </div>
+  <div class="section-title">XP Event</div>
+  <div class="event-card ${evtAktiv?'active':''} mb-28">
+    <div class="event-header"><div class="event-title">⚡ XP Event System</div><span class="badge-pill ${evtAktiv?'active':'inactive'}">${evtAktiv?'🟢 AKTIV':'⭕ INAKTIV'}</span></div>
+    <div class="event-body"><form action="/create-xp-event" method="get"><div class="event-form-grid">
+      <div class="form-group"><label>Bonus (%)</label><input type="number" name="percent" placeholder="z.B. 50" min="1" max="500" required></div>
+      <div class="form-group"><label>Dauer (Minuten)</label><input type="number" name="duration" placeholder="z.B. 120" min="1" required></div>
+      <div class="form-group"><label>Start</label><select name="startType" onchange="document.getElementById('ct').style.display=this.value==='custom'?'block':'none'"><option value="now">Sofort starten</option><option value="custom">Geplanter Start</option></select></div>
+      <div class="form-group" id="ct" style="display:none"><label>Startzeit</label><input type="datetime-local" name="startCustom"></div>
+      <div class="form-group full" style="display:flex;gap:10px;flex-wrap:wrap"><button type="submit" class="btn btn-primary">🚀 Event starten</button><a href="/stop-xp-event" class="btn btn-danger">🛑 Stoppen</a></div>
+    </div></form></div>
     <div class="event-status-row">
       <div><div class="event-stat-label">Status</div><div class="event-stat-value" style="color:${evtAktiv?'var(--green)':'var(--muted)'}">${evtAktiv?'Läuft':'Gestoppt'}</div></div>
       <div><div class="event-stat-label">Bonus</div><div class="event-stat-value" style="color:var(--amber)">${evtPct>0?'+'+evtPct+'%':'—'}</div></div>
@@ -1368,72 +1155,68 @@ window.onload=()=>{showTab(localStorage.getItem('activeTab')||'overview');};
       <div><div class="event-stat-label">Ende</div><div class="event-stat-value">${evtEndStr}</div></div>
     </div>
   </div>
-</div>
-
-<!-- AKTIONEN -->
-<div id="tab-actions" class="tab-content">
-  <div class="grid-2 mb-20">
-    <div class="card"><div class="card-header"><div class="card-title">📨 DM an alle</div></div><div class="card-body"><form action="/send-dm-all" method="get" style="display:flex;flex-direction:column;gap:10px"><textarea name="text" placeholder="Nachricht an alle User..."></textarea><button type="submit" class="btn btn-primary">📨 Senden</button></form></div></div>
-    <div class="card"><div class="card-header"><div class="card-title">⚙️ System</div></div><div class="card-body" style="display:flex;flex-direction:column;gap:8px"><a href="/manual-backup" class="btn btn-green">💾 Backup erstellen</a><a href="/reset-daily" class="btn btn-danger" onclick="return confirm('Daily wirklich zurücksetzen?')">🔄 Daily Reset</a></div></div>
+  <div class="section-title">Missionen heute</div>
+  <div class="card mb-28"><div class="card-body"><div class="mission-grid">
+    <div class="mission-item"><div class="mission-id">MISSION 1</div><div class="mission-count m1">${m1c}</div><div class="mission-sub">User erfüllt</div></div>
+    <div class="mission-item"><div class="mission-id">MISSION 2</div><div class="mission-count m2">${m2c}</div><div class="mission-sub">User erfüllt</div></div>
+    <div class="mission-item"><div class="mission-id">MISSION 3</div><div class="mission-count m3">${m3c}</div><div class="mission-sub">User erfüllt</div></div>
+  </div></div></div>
+  <div class="section-title">Rankings</div>
+  <div class="rankings-grid">
+    <div class="card"><div class="card-header"><div class="card-title">🏆 Gesamt</div></div><div class="card-body">${gesamtRanking.length?gesamtRanking.map(([,u],i)=>rankRow(i,u.name||'User',u.xp||0)).join(''):'<div class="empty-state">Keine Daten</div>'}</div></div>
+    <div class="card"><div class="card-header"><div class="card-title">📅 Daily</div></div><div class="card-body">${dailyRanking.length?dailyRanking.map(([uid,xp],i)=>rankRow(i,d.users[uid]?.name||'User',xp)).join(''):'<div class="empty-state">Heute noch keine XP</div>'}</div></div>
+    <div class="card"><div class="card-header"><div class="card-title">📆 Weekly</div></div><div class="card-body">${weeklyRanking.length?weeklyRanking.map(([uid,xp],i)=>rankRow(i,d.users[uid]?.name||'User',xp)).join(''):'<div class="empty-state">Diese Woche noch keine XP</div>'}</div></div>
   </div>
-  <div class="section-title">📸 Ohne Instagram (${noInsta.length})</div>
-  <div class="card"><div class="card-body">${noInsta.length>0?noInsta.map(u=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">👤 ${u.name||'?'}</div>`).join(''):'<div class="empty">✅ Alle haben Instagram</div>'}</div></div>
-</div>
-
-</div>
-<div class="bottom-nav">
-  <button class="bnav-item" data-tab="overview" onclick="showTab('overview')"><span class="bnav-icon">📊</span>Übersicht</button>
-  <button class="bnav-item" data-tab="users" onclick="showTab('users')"><span class="bnav-icon">👥</span>User</button>
-  <button class="bnav-item" data-tab="links" onclick="showTab('links')"><span class="bnav-icon">🔗</span>Links</button>
-  <button class="bnav-item" data-tab="ranking" onclick="showTab('ranking')"><span class="bnav-icon">🏆</span>Ranking</button>
-  <button class="bnav-item" data-tab="actions" onclick="showTab('actions')"><span class="bnav-icon">⚙️</span>Aktionen</button>
-</div>
-</body></html>`);
-
-app.get('/add-warn', (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    const uid = req.query.id;
-    if (d.users[uid]) { d.users[uid].warnings = (d.users[uid].warnings||0)+1; speichern(); if (d.users[uid].warnings >= 5) sendeAdminNotification('🚨 *5 Warns!*\n👤 ' + d.users[uid].name); }
-    res.redirect('/dashboard');
-});
-app.get('/give-bonus', (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    const uid = req.query.id;
-    if (d.users[uid]) { if (!d.bonusLinks[uid]) d.bonusLinks[uid]=0; d.bonusLinks[uid]++; speichern(); }
-    res.redirect('/dashboard');
-});
-app.get('/remind-user', async (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    const uid = req.query.id;
-    if (d.users[uid]) { try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung!*\n\nLike noch heute 5 Links! 💪', { parse_mode: 'Markdown' }); } catch(e){} }
-    res.redirect('/dashboard');
-});
-app.get('/send-dm-all', async (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    const text = req.query.text;
-    if (!text) return res.redirect('/dashboard');
-    let ok = 0;
-    for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started) continue;
-        try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*\n\n' + text, { parse_mode: 'Markdown' }); ok++; await new Promise(r=>setTimeout(r,200)); } catch(e){}
-    }
-    res.redirect('/dashboard');
-});
-app.get('/manual-backup', async (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    await backup();
-    res.redirect('/dashboard');
-});
-app.get('/reset-daily', (req, res) => {
-    if (!isAuthenticated(req)) return res.redirect('/login');
-    d.dailyXP={}; d.tracker={}; d.counter={}; d.badgeTracker={};
-    speichern();
-    res.redirect('/dashboard');
+  <div class="two-col">
+    <div class="card"><div class="card-header"><div class="card-title">🔥 Top Links</div><span class="tag muted">${topLinksList.length}</span></div><div class="card-body">${topLinksList.length?topLinksList.map((l,i)=>`<div class="link-item"><div class="link-rank">${medals[i]||(i+1)+'.'}</div><div class="link-info"><a href="${l.text}" target="_blank" class="link-url">${l.text}</a><div class="link-meta">👤 ${l.user_name}</div></div><div class="like-badge">❤️ ${l.likes?.size||0}</div></div>`).join(''):'<div class="empty-state">Keine Links</div>'}</div></div>
+    <div class="card"><div class="card-header"><div class="card-title">📸 Ohne Instagram</div><span class="tag ${noInsta.length>0?'red':'green'}">${noInsta.length}</span></div><div class="card-body">${noInsta.length>0?`<div class="insta-warn">⚠️ ${noInsta.length} User ohne Instagram</div>${noInsta.map(u=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">👤 ${u.name||'?'}</div>`).join('')}`:'<div class="empty-state">✅ Alle haben Instagram</div>'}</div></div>
+  </div>
+  <div class="section-title">Alle User (${totalUsers})</div>
+  <div class="card mb-28">
+    <div class="search-row"><input type="text" id="search" class="search-input" placeholder="🔍  User suchen..." onkeyup="filterUsers()"></div>
+    <div class="user-table-wrap">
+      ${Object.entries(d.users).sort((a,b)=>(b[1].xp||0)-(a[1].xp||0)).map(([id,u])=>{
+        const initials=(u.name||'?').slice(0,2).toUpperCase();
+        const hasLiked=gelikedSet.has(Number(id));
+        const hasLink=d.tracker[id]===today;
+        const mData=d.missionen[id]?.date===today?d.missionen[id]:null;
+        return `<div class="user-row"><div class="user-avatar">${initials}</div><div class="user-info"><div class="user-name">${u.name||'Unbekannt'}${u.username?` <span style="color:var(--muted);font-weight:400">@${u.username}</span>`:''}</div><div class="user-meta">${u.instagram?'📸 @'+u.instagram:'<span style="color:var(--red)">❌ kein Insta</span>'} · ${u.role||'—'} · <span style="color:${hasLiked?'var(--green)':'var(--red)'}">Like:${hasLiked?'✓':'✗'}</span> · <span style="color:${hasLink?'var(--blue)':'var(--muted)'}">Link:${hasLink?'✓':'✗'}</span>${mData?` · M1:${mData.m1?'✓':'✗'} M2:${mData.m2?'✓':'✗'} M3:${mData.m3?'✓':'✗'}`:''}</div></div><div><div class="user-xp">${u.xp||0} XP</div><div class="user-xp-sub">Heute: ${d.dailyXP[id]||0}</div></div>${(u.warnings||0)>0?`<span class="warn-badge">⚠️ ${u.warnings}/5</span>`:''}<div class="user-actions"><a href="/reset-user?id=${id}" class="action-link c-red">🔴 Reset</a><a href="/remove-warn?id=${id}" class="action-link c-amber">⚠️ Warn</a><a href="/remove-xp?id=${id}&amount=10" class="action-link c-muted">−10 XP</a><a href="/remove-xp?id=${id}&amount=50" class="action-link c-muted">−50 XP</a></div></div>`;
+      }).join('')}
+    </div>
+  </div>
+  <div class="section-title">Links (${Object.keys(d.links).length})</div>
+  <div class="card"><div class="card-body">
+    ${Object.entries(d.links).length===0?'<div class="empty-state">Keine Links vorhanden</div>':Object.entries(d.links).map(([msgId,link])=>{
+      // FIX Dashboard: likerNames aus d.links UND aus Bridge (via likes Set)
+      const likerNamesObj = link.likerNames || {};
+      const likerList = Object.values(likerNamesObj);
+      // Zeige auch User die via Bridge geliked haben (in likes Set aber nicht in likerNames)
+      const likerIds = Array.from(link.likes || []);
+      const allLikers = likerIds.map(lid => {
+        if (likerNamesObj[lid]) return likerNamesObj[lid];
+        const u = d.users[String(lid)];
+        return u ? { name: u.name, insta: u.instagram } : { name: 'User ' + lid, insta: null };
+      });
+      return `<div style="padding:14px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:0">
+            <a href="${link.text}" target="_blank" style="color:var(--blue);font-size:13px;font-weight:500;word-break:break-all;text-decoration:none">${link.text}</a>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">👤 ${link.user_name} · ❤️ ${link.likes?.size||0} Likes · ${new Date(link.timestamp).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})} Uhr</div>
+            ${allLikers.length>0
+              ?`<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${allLikers.map(liker=>`<span class="liker-tag">${liker.name||'User'}${liker.insta?' @'+liker.insta:''}</span>`).join('')}</div>`
+              :'<div style="font-size:11px;color:var(--muted);margin-top:4px">Noch keine Likes</div>'}
+          </div>
+          <a href="/delete-link?id=${msgId}" class="action-link c-red">🗑️ Löschen</a>
+        </div>
+      </div>`;
+    }).join('')}
+  </div></div>
+</div></body></html>`);
 });
 
-app.get('/reset-user',  (req, res) => { if(!isAuthenticated(req)) return res.redirect('/login'); const uid=req.query.id; if(d.users[uid]){d.users[uid].xp=0;d.users[uid].level=1;speichern();} res.redirect('/dashboard'); });
-app.get('/remove-warn', (req, res) => { if(!isAuthenticated(req)) return res.redirect('/login'); const uid=req.query.id; if(d.users[uid]){d.users[uid].warnings=0;speichern();} res.redirect('/dashboard'); });
-app.get('/delete-link', (req, res) => { if(!isAuthenticated(req)) return res.redirect('/login'); const msgId=req.query.id; if(d.links[msgId]){delete d.links[msgId];speichern();} res.redirect('/dashboard'); });
+app.get('/reset-user',  (req, res) => { const uid=req.query.id; if(d.users[uid]){d.users[uid].xp=0;d.users[uid].level=1;speichern();} res.redirect('/dashboard'); });
+app.get('/remove-warn', (req, res) => { const uid=req.query.id; if(d.users[uid]){d.users[uid].warnings=0;speichern();} res.redirect('/dashboard'); });
+app.get('/delete-link', (req, res) => { const msgId=req.query.id; if(d.links[msgId]){delete d.links[msgId];speichern();} res.redirect('/dashboard'); });
 app.get('/remove-xp',   (req, res) => {
     const uid=req.query.id; const amount=parseInt(req.query.amount)||0;
     if(d.users[uid]&&amount>0){d.users[uid].xp=Math.max(0,(d.users[uid].xp||0)-amount);d.users[uid].level=level(d.users[uid].xp);d.users[uid].role=badge(d.users[uid].xp);speichern();}
@@ -1546,12 +1329,6 @@ app.post('/gewinnspiel-abschluss', async (req, res) => {
     await weeklyRankingDM();
     res.json({ ok: true });
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
-
-bot.launch();
-console.log('🤖 Bot läuft!');
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });

@@ -1208,7 +1208,7 @@ async function likeErinnerung() {
         const buttons = [];
         for (const [msgId, l] of nichtGeliked) {
             text += '🔗 ' + l.user_name + '\n';
-            buttons.push([Markup.button.url('👍 Liken', 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + (l.counter_msg_id || msgId))]);
+            buttons.push([Markup.button.url('👍 Liken', 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + l.counter_msg_id)]);
         }
         text += '\n⏳ Missionen schließen um 12:00 Uhr!';
         try { await bot.telegram.sendMessage(Number(uid), text, { parse_mode: 'Markdown', reply_markup: Markup.inlineKeyboard(buttons).reply_markup }); } catch (e) {}
@@ -1678,10 +1678,10 @@ if (userId) uid = String(userId);
 
     // fallback wenn gruppe anders ist
     if (!link) {
-        const msgId = mapKey.split('_')[1];
-        link = Object.values(d.links)
-            .find(l => String(l.counter_msg_id) === String(msgId));
-    }
+    const msgId = mapKey.split('_').slice(1).join('_');
+    link = d.links['B_' + msgId] || d.links['C_' + msgId] ||
+        Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+}
 
     if (!link) return;
 

@@ -1553,6 +1553,12 @@ app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); 
 bot.launch();
 console.log('🤖 Bot läuft!');
 
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
+
+bot.launch();
+console.log('🤖 Bot läuft!');
+
 process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason); });
 process.on('uncaughtException', (error)  => { console.log('Uncaught:', error.message); });
 process.once('SIGINT',  () => bot.stop('SIGINT'));

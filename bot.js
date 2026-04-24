@@ -136,6 +136,7 @@ async function backup() {
 }
 
 function badge(xp) {
+    if (xp >= 5000) return '👑 Elite';
     if (xp >= 1000) return '🏅 Erfahrener';
     if (xp >= 500)  return '⬆️ Aufsteiger';
     if (xp >= 50)   return '📘 Anfänger';
@@ -146,6 +147,7 @@ function xpBisNaechstesBadge(xp) {
     if (xp < 50)   return { ziel: '📘 Anfänger',   fehlend: 50 - xp };
     if (xp < 500)  return { ziel: '⬆️ Aufsteiger', fehlend: 500 - xp };
     if (xp < 1000) return { ziel: '🏅 Erfahrener', fehlend: 1000 - xp };
+    if (xp < 5000) return { ziel: '👑 Elite',       fehlend: 5000 - xp };
     return null;
 }
 function level(xp) { return Math.floor(xp / 100) + 1; }
@@ -412,7 +414,7 @@ bot.start(async (ctx) => {
 bot.command('help', async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    const text = '📋 *Bot Hilfe*\n\n🔗 *Link System:*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System:*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n🎯 *Tägliche Missionen:*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ XP um 12:00 Uhr\n\n📅 *Wochen Missionen:*\n• 7x M1 → +10 XP\n• 7x M2 → +15 XP\n• 7x M3 → +20 XP\n\n🏅 *Badges:*\n• 🆕 New: 0-49 XP\n• 📘 Anfänger: 50-499 XP\n• ⬆️ Aufsteiger: 500-999 XP\n• 🏅 Erfahrener: 1000+ XP\n\n/ranking /dailyranking /weeklyranking /profile /daily /missionen';
+    const text = '📋 *Bot Hilfe*\n\n🔗 *Link System:*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System:*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n🎯 *Tägliche Missionen:*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ XP um 12:00 Uhr\n\n📅 *Wochen Missionen:*\n• 7x M1 → +10 XP\n• 7x M2 → +15 XP\n• 7x M3 → +20 XP\n\n🏅 *Badges:*\n• 🆕 New: 0-49 XP\n• 📘 Anfänger: 50-499 XP\n• ⬆️ Aufsteiger: 500-999 XP\n• 🏅 Erfahrener: 1000-4999 XP (+1 Link/Tag)\n• 👑 Elite: 5000+ XP (+1 Link/Tag +1 Link/Woche)\n\n/ranking /dailyranking /weeklyranking /profile /daily /missionen';
     if (u.started) {
         try { await ctx.telegram.sendMessage(uid, text, { parse_mode: 'Markdown' }); if (!istPrivat(ctx.chat.type)) await ctx.reply('📩 Hilfe per DM!'); }
         catch (e) { await ctx.reply(text, { parse_mode: 'Markdown' }); }
@@ -970,7 +972,26 @@ async function zeitCheck() {
             return fn();
         };
         if (h === 3  && m === 0)  einmalig('backup',       () => backup());
-        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => { d.wochenMissionen = {}; console.log('✅ Wochenmissionen resettet'); speichern(); });
+        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
+            d.wochenMissionen = {};
+            console.log('✅ Wochenmissionen resettet');
+            // Elite wöchentlicher Bonus Link
+            let eliteCount = 0;
+            for (const [uid, u] of Object.entries(d.users)) {
+                if (istAdminId(uid) || !u.started) continue;
+                if (u.xp >= 5000) {
+                    if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
+                    d.bonusLinks[uid] += 1;
+                    eliteCount++;
+                    bot.telegram.sendMessage(Number(uid),
+                        '👑 *Elite Bonus!*\n\n🎁 Du hast als Elite-Mitglied deinen wöchentlichen Extra-Link erhalten!',
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => {});
+                }
+            }
+            console.log('✅ Elite Bonus vergeben an ' + eliteCount + ' User');
+            speichern();
+        });
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());

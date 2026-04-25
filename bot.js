@@ -1828,8 +1828,9 @@ app.post('/delete-comment-api', (req, res) => {
 
 app.post('/post-link-from-app', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { uid, name, url } = req.body || {};
+    const { uid, name, url, caption } = req.body || {};
     if (!uid || !url) return res.json({error:'Ungültig'});
+    console.log('[APP-LINK] uid:', uid, 'url:', url?.slice(0,30), 'GROUP_B_ID:', GROUP_B_ID);
 
     const u = d.users[uid];
     if (!u) return res.json({error:'User nicht gefunden'});
@@ -1857,14 +1858,16 @@ app.post('/post-link-from-app', async (req, res) => {
 
         // Link in Gruppe senden
         const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
+        const msgText = posterLabel + '\n🔗 ' + url + (caption ? '\n\n💬 ' + caption : '') + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP';
         const botMsg = await bot.telegram.sendMessage(
             GROUP_B_ID,
-            posterLabel + '\n🔗 ' + url + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP',
+            msgText,
             { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
         );
+        console.log('[APP-LINK] Gesendet an Gruppe B, msgId:', botMsg.message_id);
 
         // Button mit echter msgId updaten
-        const mapKey = MEINE_GRUPPE + '_' + botMsg.message_id;
+        const mapKey = 'B_' + botMsg.message_id;
         await bot.telegram.editMessageReplyMarkup(GROUP_B_ID, botMsg.message_id, null,
             Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + botMsg.message_id)]]).reply_markup
         );
@@ -1875,12 +1878,14 @@ app.post('/post-link-from-app', async (req, res) => {
             user_id: Number(uid),
             user_name: u.spitzname||u.name||name,
             text: url,
+            caption: caption||'',
             likes: new Set(),
             likerNames: {},
             counter_msg_id: botMsg.message_id,
             timestamp: Date.now()
         };
         d.links[mapKey] = linkData;
+        console.log('[APP-LINK] Link gespeichert als:', mapKey);
 
         // XP vergeben
         xpAddMitDaily(uid, 1, u.name||name);

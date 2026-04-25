@@ -715,6 +715,16 @@ bot.on('new_chat_members', async (ctx) => {
 });
 
 
+
+bot.command('checkmembers', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    await ctx.reply('🔍 Prüfe Mitglieder...');
+    await gruppenMitgliederPruefen();
+    const verlassen = Object.values(d.users).filter(u => u.inGruppe === false).length;
+    const aktiv = Object.values(d.users).filter(u => u.inGruppe !== false).length;
+    await ctx.reply('✅ Fertig!\n\n👥 Aktiv: ' + aktiv + '\n🚪 Verlassen: ' + verlassen);
+});
+
 bot.on('left_chat_member', async (ctx) => {
     try {
         const m = ctx.message.left_chat_member;
@@ -1098,6 +1108,31 @@ async function abendM1Warnung() {
     }
 }
 
+
+async function gruppenMitgliederPruefen() {
+    console.log('🔍 Prüfe Gruppenmitglieder...');
+    let aktiv = 0, verlassen = 0;
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u.started) continue;
+        try {
+            const member = await bot.telegram.getChatMember(GROUP_A_ID, Number(uid));
+            if (['left', 'kicked', 'banned'].includes(member.status)) {
+                d.users[uid].inGruppe = false;
+                verlassen++;
+            } else {
+                d.users[uid].inGruppe = true;
+                aktiv++;
+            }
+        } catch(e) {
+            d.users[uid].inGruppe = false;
+            verlassen++;
+        }
+        await new Promise(r => setTimeout(r, 100));
+    }
+    speichern();
+    console.log('✅ Mitglieder geprüft: ' + aktiv + ' aktiv, ' + verlassen + ' verlassen');
+}
+
 async function zeitCheck() {
     try {
         const jetzt = new Date();
@@ -1112,6 +1147,7 @@ async function zeitCheck() {
             return fn();
         };
         if (h === 3  && m === 0)  einmalig('backup',       () => backup());
+        if (h === 4  && m === 0)  einmalig('memberCheck', () => gruppenMitgliederPruefen());
         if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => { d.wochenMissionen = {}; console.log('✅ Wochenmissionen resettet'); speichern(); });
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());

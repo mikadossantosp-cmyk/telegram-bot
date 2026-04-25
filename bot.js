@@ -1757,7 +1757,7 @@ app.get('/like-from-app', async (req, res) => {
     if (!wasLiked && !istAdminId(uid)) {
         try {
             const liker = d.users[uid] || {};
-            const nb = xpNext(liker.xp||0);
+            const nb = xpBisNaechstesBadge(liker.xp||0);
             const eventBonus = d.xpEvent?.aktiv && d.xpEvent?.multiplier > 1 ? ` (+${Math.round((d.xpEvent.multiplier-1)*100)}% Event)` : '';
             const feedbackText = '🎉 +5 XP' + eventBonus + '\n' + (liker.role||'🆕') + ' | ⭐ ' + (liker.xp||0) + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
 

@@ -773,17 +773,23 @@ bot.on('message', async (ctx) => {
         // Melden System
         if (meldenWarte.has(uid_msg) && istPrivat(ctx.chat.type)) {
             const text = ctx.message.text;
-            if (text && !text.startsWith('/')) {
+            const melde = meldenWarte.get(uid_msg);
+            if (text && !text.startsWith('/') && melde?.step === 'nachricht') {
                 meldenWarte.delete(uid_msg);
                 const melder = d.users[String(uid_msg)];
-                const adminText = '🚨 *Neue Meldung!*\n\n📝 ' + text + '\n\n👤 *Von:* ' + (melder?.name || ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '') + '\n🆔 ID: ' + uid_msg;
+                const adminText = '🚨 *Neue Meldung!*\n\n' +
+                    '👤 *Gemeldet:* ' + melde.gemeldeterName + '\n' +
+                    '🆔 ID: ' + melde.gemeldeterUid + '\n\n' +
+                    '📝 *Nachricht:* ' + text + '\n\n' +
+                    '👤 *Von:* ' + (melder?.name || ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '') + '\n' +
+                    '🆔 Melder ID: ' + uid_msg;
                 for (const adminId of ADMIN_IDS) {
                     try {
-                        await bot.telegram.sendMessage(adminId, adminText, {
+                        await bot.telegram.sendMessage(Number(adminId), adminText, {
                             parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: [[{ text: '💬 Antworten', url: 'https://t.me/' + (ctx.from.username || ctx.from.id) }]] }
+                            reply_markup: { inline_keyboard: [[{ text: '💬 Melder antworten', url: 'https://t.me/' + (ctx.from.username || String(uid_msg)) }]] }
                         });
-                    } catch(e) {}
+                    } catch(e) { console.log('Admin DM Fehler:', e.message); }
                 }
                 return ctx.reply('✅ *Meldung eingereicht!*\n\nDanke! Der Admin wird sich darum kümmern.', { parse_mode: 'Markdown' });
             }
@@ -1520,3 +1526,21 @@ process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 (async () => { await checkInstagramForAllUsers(); })();
+
+// Melden User Auswahl Action
+bot.action(/^mld_(\d+)$/, async (ctx) => {
+    const melderUid = ctx.from.id;
+    const gemeldeterUid = ctx.match[1];
+    const gemeldeter = d.users[gemeldeterUid];
+    if (!gemeldeter) return ctx.answerCbQuery('❌ User nicht gefunden.');
+
+    meldenWarte.set(melderUid, { step: 'nachricht', gemeldeterUid, gemeldeterName: gemeldeter.name });
+
+    try {
+        await ctx.editMessageText(
+            '📋 *Meldung gegen:* ' + gemeldeter.name + '\n\n✍️ Schreib jetzt deine Meldung:',
+            { parse_mode: 'Markdown' }
+        );
+    } catch(e) {}
+    await ctx.answerCbQuery();
+});

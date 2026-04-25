@@ -1780,11 +1780,13 @@ app.post('/follow-api', (req, res) => {
 
 app.post('/create-post-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { uid, text } = req.body || {};
-    if (!uid || !text) return res.json({ok:false});
+    const { uid, text, attachment, attachmentType } = req.body || {};
+    if (!uid || (!text && !attachment)) return res.json({ok:false});
     if (!d.posts) d.posts = {};
     if (!d.posts[uid]) d.posts[uid] = [];
-    d.posts[uid].push({ text: text.slice(0,300), timestamp: Date.now(), likes: [] });
+    const post = { text: (text||'').slice(0,300), timestamp: Date.now(), likes: [] };
+    if (attachment) { post.attachment = attachment; post.attachmentType = attachmentType; }
+    d.posts[uid].push(post);
     if (d.posts[uid].length > 50) d.posts[uid].shift();
     speichern();
     res.json({ok:true});

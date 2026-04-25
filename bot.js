@@ -1825,6 +1825,100 @@ app.post('/delete-comment-api', (req, res) => {
     res.json({ok:true});
 });
 
+
+app.post('/post-link-from-app', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, name, url } = req.body || {};
+    if (!uid || !url) return res.json({error:'Ungültig'});
+
+    const u = d.users[uid];
+    if (!u) return res.json({error:'User nicht gefunden'});
+
+    // Duplikat Check
+    const heute = new Date().toDateString();
+    const norm = (t) => t.toLowerCase().replace(/\?.*$/, '').replace(/\/$/, '').trim();
+    const isDuplicate = Object.values(d.links).some(l => norm(l.text) === norm(url));
+    if (isDuplicate) return res.json({error:'Dieser Link wurde bereits gepostet!'});
+
+    // Daily Limit Check
+    const todayLinks = Object.values(d.links).filter(l =>
+        l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
+    ).length;
+    const maxLinks = 1 + (d.bonusLinks?.[uid] || 0);
+    if (todayLinks >= maxLinks) return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'});
+
+    try {
+        // Warnung in Gruppe senden
+        const warnMsg = await bot.telegram.sendMessage(GROUP_B_ID,
+            '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
+            {}
+        );
+        setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_B_ID, warnMsg.message_id); } catch(e) {} }, 10000);
+
+        // Link in Gruppe senden
+        const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
+        const botMsg = await bot.telegram.sendMessage(
+            GROUP_B_ID,
+            posterLabel + '\n🔗 ' + url + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP',
+            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
+        );
+
+        // Button mit echter msgId updaten
+        const mapKey = MEINE_GRUPPE + '_' + botMsg.message_id;
+        await bot.telegram.editMessageReplyMarkup(GROUP_B_ID, botMsg.message_id, null,
+            Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + botMsg.message_id)]]).reply_markup
+        );
+
+        // Link speichern
+        const linkData = {
+            chat_id: GROUP_B_ID,
+            user_id: Number(uid),
+            user_name: u.spitzname||u.name||name,
+            text: url,
+            likes: new Set(),
+            likerNames: {},
+            counter_msg_id: botMsg.message_id,
+            timestamp: Date.now()
+        };
+        d.links[mapKey] = linkData;
+
+        // XP vergeben
+        xpAddMitDaily(uid, 1, u.name||name);
+        u.links = (u.links||0) + 1;
+
+        // Mission updaten
+        const mission = getMission(uid);
+        if (istInstagramLink(url)) mission.linksGepostet++;
+        await checkMissionen(uid, u.name||name);
+
+        // DM an alle User senden (wie bei Telegram)
+        await sendeLinkAnAlle(linkData);
+
+        // Bridge Bot informieren
+        try {
+            const burl = BRIDGE_BOT_URL;
+            const lib2 = burl.startsWith('https') ? require('https') : require('http');
+            const bdata = JSON.stringify({
+                fromGroup: 'B', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
+                chatId: GROUP_B_ID, linkText: url,
+                userName: u.spitzname||u.name||name, userId: Number(uid), username: u.username||null
+            });
+            const urlObj2 = new (require('url').URL)(burl);
+            const req2 = lib2.request({
+                hostname: urlObj2.hostname, path: urlObj2.pathname, method: 'POST',
+                headers: {'Content-Type':'application/json','x-bridge-secret':BRIDGE_SECRET,'Content-Length':Buffer.byteLength(bdata)}
+            }, r=>{r.on('data',()=>{});r.on('end',()=>{});});
+            req2.on('error',()=>{}); req2.write(bdata); req2.end();
+        } catch(e) { console.log('Bridge Fehler:', e.message); }
+
+        speichern();
+        res.json({ok:true, msgId: botMsg.message_id});
+    } catch(e) {
+        console.log('post-link-from-app Fehler:', e.message);
+        res.json({error:'Fehler: '+e.message});
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

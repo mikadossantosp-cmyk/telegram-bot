@@ -1613,18 +1613,60 @@ app.get('/set-insta-api', (req, res) => {
 });
 
 
+// Bilder separat speichern
+const BILDER_DIR = '/data';
+function saveBild(uid, type, data) {
+    try {
+        const file = BILDER_DIR + '/bild_' + uid + '_' + type + '.txt';
+        require('fs').writeFileSync(file, data);
+        return '/bild/' + uid + '/' + type;
+    } catch(e) { return data; }
+}
+function loadBild(uid, type) {
+    try {
+        const file = BILDER_DIR + '/bild_' + uid + '_' + type + '.txt';
+        if (require('fs').existsSync(file)) return require('fs').readFileSync(file, 'utf8');
+    } catch(e) {}
+    return null;
+}
+
 app.post('/update-profile-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { uid, bio, spitzname, banner, accentColor, profilePic } = req.body || {};
     if (d.users[uid]) {
         if (bio !== undefined) d.users[uid].bio = bio.slice(0,100);
         if (spitzname !== undefined) d.users[uid].spitzname = spitzname.slice(0,30);
-        if (banner !== undefined) d.users[uid].banner = banner;
-        if (profilePic !== undefined) d.users[uid].profilePic = profilePic;
         if (accentColor !== undefined) d.users[uid].accentColor = accentColor;
+        // Bilder separat speichern
+        if (banner !== undefined) {
+            if (banner.startsWith('data:image')) {
+                saveBild(uid, 'banner', banner);
+                d.users[uid].banner = '/bild/' + uid + '/banner';
+            } else {
+                d.users[uid].banner = banner;
+            }
+        }
+        if (profilePic !== undefined) {
+            if (profilePic.startsWith('data:image')) {
+                saveBild(uid, 'profilepic', profilePic);
+                d.users[uid].profilePic = '/bild/' + uid + '/profilepic';
+            } else {
+                d.users[uid].profilePic = profilePic;
+            }
+        }
         speichern();
     }
     res.json({ ok: true });
+});
+
+// Bild Endpoint
+app.get('/bild/:uid/:type', (req, res) => {
+    const data = loadBild(req.params.uid, req.params.type);
+    if (!data) return res.status(404).send('');
+    const mime = data.split(';')[0].replace('data:','');
+    const base64 = data.split(',')[1];
+    res.writeHead(200, {'Content-Type': mime, 'Cache-Control': 'public, max-age=86400'});
+    res.end(Buffer.from(base64, 'base64'));
 });
 
 

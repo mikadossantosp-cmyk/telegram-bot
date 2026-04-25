@@ -1400,6 +1400,25 @@ app.post('/bridge-event', async (req, res) => {
                 if (event.meta?.linkText && istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
                 await checkMissionen(uid, name);
             }
+
+            // Telegram Counter sofort updaten
+            try {
+                const anz = link.likes.size;
+                const poster = d.users[String(link.user_id)] || {};
+                const posterLabel = istAdminId(link.user_id) ? '⚙️ Admin ' + link.user_name : (poster.role||'🆕') + ' ' + link.user_name;
+                const posterStats = istAdminId(link.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
+                const chatId = link.chat_id || GROUP_B_ID;
+                console.log('[LIKE_GIVEN] Updating Telegram chat_id:', chatId, 'msg_id:', link.counter_msg_id);
+                await bot.telegram.editMessageText(
+                    Number(chatId),
+                    Number(link.counter_msg_id),
+                    null,
+                    posterLabel + '\n🔗 ' + link.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
+                    { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + link.counter_msg_id)]]).reply_markup }
+                );
+                console.log('[LIKE_GIVEN] ✅ Telegram Counter updated:', anz);
+            } catch(e) { console.log('[LIKE_GIVEN] Telegram update Fehler:', e.message); }
+
             speichernDebounced();
         }
 

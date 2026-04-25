@@ -1601,6 +1601,58 @@ app.get('/auth/code-check', (req, res) => {
     res.json({ ok: true, uid, name: u.name, username: u.username||null, role: u.role, xp: u.xp });
 });
 
+
+app.get('/like-from-app', async (req, res) => {
+    const uid = req.query.uid;
+    const msgId = req.query.msgId;
+    if (!uid || !msgId) return res.json({ok:false});
+
+    // Link finden
+    let lnk = d.links[msgId] || Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+    if (!lnk) return res.json({ok:false, error:'Link nicht gefunden'});
+
+    const uidNum = Number(uid);
+    if (!lnk.likes) lnk.likes = new Set();
+    if (lnk.likes.has(uidNum)) {
+        // Unlike
+        lnk.likes.delete(uidNum);
+        if (lnk.likerNames) delete lnk.likerNames[uidNum];
+    } else {
+        // Like
+        if (uidNum === lnk.user_id) return res.json({ok:false, error:'Kein Self-Like'});
+        lnk.likes.add(uidNum);
+        const u = d.users[uid];
+        if (!lnk.likerNames) lnk.likerNames = {};
+        lnk.likerNames[uidNum] = { name: u?.name||'User', insta: u?.instagram||null };
+        // XP vergeben
+        if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
+        // Mission aktualisieren
+        const mission = getMission(uid);
+        if (istInstagramLink(lnk.text)) mission.likesGegeben++;
+        await checkMissionen(uid, u?.name||'User');
+    }
+
+    speichernDebounced();
+
+    // Telegram Counter sofort updaten
+    try {
+        const { Markup } = require('telegraf');
+        const poster = d.users[String(lnk.user_id)] || {};
+        const anz = lnk.likes.size;
+        const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : (poster.role||'🆕') + ' ' + lnk.user_name;
+        const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
+        await bot.telegram.editMessageText(
+            lnk.chat_id,
+            lnk.counter_msg_id,
+            null,
+            posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
+            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + (msgId.includes('_') ? msgId.split('_').slice(1).join('_') : msgId))]]).reply_markup }
+        );
+    } catch(e) { console.log('Telegram Sync Fehler:', e.message); }
+
+    res.json({ok:true, likes: lnk.likes.size});
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

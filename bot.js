@@ -1830,7 +1830,7 @@ app.post('/post-link-from-app', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { uid, name, url, caption } = req.body || {};
     if (!uid || !url) return res.json({error:'Ungültig'});
-    console.log('[APP-LINK] uid:', uid, 'url:', url?.slice(0,30), 'GROUP_B_ID:', GROUP_B_ID);
+    console.log('[APP-LINK] uid:', uid, 'url:', url?.slice(0,30), 'GROUP_A_ID:', GROUP_A_ID);
 
     const u = d.users[uid];
     if (!u) return res.json({error:'User nicht gefunden'});
@@ -1852,37 +1852,37 @@ app.post('/post-link-from-app', async (req, res) => {
     console.log('[APP-LINK] Checks OK - sende Link...');
 
     try {
-        console.log('[APP-LINK] Sende Warnung an GROUP_B_ID:', GROUP_B_ID);
+        console.log('[APP-LINK] Sende Warnung an GROUP_A_ID:', GROUP_A_ID);
         // Warnung in Gruppe senden - nur wenn nicht Admin
         if (!istAdminId(uid)) {
             try {
-                const warnMsg = await bot.telegram.sendMessage(GROUP_B_ID,
+                const warnMsg = await bot.telegram.sendMessage(GROUP_A_ID,
                     '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!', {}
                 );
-                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_B_ID, warnMsg.message_id); } catch(e) {} }, 10000);
+                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_A_ID, warnMsg.message_id); } catch(e) {} }, 10000);
             } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
         }
 
         // Link in Gruppe senden
-        console.log('[APP-LINK] Sende Link an GROUP_B_ID:', GROUP_B_ID);
+        console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
         const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
         const msgText = posterLabel + '\n🔗 ' + url + (caption ? '\n\n💬 ' + caption : '') + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP';
         const botMsg = await bot.telegram.sendMessage(
-            GROUP_B_ID,
+            GROUP_A_ID,
             msgText,
             { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
         );
         console.log('[APP-LINK] Gesendet an Gruppe B, msgId:', botMsg.message_id);
 
         // Button mit echter msgId updaten
-        const mapKey = 'B_' + botMsg.message_id;
-        await bot.telegram.editMessageReplyMarkup(GROUP_B_ID, botMsg.message_id, null,
+        const mapKey = 'A_' + botMsg.message_id;
+        await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
             Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + botMsg.message_id)]]).reply_markup
         );
 
         // Link speichern
         const linkData = {
-            chat_id: GROUP_B_ID,
+            chat_id: GROUP_A_ID,
             user_id: Number(uid),
             user_name: u.spitzname||u.name||name,
             text: url,
@@ -1912,8 +1912,8 @@ app.post('/post-link-from-app', async (req, res) => {
             const burl = BRIDGE_BOT_URL;
             const lib2 = burl.startsWith('https') ? require('https') : require('http');
             const bdata = JSON.stringify({
-                fromGroup: 'B', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
-                chatId: GROUP_B_ID, linkText: url,
+                fromGroup: 'A', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
+                chatId: GROUP_A_ID, linkText: url,
                 userName: u.spitzname||u.name||name, userId: Number(uid), username: u.username||null
             });
             const urlObj2 = new (require('url').URL)(burl);

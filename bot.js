@@ -918,28 +918,47 @@ async function dailyRankingAbschluss() {
 }
 
 async function likeErinnerung() {
-    const heute = new Date().setHours(0, 0, 0, 0);
-    const heutigeLinks = Object.entries(d.links).filter(([, l]) => l.timestamp >= heute && new Date(l.timestamp).toDateString() === new Date().toDateString());
+    const heute = new Date().toDateString();
+    const heutigeLinks = Object.entries(d.links).filter(([, l]) =>
+        new Date(l.timestamp).toDateString() === heute
+    );
     if (!heutigeLinks.length) return;
+
+    let gesendet = 0;
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || istAdminId(uid)) continue;
-        const nichtGeliked = heutigeLinks.filter(([, l]) => l.user_id != uid && !l.likes.has(Number(uid)));
+
+        const nichtGeliked = heutigeLinks.filter(([, l]) =>
+            l.user_id !== Number(uid) && !l.likes.has(Number(uid))
+        );
         if (!nichtGeliked.length) continue;
-        let text = '👋 *Hallo ' + u.name + '!*\n\n⚠️ Noch nicht geliked:\n\n';
+
+        let text = '👋 *Hey ' + u.name + '!*\n\n⚠️ Du hast heute noch nicht alle Links geliked:\n\n';
         const buttons = [];
+
         for (const [, l] of nichtGeliked) {
-            text += '🔗 ' + l.user_name + '\n';
-            // FIX: Immer counter_msg_id verwenden für korrekte URL
-            if (l.counter_msg_id) {
-                buttons.push([Markup.button.url('👍 Liken', 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + l.counter_msg_id)]);
+            const insta = l.user_id ? (d.users[String(l.user_id)]?.instagram ? ' · 📸 @' + d.users[String(l.user_id)].instagram : '') : '';
+            text += '👤 ' + l.user_name + insta + '\n';
+            if (l.counter_msg_id && l.chat_id) {
+                const url = 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + l.counter_msg_id;
+                buttons.push([{ text: '👍 ' + l.user_name + ' liken', url: url }]);
             }
         }
+
         text += '\n⏳ Missionen schließen um 12:00 Uhr!';
-        if (buttons.length > 0) {
-            try { await bot.telegram.sendMessage(Number(uid), text, { parse_mode: 'Markdown', reply_markup: Markup.inlineKeyboard(buttons).reply_markup }); } catch (e) {}
-        }
+
+        try {
+            await bot.telegram.sendMessage(Number(uid), text, {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: buttons }
+            });
+            gesendet++;
+            await new Promise(r => setTimeout(r, 200));
+        } catch (e) {}
     }
+    console.log('✅ Like Erinnerung gesendet an ' + gesendet + ' User');
 }
+
 
 async function abendM1Warnung() {
     const heute = new Date().toDateString();
@@ -974,7 +993,7 @@ async function zeitCheck() {
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
-        if (h === 23 && m === 0)  einmalig('reminder',     () => likeErinnerung());
+        if (h === 22 && m === 0)  einmalig('reminder',     () => likeErinnerung());
         if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();

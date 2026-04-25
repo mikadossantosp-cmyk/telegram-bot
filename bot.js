@@ -770,6 +770,32 @@ bot.action(/^mld_(.+)$/, async (ctx) => {
     } catch(e) { console.log('mld action Fehler:', e.message); }
 });
 
+
+// ================================
+// APP LOGIN CODE SYSTEM
+// ================================
+bot.command('mycode', async (ctx) => {
+    const uid = String(ctx.from.id);
+    const u = user(ctx.from.id, ctx.from.first_name);
+
+    // Code generieren falls noch keiner existiert
+    if (!u.appCode) {
+        const name = (ctx.from.first_name||'user').toLowerCase().replace(/[^a-z0-9]/g,'');
+        const rand = Math.floor(1000 + Math.random() * 9000);
+        u.appCode = name + rand;
+        speichern();
+    }
+
+    await ctx.reply(
+        '🔐 *Dein CreatorBoost Login Code*\n\n' +
+        '`' + u.appCode + '`\n\n' +
+        '👆 Tippe auf den Code zum Kopieren\n\n' +
+        '📱 Öffne die App und trage diesen Code ein.\n' +
+        '⚠️ Teile deinen Code mit niemandem!',
+        { parse_mode: 'Markdown' }
+    );
+});
+
 bot.on('left_chat_member', async (ctx) => {
     try {
         const m = ctx.message.left_chat_member;
@@ -1543,6 +1569,36 @@ app.post('/update-profile-api', (req, res) => {
         speichern();
     }
     res.json({ ok: true });
+});
+
+
+app.post('/auth/code', (req, res) => {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'Kein Code' });
+
+    // Suche User mit diesem Code
+    const found = Object.entries(d.users).find(([, u]) => u.appCode === code.toLowerCase().trim());
+    if (!found) return res.status(401).json({ error: 'Ungültiger Code' });
+
+    const [uid, u] = found;
+    res.json({
+        ok: true,
+        uid,
+        name: u.name,
+        username: u.username,
+        role: u.role,
+        xp: u.xp
+    });
+});
+
+
+app.get('/auth/code-check', (req, res) => {
+    const code = (req.query.code||'').toLowerCase().trim();
+    if (!code) return res.status(400).json({ error: 'Kein Code' });
+    const found = Object.entries(d.users).find(([, u]) => u.appCode === code);
+    if (!found) return res.status(401).json({ error: 'Ungültig' });
+    const [uid, u] = found;
+    res.json({ ok: true, uid, name: u.name, username: u.username||null, role: u.role, xp: u.xp });
 });
 
 const PORT = process.env.PORT || 3000;

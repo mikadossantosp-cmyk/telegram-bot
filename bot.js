@@ -728,22 +728,46 @@ bot.command('checkmembers', async (ctx) => {
 // ================================
 // MELDEN SYSTEM
 // ================================
-const meldenWarte = new Set();
+const meldenWarte = new Map();
 
 bot.command('melden', async (ctx) => {
     const uid = ctx.from.id;
     if (istAdminId(uid)) return;
-    meldenWarte.add(uid);
     try {
         if (!istPrivat(ctx.chat.type)) {
             const info = await ctx.telegram.getMe();
-            await ctx.reply('📩 Bitte melde dich im privaten Chat!', {
-                reply_markup: Markup.inlineKeyboard([Markup.button.url('📩 Hier melden', 'https://t.me/' + info.username + '?start=melden')]).reply_markup
+            return ctx.reply('📩 Bitte melde im privaten Chat!', {
+                reply_markup: Markup.inlineKeyboard([[Markup.button.url('📩 Hier melden', 'https://t.me/' + info.username + '?start=start')]]).reply_markup
             });
-            return;
         }
-        await ctx.reply('📋 *Meldung einreichen*\n\nSchreib mir einfach was du melden möchtest — wen, was passiert ist usw.\n\nIch leite es direkt an den Admin weiter.', { parse_mode: 'Markdown' });
-    } catch(e) {}
+        const userList = Object.entries(d.users)
+            .filter(([id, u]) => !istAdminId(id) && u.started && Number(id) !== uid)
+            .sort((a, b) => (a[1].name||'').localeCompare(b[1].name||''));
+
+        if (!userList.length) return ctx.reply('❌ Keine User verfügbar.');
+
+        const buttons = userList.map(([id, u]) => [Markup.button.callback(u.name || 'User', 'mld_' + id)]);
+        meldenWarte.set(uid, { step: 'warte' });
+        await ctx.reply('📋 *Meldung einreichen*\n\n👤 Wen möchtest du melden?', {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+        });
+    } catch(e) { console.log('melden Fehler:', e.message); }
+});
+
+bot.action(/^mld_(.+)$/, async (ctx) => {
+    try {
+        const melderUid = ctx.from.id;
+        const gemeldeterUid = ctx.match[1];
+        const gemeldeter = d.users[gemeldeterUid];
+        if (!gemeldeter) return ctx.answerCbQuery('❌ User nicht gefunden.');
+        meldenWarte.set(melderUid, { step: 'nachricht', gemeldeterUid, gemeldeterName: gemeldeter.name });
+        await ctx.editMessageText(
+            '📋 *Meldung gegen:* ' + gemeldeter.name + '\n\n✍️ Schreib jetzt deine Meldung:',
+            { parse_mode: 'Markdown' }
+        );
+        await ctx.answerCbQuery();
+    } catch(e) { console.log('mld action Fehler:', e.message); }
 });
 
 bot.on('left_chat_member', async (ctx) => {
@@ -777,21 +801,14 @@ bot.on('message', async (ctx) => {
             if (text && !text.startsWith('/') && melde?.step === 'nachricht') {
                 meldenWarte.delete(uid_msg);
                 const melder = d.users[String(uid_msg)];
-                const adminText = '🚨 *Neue Meldung!*\n\n' +
-                    '👤 *Gemeldet:* ' + melde.gemeldeterName + '\n' +
-                    '🆔 ID: ' + melde.gemeldeterUid + '\n\n' +
-                    '📝 *Nachricht:* ' + text + '\n\n' +
-                    '👤 *Von:* ' + (melder?.name || ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '') + '\n' +
-                    '🆔 Melder ID: ' + uid_msg;
-                for (const adminId of ADMIN_IDS) {
+                const adminText = '🚨 *Neue Meldung!*\n\n👤 *Gemeldet:* ' + melde.gemeldeterName + ' (ID: ' + melde.gemeldeterUid + ')\n\n📝 ' + text + '\n\n👤 *Von:* ' + (melder?.name || ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '');
+                for (const adminId of [...ADMIN_IDS]) {
                     try {
-                        await bot.telegram.sendMessage(Number(adminId), adminText, {
-                            parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: [[{ text: '💬 Melder antworten', url: 'https://t.me/' + (ctx.from.username || String(uid_msg)) }]] }
-                        });
-                    } catch(e) { console.log('Admin DM Fehler:', e.message); }
+                        await bot.telegram.sendMessage(Number(adminId), adminText, { parse_mode: 'Markdown' });
+                        console.log('✅ Meldung an Admin gesendet:', adminId);
+                    } catch(e) { console.log('❌ Admin DM Fehler:', adminId, e.message); }
                 }
-                return ctx.reply('✅ *Meldung eingereicht!*\n\nDanke! Der Admin wird sich darum kümmern.', { parse_mode: 'Markdown' });
+                return ctx.reply('✅ *Meldung eingereicht!*\n\nDanke! Der Admin kümmert sich darum.', { parse_mode: 'Markdown' });
             }
         }
 
@@ -1514,6 +1531,20 @@ app.get('/set-insta-api', (req, res) => {
     res.json({ ok: true });
 });
 
+
+app.post('/update-profile-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, bio, spitzname, banner, accentColor } = req.body || {};
+    if (d.users[uid]) {
+        if (bio !== undefined) d.users[uid].bio = bio.slice(0,100);
+        if (spitzname !== undefined) d.users[uid].spitzname = spitzname.slice(0,30);
+        if (banner !== undefined) d.users[uid].banner = banner;
+        if (accentColor !== undefined) d.users[uid].accentColor = accentColor;
+        speichern();
+    }
+    res.json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
@@ -1527,20 +1558,3 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 (async () => { await checkInstagramForAllUsers(); })();
 
-// Melden User Auswahl Action
-bot.action(/^mld_(\d+)$/, async (ctx) => {
-    const melderUid = ctx.from.id;
-    const gemeldeterUid = ctx.match[1];
-    const gemeldeter = d.users[gemeldeterUid];
-    if (!gemeldeter) return ctx.answerCbQuery('❌ User nicht gefunden.');
-
-    meldenWarte.set(melderUid, { step: 'nachricht', gemeldeterUid, gemeldeterName: gemeldeter.name });
-
-    try {
-        await ctx.editMessageText(
-            '📋 *Meldung gegen:* ' + gemeldeter.name + '\n\n✍️ Schreib jetzt deine Meldung:',
-            { parse_mode: 'Markdown' }
-        );
-    } catch(e) {}
-    await ctx.answerCbQuery();
-});

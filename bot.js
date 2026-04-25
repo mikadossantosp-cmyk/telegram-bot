@@ -1,4 +1,3 @@
-
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 import express from 'express';
@@ -1382,6 +1381,18 @@ app.get('/remind-insta-api', async (req, res) => {
         } catch(e) {}
     }
     res.json({ ok: true, count });
+});
+
+
+app.get('/set-insta-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    const insta = req.query.insta;
+    if (d.users[uid] && insta) {
+        d.users[uid].instagram = insta.replace('@','').trim();
+        speichern();
+    }
+    res.json({ ok: true });
 });
 
 const PORT = process.env.PORT || 3000;

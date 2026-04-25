@@ -720,9 +720,8 @@ bot.command('checkmembers', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     await ctx.reply('🔍 Prüfe Mitglieder...');
     await gruppenMitgliederPruefen();
-    const verlassen = Object.values(d.users).filter(u => u.inGruppe === false).length;
-    const aktiv = Object.values(d.users).filter(u => u.inGruppe !== false).length;
-    await ctx.reply('✅ Fertig!\n\n👥 Aktiv: ' + aktiv + '\n🚪 Verlassen: ' + verlassen);
+    const aktiv = Object.values(d.users).filter(u => u.inGruppe !== false && u.started).length;
+    await ctx.reply('✅ Fertig!\n\n👥 Aktiv: ' + aktiv + ' User');
 });
 
 bot.on('left_chat_member', async (ctx) => {
@@ -730,11 +729,17 @@ bot.on('left_chat_member', async (ctx) => {
         const m = ctx.message.left_chat_member;
         if (!m || m.is_bot) return;
         const uid = String(m.id);
-        if (d.users[uid]) {
-            d.users[uid].inGruppe = false;
-            d.users[uid].verlaessenAm = Date.now();
+        if (d.users[uid] && !istAdminId(Number(uid))) {
+            delete d.users[uid];
+            delete d.dailyXP[uid];
+            delete d.weeklyXP[uid];
+            delete d.bonusLinks[uid];
+            delete d.missionen[uid];
+            delete d.tracker[uid];
+            delete d.counter[uid];
+            delete d.badgeTracker[uid];
             speichern();
-            console.log('User verlassen:', m.first_name, uid);
+            console.log('User gelöscht:', m.first_name, uid);
         }
     } catch(e) { console.log('left_chat_member Fehler:', e.message); }
 });
@@ -1111,26 +1116,34 @@ async function abendM1Warnung() {
 
 async function gruppenMitgliederPruefen() {
     console.log('🔍 Prüfe Gruppenmitglieder...');
-    let aktiv = 0, verlassen = 0;
+    let aktiv = 0, geloescht = 0;
     for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started) continue;
+        if (!u.started || istAdminId(uid)) continue;
         try {
             const member = await bot.telegram.getChatMember(GROUP_A_ID, Number(uid));
             if (['left', 'kicked', 'banned'].includes(member.status)) {
-                d.users[uid].inGruppe = false;
-                verlassen++;
+                delete d.users[uid];
+                // Auch aus dailyXP, weeklyXP etc. entfernen
+                delete d.dailyXP[uid];
+                delete d.weeklyXP[uid];
+                delete d.bonusLinks[uid];
+                delete d.missionen[uid];
+                delete d.tracker[uid];
+                delete d.counter[uid];
+                delete d.badgeTracker[uid];
+                geloescht++;
             } else {
                 d.users[uid].inGruppe = true;
                 aktiv++;
             }
         } catch(e) {
+            // Bei Fehler nur markieren, nicht löschen
             d.users[uid].inGruppe = false;
-            verlassen++;
         }
         await new Promise(r => setTimeout(r, 100));
     }
     speichern();
-    console.log('✅ Mitglieder geprüft: ' + aktiv + ' aktiv, ' + verlassen + ' verlassen');
+    console.log('✅ Mitglieder geprüft: ' + aktiv + ' aktiv, ' + geloescht + ' gelöscht');
 }
 
 async function zeitCheck() {

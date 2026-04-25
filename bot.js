@@ -1,3 +1,4 @@
+
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 import express from 'express';
@@ -1373,13 +1374,7 @@ app.get('/remind-insta-api', async (req, res) => {
         if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
         try {
             await bot.telegram.sendMessage(Number(uid),
-                '📸 *Hey ' + u.name + '!*
-
-Du hast noch keinen Instagram Account eingetragen.
-
-Bitte trage deinen Instagram Namen ein!
-
-👉 Tippe: /setinsta deinname',
+                '📸 *Hey ' + u.name + '!*\n\nDu hast noch keinen Instagram Account eingetragen.\n\nBitte trage deinen Instagram Namen ein!\n\n👉 Tippe: /setinsta deinname',
                 { parse_mode: 'Markdown' }
             );
             count++;

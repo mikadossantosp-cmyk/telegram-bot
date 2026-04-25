@@ -1717,10 +1717,10 @@ app.get('/like-from-app', async (req, res) => {
 
     const uidNum = Number(uid);
     if (!lnk.likes) lnk.likes = new Set();
-    if (lnk.likes.has(uidNum)) {
-        // Unlike
-        lnk.likes.delete(uidNum);
-        if (lnk.likerNames) delete lnk.likerNames[uidNum];
+    const wasLiked = lnk.likes.has(uidNum);
+    if (wasLiked) {
+        // Bereits geliked - kein Unlike möglich
+        return res.json({ok:true, liked:true, likes: lnk.likes.size});
     } else {
         // Like
         if (uidNum === lnk.user_id) return res.json({ok:false, error:'Kein Self-Like'});
@@ -1753,7 +1753,7 @@ app.get('/like-from-app', async (req, res) => {
         );
     } catch(e) { console.log('Telegram Sync Fehler:', e.message); }
 
-    res.json({ok:true, likes: lnk.likes.size});
+    res.json({ok:true, liked: !wasLiked, likes: lnk.likes.size});
 });
 
 

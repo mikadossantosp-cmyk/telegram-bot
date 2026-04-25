@@ -155,9 +155,22 @@ function xpAdd(uid, menge, name) {
     const u = user(uid, name);
     let finalXP = menge;
     if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalXP = Math.round(menge * d.xpEvent.multiplier);
+    const alteBadge = u.role;
     u.xp += finalXP; u.level = level(u.xp); u.role = badge(u.xp);
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
     d.weeklyXP[uid] += finalXP;
+    // Trophäe bei Badge Aufstieg
+    if (alteBadge !== u.role && u.role) {
+        if (!u.trophies) u.trophies = [];
+        const trophyMap = { '📘 Anfänger': '📘', '⬆️ Aufsteiger': '⬆️', '🏅 Erfahrener': '🏅', '👑 Elite': '👑' };
+        const trophy = trophyMap[u.role];
+        if (trophy && !u.trophies.includes(trophy)) u.trophies.push(trophy);
+        // Level-Up DM
+        bot.telegram.sendMessage(Number(uid),
+            '🎉 *Badge Aufstieg!*\n\n' + alteBadge + ' → ' + u.role + '\n\n⭐ ' + u.xp + ' XP\n\nWeiter so! 💪',
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+    }
     return finalXP;
 }
 
@@ -176,7 +189,7 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [] };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now() };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -592,6 +605,96 @@ bot.command('testmissionauswertung', async (ctx) => {
 });
 bot.command('testweeklyranking', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await weeklyRankingDM(); await ctx.reply('✅ Weekly!'); });
 bot.command('time', (ctx) => { ctx.reply('🕒 ' + new Date().toString()); });
+
+
+bot.command('setbio', async (ctx) => {
+    if (!istPrivat(ctx.chat.type)) return ctx.reply('❌ Bitte im privaten Chat nutzen.');
+    const uid = ctx.from.id;
+    const bio = ctx.message.text.replace('/setbio', '').trim();
+    if (!bio) return ctx.reply('❌ Bitte gib eine Bio an.\n\nBeispiel: /setbio Ich poste täglich Fitness Reels');
+    if (bio.length > 100) return ctx.reply('❌ Bio max. 100 Zeichen.');
+    const u = user(uid, ctx.from.first_name);
+    u.bio = bio;
+    speichern();
+    await ctx.reply('✅ Bio gespeichert!\n\n✍️ ' + bio);
+});
+
+bot.command('setspitzname', async (ctx) => {
+    if (!istPrivat(ctx.chat.type)) return ctx.reply('❌ Bitte im privaten Chat nutzen.');
+    const uid = ctx.from.id;
+    const spitzname = ctx.message.text.replace('/setspitzname', '').trim();
+    if (!spitzname) return ctx.reply('❌ Bitte gib einen Spitznamen an.\n\nBeispiel: /setspitzname König der Reels');
+    if (spitzname.length > 30) return ctx.reply('❌ Spitzname max. 30 Zeichen.');
+    const u = user(uid, ctx.from.first_name);
+    u.spitzname = spitzname;
+    speichern();
+    await ctx.reply('✅ Spitzname gespeichert: ' + spitzname);
+});
+
+bot.command('profil', async (ctx) => {
+    const uid = ctx.from.id;
+    const args = ctx.message.text.split(' ');
+    let zielUid = uid;
+    let zielUser = user(uid, ctx.from.first_name);
+
+    // /profil @username oder /profil userid
+    if (args[1]) {
+        const suche = args[1].replace('@', '').toLowerCase();
+        const gefunden = Object.entries(d.users).find(([, u]) =>
+            (u.username && u.username.toLowerCase() === suche) ||
+            (u.name && u.name.toLowerCase() === suche)
+        );
+        if (!gefunden) return ctx.reply('❌ User nicht gefunden.');
+        zielUid = gefunden[0];
+        zielUser = gefunden[1];
+    }
+
+    const u = zielUser;
+    const sorted = Object.entries(d.users).filter(([id]) => !istAdminId(id)).sort((a, b) => b[1].xp - a[1].xp);
+    const rank = sorted.findIndex(x => x[0] == zielUid) + 1;
+    const bonusL = d.bonusLinks[zielUid] || 0;
+    const nb = xpBisNaechstesBadge(u.xp || 0);
+    const joinDatum = u.joinDate ? new Date(u.joinDate).toLocaleDateString('de-DE') : '—';
+    const trophies = (u.trophies || []).join(' ') || '—';
+
+    let text = '';
+    text += '👤 *' + (u.spitzname || u.name || 'Unbekannt') + '*';
+    if (u.spitzname) text += ' (' + u.name + ')';
+    text += '\n';
+    if (u.instagram) text += '📸 [@' + u.instagram + '](https://instagram.com/' + u.instagram + ')\n';
+    if (u.username) text += '💬 @' + u.username + '\n';
+    if (u.bio) text += '✍️ _' + u.bio + '_\n';
+    text += '\n';
+    text += u.role + '\n';
+    text += '⭐ ' + (u.xp || 0) + ' XP · Lvl ' + (u.level || 1) + '\n';
+    text += '🏆 Rang #' + rank + '\n';
+    text += '🔗 ' + (u.links || 0) + ' Links · ❤️ ' + (u.totalLikes || 0) + ' Likes\n';
+    text += '📅 Daily: ' + (d.dailyXP[zielUid] || 0) + ' · 📆 Weekly: ' + (d.weeklyXP[zielUid] || 0) + '\n';
+    if (bonusL > 0) text += '🎁 Bonus Links: ' + bonusL + '\n';
+    text += '⚠️ Warns: ' + (u.warnings || 0) + '/5\n';
+    text += '📆 Dabei seit: ' + joinDatum + '\n';
+    if (nb) text += '\n⬆️ Noch ' + nb.fehlend + ' XP bis ' + nb.ziel;
+    if (trophies !== '—') text += '\n\n🎖️ *Trophäen:* ' + trophies;
+
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
+bot.command('remindinsta', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    let count = 0;
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '📸 *Hey ' + u.name + '!*\n\nDu hast noch keinen Instagram Account eingetragen.\n\nBitte trage deinen Instagram Namen ein damit wir dich besser supporten können! 💪\n\n👉 Tippe: /setinsta deinname',
+                { parse_mode: 'Markdown' }
+            );
+            count++;
+            await new Promise(r => setTimeout(r, 200));
+        } catch (e) {}
+    }
+    await ctx.reply('✅ Erinnerung gesendet an ' + count + ' User ohne Instagram.');
+});
 
 bot.on('new_chat_members', async (ctx) => {
     for (const m of ctx.message.new_chat_members) {

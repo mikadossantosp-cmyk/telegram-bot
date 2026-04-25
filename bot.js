@@ -18,7 +18,8 @@ process.env.TZ = 'Europe/Berlin';
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 

@@ -1658,7 +1658,7 @@ app.post('/update-profile-api', (req, res) => {
         if (spitzname !== undefined) d.users[uid].spitzname = spitzname.slice(0,30);
         if (accentColor !== undefined) d.users[uid].accentColor = accentColor;
         if (req.body.nische !== undefined) d.users[uid].nische = req.body.nische.slice(0,50);
-        if (req.body.website !== undefined) d.users[uid].website = req.body.website.slice(0,100);
+        if (req.body.website !== undefined) { d.users[uid].website = req.body.website.slice(0,100); console.log('[PROFILE] website gesetzt:', req.body.website); }
         if (req.body.tiktok !== undefined) d.users[uid].tiktok = req.body.tiktok.replace('@','').slice(0,50);
         if (req.body.youtube !== undefined) d.users[uid].youtube = req.body.youtube.replace('@','').slice(0,50);
         if (req.body.twitter !== undefined) d.users[uid].twitter = req.body.twitter.replace('@','').slice(0,50);

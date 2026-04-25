@@ -1313,17 +1313,13 @@ app.post('/send-dm-api', async (req, res) => {
     if (!text) return res.json({ ok: false });
     if (uid) {
         // DM an einzelnen User
-        try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*
-
-' + text, { parse_mode: 'Markdown' }); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*\n\n' + text, { parse_mode: 'Markdown' }); } catch(e) {}
     } else {
         // DM an alle
         let ok = 0;
         for (const [id, u] of Object.entries(d.users)) {
             if (!u.started) continue;
-            try { await bot.telegram.sendMessage(Number(id), '📢 *Admin:*
-
-' + text, { parse_mode: 'Markdown' }); ok++; await new Promise(r=>setTimeout(r,200)); } catch(e) {}
+            try { await bot.telegram.sendMessage(Number(id), '📢 *Admin:*\n\n' + text, { parse_mode: 'Markdown' }); ok++; await new Promise(r=>setTimeout(r,200)); } catch(e) {}
         }
     }
     res.json({ ok: true });

@@ -1839,14 +1839,15 @@ app.post('/post-link-from-app', async (req, res) => {
     const heute = new Date().toDateString();
     const norm = (t) => t.toLowerCase().replace(/\?.*$/, '').replace(/\/$/, '').trim();
     const isDuplicate = Object.values(d.links).some(l => norm(l.text) === norm(url));
-    if (isDuplicate) return res.json({error:'Dieser Link wurde bereits gepostet!'});
+    if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check
     const todayLinks = Object.values(d.links).filter(l =>
         l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
     ).length;
     const maxLinks = 1 + (d.bonusLinks?.[uid] || 0);
-    if (todayLinks >= maxLinks) return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'});
+    if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
+    console.log('[APP-LINK] Checks OK - sende Link...');
 
     try {
         console.log('[APP-LINK] Sende Warnung an GROUP_B_ID:', GROUP_B_ID);
@@ -1941,4 +1942,5 @@ process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 (async () => { await checkInstagramForAllUsers(); })();
+
 

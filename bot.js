@@ -1008,7 +1008,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
     try {
         if (uid === lnk.user_id) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
-        if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('❌ Bereits geliked!'); } catch (e) {} return; }
+        if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('✅ Bereits geliked! (auch via App möglich)'); } catch (e) {} return; }
 
         lnk.likes.add(uid);
         lnk.likerNames[uid] = { name: ctx.from.first_name, insta: d.users[uid]?.instagram || null };
@@ -1663,9 +1663,13 @@ app.get('/like-from-app', async (req, res) => {
     if (!uid || !msgId) return res.json({ok:false});
     // Kein Bridge Secret nötig - kommt von der App
 
-    // Link finden
-    let lnk = d.links[msgId] || Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+    // Link finden - alle Möglichkeiten
+    let lnk = d.links[msgId] 
+        || d.links['B_' + msgId] 
+        || d.links['C_' + msgId]
+        || Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
     if (!lnk) return res.json({ok:false, error:'Link nicht gefunden'});
+    console.log('[APP-LIKE] Link gefunden, counter_msg_id:', lnk.counter_msg_id, 'chat_id:', lnk.chat_id);
 
     const uidNum = Number(uid);
     if (!lnk.likes) lnk.likes = new Set();

@@ -71,6 +71,9 @@ function laden() {
         for (const [key, val] of Object.entries(defaults)) { if (!d[key]) d[key] = val; }
         const linkKeys = Object.keys(d.links).sort((a, b) => d.links[a].timestamp - d.links[b].timestamp);
         while (linkKeys.length > 500) { delete d.links[linkKeys.shift()]; }
+        for (const uid in d.users) {
+            if (d.users[uid].inGruppe === undefined) d.users[uid].inGruppe = true;
+        }
         console.log('✅ Daten geladen');
     } catch (e) { console.log('Ladefehler:', e.message); }
 }

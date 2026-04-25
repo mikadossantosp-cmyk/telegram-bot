@@ -1759,9 +1759,9 @@ app.get('/like-from-app', async (req, res) => {
             const liker = d.users[uid] || {};
             const nb = xpNext(liker.xp||0);
             const eventBonus = d.xpEvent?.aktiv && d.xpEvent?.multiplier > 1 ? ` (+${Math.round((d.xpEvent.multiplier-1)*100)}% Event)` : '';
-            const feedbackText = `🎉 +5 XP${eventBonus}
-${liker.role||'🆕'} | ⭐ ${liker.xp||0}${nb ? '
-⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : ''}`;
+            const feedbackText = '🎉 +5 XP' + eventBonus + '\n' + (liker.role||'🆕') + ' | ⭐ ' + (liker.xp||0) + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
+
+
             const feedbackMsg = await bot.telegram.sendMessage(lnk.chat_id, feedbackText, { reply_to_message_id: lnk.counter_msg_id });
             setTimeout(async () => { try { await bot.telegram.deleteMessage(lnk.chat_id, feedbackMsg.message_id); } catch(e) {} }, 8000);
         } catch(e) { console.log('Feedback Fehler:', e.message); }

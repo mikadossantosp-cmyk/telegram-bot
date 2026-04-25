@@ -1849,14 +1849,19 @@ app.post('/post-link-from-app', async (req, res) => {
     if (todayLinks >= maxLinks) return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'});
 
     try {
-        // Warnung in Gruppe senden
-        const warnMsg = await bot.telegram.sendMessage(GROUP_B_ID,
-            '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
-            {}
-        );
-        setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_B_ID, warnMsg.message_id); } catch(e) {} }, 10000);
+        console.log('[APP-LINK] Sende Warnung an GROUP_B_ID:', GROUP_B_ID);
+        // Warnung in Gruppe senden - nur wenn nicht Admin
+        if (!istAdminId(uid)) {
+            try {
+                const warnMsg = await bot.telegram.sendMessage(GROUP_B_ID,
+                    '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!', {}
+                );
+                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_B_ID, warnMsg.message_id); } catch(e) {} }, 10000);
+            } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
+        }
 
         // Link in Gruppe senden
+        console.log('[APP-LINK] Sende Link an GROUP_B_ID:', GROUP_B_ID);
         const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
         const msgText = posterLabel + '\n🔗 ' + url + (caption ? '\n\n💬 ' + caption : '') + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP';
         const botMsg = await bot.telegram.sendMessage(

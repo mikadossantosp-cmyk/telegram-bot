@@ -1615,11 +1615,12 @@ app.get('/set-insta-api', (req, res) => {
 
 app.post('/update-profile-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { uid, bio, spitzname, banner, accentColor } = req.body || {};
+    const { uid, bio, spitzname, banner, accentColor, profilePic } = req.body || {};
     if (d.users[uid]) {
         if (bio !== undefined) d.users[uid].bio = bio.slice(0,100);
         if (spitzname !== undefined) d.users[uid].spitzname = spitzname.slice(0,30);
         if (banner !== undefined) d.users[uid].banner = banner;
+        if (profilePic !== undefined) d.users[uid].profilePic = profilePic;
         if (accentColor !== undefined) d.users[uid].accentColor = accentColor;
         speichern();
     }

@@ -1288,8 +1288,26 @@ app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;
     if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });
     const out = Object.assign({}, d);
+
+    // Likes nach URL zusammenführen - Bridge Bot Links bekommen alle Likes
+    const likesByUrl = {};
+    for (const [k, v] of Object.entries(d.links)) {
+        const url = (v.text||'').trim();
+        if (!url) continue;
+        if (!likesByUrl[url]) likesByUrl[url] = { likes: new Set(), likerNames: {} };
+        v.likes.forEach(uid => likesByUrl[url].likes.add(uid));
+        Object.assign(likesByUrl[url].likerNames, v.likerNames||{});
+    }
+
     out.links = {};
-    for (const [k, v] of Object.entries(d.links)) out.links[k] = Object.assign({}, v, { likes: Array.from(v.likes) });
+    for (const [k, v] of Object.entries(d.links)) {
+        const url = (v.text||'').trim();
+        const merged = likesByUrl[url] || { likes: new Set(), likerNames: {} };
+        out.links[k] = Object.assign({}, v, {
+            likes: Array.from(merged.likes),
+            likerNames: merged.likerNames
+        });
+    }
     res.json(out);
 });
 

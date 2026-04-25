@@ -1256,8 +1256,7 @@ app.get('/add-warn', async (req, res) => {
     if (d.users[uid]) {
         d.users[uid].warnings = (d.users[uid].warnings||0)+1;
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*
-Warn: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\nWarn: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch(e) {}
     }
     res.json({ ok: true });
 });

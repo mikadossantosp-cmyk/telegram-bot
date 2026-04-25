@@ -1350,17 +1350,35 @@ app.post('/bridge-event', async (req, res) => {
         }
 
         if (event.type === 'like_given') {
-            const { mapKey } = event.meta || {};
+            const { mapKey, groupBMsgId } = event.meta || {};
             if (!mapKey || !uid) return;
 
+            console.log('[LIKE_GIVEN] mapKey:', mapKey, 'groupBMsgId:', groupBMsgId, 'linkText:', event.meta?.linkText?.slice(0,30));
+            console.log('[LIKE_GIVEN] Links in d.links:', Object.keys(d.links).length, 'keys sample:', Object.keys(d.links).slice(0,5));
+
             let link = d.links[mapKey];
-            // FIX: Fallback mit slice(1).join('_')
+            if (link) { console.log('[LIKE_GIVEN] Gefunden via mapKey direkt'); }
+
             if (!link) {
                 const msgId = mapKey.split('_').slice(1).join('_');
                 link = d.links['B_' + msgId] || d.links['C_' + msgId] ||
                     Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
+                if (link) console.log('[LIKE_GIVEN] Gefunden via msgId Fallback:', msgId);
             }
-            if (!link) return;
+            if (!link && groupBMsgId) {
+                link = Object.values(d.links).find(l => String(l.counter_msg_id) === String(groupBMsgId));
+                if (link) console.log('[LIKE_GIVEN] Gefunden via groupBMsgId:', groupBMsgId);
+            }
+            if (!link && event.meta?.linkText) {
+                link = Object.values(d.links).find(l => l.text === event.meta.linkText);
+                if (link) console.log('[LIKE_GIVEN] Gefunden via linkText');
+            }
+            if (!link) {
+                console.log('[LIKE_GIVEN] ❌ NICHT GEFUNDEN! mapKey:', mapKey, 'linkText:', event.meta?.linkText?.slice(0,50));
+                console.log('[LIKE_GIVEN] Alle Keys:', Object.keys(d.links).join(', '));
+                return;
+            }
+            console.log('[LIKE_GIVEN] ✅ Link gefunden, counter_msg_id:', link.counter_msg_id, 'likes vorher:', link.likes?.size);
 
             const uidNum = Number(uid);
             if (!link.likes) link.likes = new Set();

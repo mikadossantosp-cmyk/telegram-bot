@@ -189,7 +189,7 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now() };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -700,13 +700,30 @@ bot.on('new_chat_members', async (ctx) => {
     for (const m of ctx.message.new_chat_members) {
         if (m.is_bot) continue;
         d.warte[m.id] = ctx.chat.id;
-        user(m.id, m.first_name);
+        const newU = user(m.id, m.first_name);
+        newU.inGruppe = true;
+        if (newU.verlaessenAm) delete newU.verlaessenAm;
         const info = await ctx.telegram.getMe();
         await ctx.reply('👋 Willkommen *' + m.first_name + '*!\n\n⚠️ Starte den Bot per DM!\n\n👇', {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard([Markup.button.url('📩 Bot starten', 'https://t.me/' + info.username + '?start=gruppe')]).reply_markup
         });
     }
+});
+
+
+bot.on('left_chat_member', async (ctx) => {
+    try {
+        const m = ctx.message.left_chat_member;
+        if (!m || m.is_bot) return;
+        const uid = String(m.id);
+        if (d.users[uid]) {
+            d.users[uid].inGruppe = false;
+            d.users[uid].verlaessenAm = Date.now();
+            speichern();
+            console.log('User verlassen:', m.first_name, uid);
+        }
+    } catch(e) { console.log('left_chat_member Fehler:', e.message); }
 });
 
 bot.on('message', async (ctx) => {

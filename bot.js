@@ -1606,6 +1606,7 @@ app.get('/like-from-app', async (req, res) => {
     const uid = req.query.uid;
     const msgId = req.query.msgId;
     if (!uid || !msgId) return res.json({ok:false});
+    // Kein Bridge Secret nötig - kommt von der App
 
     // Link finden
     let lnk = d.links[msgId] || Object.values(d.links).find(l => String(l.counter_msg_id) === String(msgId));
@@ -1636,7 +1637,6 @@ app.get('/like-from-app', async (req, res) => {
 
     // Telegram Counter sofort updaten
     try {
-        const { Markup } = require('telegraf');
         const poster = d.users[String(lnk.user_id)] || {};
         const anz = lnk.likes.size;
         const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : (poster.role||'🆕') + ' ' + lnk.user_name;
@@ -1646,7 +1646,7 @@ app.get('/like-from-app', async (req, res) => {
             lnk.counter_msg_id,
             null,
             posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + (msgId.includes('_') ? msgId.split('_').slice(1).join('_') : msgId))]]).reply_markup }
+            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + lnk.counter_msg_id)]]).reply_markup }
         );
     } catch(e) { console.log('Telegram Sync Fehler:', e.message); }
 

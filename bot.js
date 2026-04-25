@@ -1653,6 +1653,52 @@ app.get('/like-from-app', async (req, res) => {
     res.json({ok:true, likes: lnk.likes.size});
 });
 
+
+// ── PHASE 2 API ENDPOINTS ──
+
+app.post('/follow-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { followerUid, targetUid } = req.body || {};
+    if (!followerUid || !targetUid) return res.json({ok:false});
+    if (!d.users[followerUid]) return res.json({ok:false});
+    if (!d.users[followerUid].following) d.users[followerUid].following = [];
+    if (!d.users[targetUid].followers) d.users[targetUid].followers = [];
+    const idx = d.users[followerUid].following.indexOf(targetUid);
+    if (idx === -1) {
+        d.users[followerUid].following.push(targetUid);
+        d.users[targetUid].followers.push(followerUid);
+    } else {
+        d.users[followerUid].following.splice(idx, 1);
+        d.users[targetUid].followers = d.users[targetUid].followers.filter(id => id !== followerUid);
+    }
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/create-post-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, text } = req.body || {};
+    if (!uid || !text) return res.json({ok:false});
+    if (!d.posts) d.posts = {};
+    if (!d.posts[uid]) d.posts[uid] = [];
+    d.posts[uid].push({ text: text.slice(0,300), timestamp: Date.now(), likes: [] });
+    if (d.posts[uid].length > 50) d.posts[uid].shift();
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/comment-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, name, linkId, text } = req.body || {};
+    if (!uid || !text || !linkId) return res.json({ok:false});
+    if (!d.comments) d.comments = {};
+    if (!d.comments[linkId]) d.comments[linkId] = [];
+    d.comments[linkId].push({ uid, name, text: text.slice(0,200), timestamp: Date.now() });
+    if (d.comments[linkId].length > 100) d.comments[linkId].shift();
+    speichern();
+    res.json({ok:true});
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

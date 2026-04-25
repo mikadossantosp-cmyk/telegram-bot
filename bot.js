@@ -1231,6 +1231,169 @@ app.post('/gewinnspiel-abschluss', async (req, res) => {
     res.json({ ok: true });
 });
 
+
+// ================================
+// DASHBOARD API ENDPOINTS
+// ================================
+
+app.get('/reset-user', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    if (d.users[uid]) { d.users[uid].xp=0; d.users[uid].level=1; d.users[uid].role=badge(0); speichern(); }
+    res.json({ ok: true });
+});
+
+app.get('/remove-warn', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    if (d.users[uid]) { d.users[uid].warnings=0; speichern(); }
+    res.json({ ok: true });
+});
+
+app.get('/add-warn', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    if (d.users[uid]) {
+        d.users[uid].warnings = (d.users[uid].warnings||0)+1;
+        speichern();
+        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*
+Warn: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch(e) {}
+    }
+    res.json({ ok: true });
+});
+
+app.get('/remove-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    const amount = parseInt(req.query.amount)||0;
+    if (d.users[uid] && amount > 0) {
+        d.users[uid].xp = Math.max(0, (d.users[uid].xp||0)-amount);
+        d.users[uid].level = level(d.users[uid].xp);
+        d.users[uid].role = badge(d.users[uid].xp);
+        speichern();
+    }
+    res.json({ ok: true });
+});
+
+app.get('/give-bonus', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    if (d.users[uid]) {
+        if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
+        d.bonusLinks[uid]++;
+        speichern();
+        try { await bot.telegram.sendMessage(Number(uid), '🎁 *Extra-Link erhalten!*', { parse_mode: 'Markdown' }); } catch(e) {}
+    }
+    res.json({ ok: true });
+});
+
+app.get('/delete-link', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const msgId = req.query.id;
+    if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
+    res.json({ ok: true });
+});
+
+app.get('/ban-user', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    if (d.users[uid]) {
+        try {
+            // Ban in allen Gruppen
+            for (const chatId of [GROUP_A_ID, GROUP_B_ID]) {
+                if (chatId) await bot.telegram.banChatMember(chatId, Number(uid)).catch(()=>{});
+            }
+        } catch(e) {}
+    }
+    res.json({ ok: true });
+});
+
+app.post('/send-dm-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { text, uid } = req.body || {};
+    if (!text) return res.json({ ok: false });
+    if (uid) {
+        // DM an einzelnen User
+        try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*
+
+' + text, { parse_mode: 'Markdown' }); } catch(e) {}
+    } else {
+        // DM an alle
+        let ok = 0;
+        for (const [id, u] of Object.entries(d.users)) {
+            if (!u.started) continue;
+            try { await bot.telegram.sendMessage(Number(id), '📢 *Admin:*
+
+' + text, { parse_mode: 'Markdown' }); ok++; await new Promise(r=>setTimeout(r,200)); } catch(e) {}
+        }
+    }
+    res.json({ ok: true });
+});
+
+app.post('/create-xp-event-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { multiplier, start, end } = req.body || {};
+    if (!multiplier || !end) return res.json({ ok: false });
+    d.xpEvent = { aktiv: false, multiplier, start: start||Date.now(), end, announced: false };
+    speichern();
+    res.json({ ok: true });
+});
+
+app.get('/stop-xp-event', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    d.xpEvent = { aktiv: false, multiplier: 1, start: null, end: null, announced: false };
+    speichern();
+    res.json({ ok: true });
+});
+
+app.get('/manual-backup-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    await backup();
+    res.json({ ok: true });
+});
+
+app.get('/add-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.id;
+    const amount = parseInt(req.query.amount)||0;
+    if (d.users[uid] && amount > 0) {
+        xpAddMitDaily(uid, amount, d.users[uid].name);
+        speichern();
+    }
+    res.json({ ok: true });
+});
+
+app.get('/reset-daily-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    d.dailyXP={}; d.tracker={}; d.counter={}; d.badgeTracker={};
+    speichern();
+    res.json({ ok: true });
+});
+
+
+app.get('/remind-insta-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    let count = 0;
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '📸 *Hey ' + u.name + '!*
+
+Du hast noch keinen Instagram Account eingetragen.
+
+Bitte trage deinen Instagram Namen ein!
+
+👉 Tippe: /setinsta deinname',
+                { parse_mode: 'Markdown' }
+            );
+            count++;
+            await new Promise(r => setTimeout(r, 200));
+        } catch(e) {}
+    }
+    res.json({ ok: true, count });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

@@ -724,6 +724,28 @@ bot.command('checkmembers', async (ctx) => {
     await ctx.reply('✅ Fertig!\n\n👥 Aktiv: ' + aktiv + ' User');
 });
 
+
+// ================================
+// MELDEN SYSTEM
+// ================================
+const meldenWarte = new Set();
+
+bot.command('melden', async (ctx) => {
+    const uid = ctx.from.id;
+    if (istAdminId(uid)) return;
+    meldenWarte.add(uid);
+    try {
+        if (!istPrivat(ctx.chat.type)) {
+            const info = await ctx.telegram.getMe();
+            await ctx.reply('📩 Bitte melde dich im privaten Chat!', {
+                reply_markup: Markup.inlineKeyboard([Markup.button.url('📩 Hier melden', 'https://t.me/' + info.username + '?start=melden')]).reply_markup
+            });
+            return;
+        }
+        await ctx.reply('📋 *Meldung einreichen*\n\nSchreib mir einfach was du melden möchtest — wen, was passiert ist usw.\n\nIch leite es direkt an den Admin weiter.', { parse_mode: 'Markdown' });
+    } catch(e) {}
+});
+
 bot.on('left_chat_member', async (ctx) => {
     try {
         const m = ctx.message.left_chat_member;
@@ -746,6 +768,27 @@ bot.on('left_chat_member', async (ctx) => {
 
 bot.on('message', async (ctx) => {
     try {
+        const uid_msg = ctx.from.id;
+
+        // Melden System
+        if (meldenWarte.has(uid_msg) && istPrivat(ctx.chat.type)) {
+            const text = ctx.message.text;
+            if (text && !text.startsWith('/')) {
+                meldenWarte.delete(uid_msg);
+                const melder = d.users[String(uid_msg)];
+                const adminText = '🚨 *Neue Meldung!*\n\n📝 ' + text + '\n\n👤 *Von:* ' + (melder?.name || ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '') + '\n🆔 ID: ' + uid_msg;
+                for (const adminId of ADMIN_IDS) {
+                    try {
+                        await bot.telegram.sendMessage(adminId, adminText, {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: '💬 Antworten', url: 'https://t.me/' + (ctx.from.username || ctx.from.id) }]] }
+                        });
+                    } catch(e) {}
+                }
+                return ctx.reply('✅ *Meldung eingereicht!*\n\nDanke! Der Admin wird sich darum kümmern.', { parse_mode: 'Markdown' });
+            }
+        }
+
         if (istPrivat(ctx.chat.type) && d.instaWarte[ctx.from.id]) {
             const text = ctx.message.text;
             if (!text) return;

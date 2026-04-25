@@ -1804,6 +1804,27 @@ app.post('/comment-api', (req, res) => {
     res.json({ok:true});
 });
 
+
+app.post('/delete-post-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, timestamp } = req.body || {};
+    if (!uid || !timestamp || !d.posts?.[uid]) return res.json({ok:false});
+    d.posts[uid] = d.posts[uid].filter(p => p.timestamp !== Number(timestamp));
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/delete-comment-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, postId, commentIdx } = req.body || {};
+    if (!uid || !postId || !d.comments?.[postId]) return res.json({ok:false});
+    const comment = d.comments[postId][commentIdx];
+    if (!comment || String(comment.uid) !== String(uid)) return res.json({ok:false});
+    d.comments[postId].splice(commentIdx, 1);
+    speichern();
+    res.json({ok:true});
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

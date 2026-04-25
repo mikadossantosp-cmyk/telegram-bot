@@ -446,14 +446,31 @@ bot.command('missionen', async (ctx) => {
     const mission = getMission(uid);
     const wMission = getWochenMission(uid);
     const heute = new Date().toDateString();
+    const gestern = new Date(Date.now() - 86400000).toDateString();
+
+    // Gestrige Links für M2/M3 (bis 12:00 heute Zeit sie zu liken)
+    const gestrigeLinks = Object.values(d.links).filter(l => 
+        new Date(l.timestamp).toDateString() === gestern &&
+        l.user_id !== Number(uid) &&
+        istInstagramLink(l.text)
+    );
+    const gesamtGestern = gestrigeLinks.length;
+    const gelikedGestern = gestrigeLinks.filter(l => l.likes.has(Number(uid))).length;
+    const prozentGestern = gesamtGestern > 0 ? Math.round(gelikedGestern / gesamtGestern * 100) : 0;
+
+    // Heutige Links für M1
     const heutigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === heute);
-    const gesamtLinks = heutigeLinks.length;
-    const geliked = heutigeLinks.filter(l => l.likes.has(Number(uid))).length;
-    const prozent = gesamtLinks > 0 ? Math.round(geliked / gesamtLinks * 100) : 0;
+
+    // Auswertung bereits um 12:00?
+    const jetzt = new Date();
+    const auswertungHeute = jetzt.getHours() >= 12;
+    const zeitBisAuswertung = auswertungHeute ? 'Auswertung bereits erfolgt' : 'Auswertung heute um 12:00 Uhr';
+
     let text = '🎯 *Deine Missionen*\n\n📅 *Täglich:*\n';
-    text += (mission.m1 ? '✅' : '⬜') + ' M1: ' + mission.likesGegeben + '/5 geliked\n';
-    text += '⏳ M2: ' + prozent + '% (Ziel: 80%)\n';
-    text += '⏳ M3: ' + geliked + '/' + gesamtLinks + ' alle\n\n';
+    text += (mission.m1 ? '✅' : '⬜') + ' M1: ' + mission.likesGegeben + '/5 Links geliked (heute)\n';
+    text += (mission.m2 ? '✅' : '⬜') + ' M2: ' + gelikedGestern + '/' + gesamtGestern + ' (' + prozentGestern + '%) geliked (gestern) — Ziel: 80%\n';
+    text += (mission.m3 ? '✅' : '⬜') + ' M3: ' + gelikedGestern + '/' + gesamtGestern + ' alle geliked (gestern)\n';
+    text += '\n⏰ ' + zeitBisAuswertung + '\n\n';
     text += '📆 *Wöchentlich:*\n🔹 W-M1: ' + wMission.m1Tage + '/7\n🔹 W-M2: ' + wMission.m2Tage + '/7\n🔹 W-M3: ' + wMission.m3Tage + '/7\n\n';
     text += '⭐ XP: ' + u.xp + '\n🏅 ' + u.role;
     await ctx.reply(text, { parse_mode: 'Markdown' });
@@ -1398,7 +1415,9 @@ app.post('/bridge-event', async (req, res) => {
             if (!istAdminId(uid)) {
                 const mission = getMission(uid);
                 updateMissionProgress(uid);
-                if (event.meta?.linkText && istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
+                const linkTimestamp = Object.values(d.links).find(l => l.text === event.meta?.linkText)?.timestamp;
+                const istHeutigerBridgeLink = linkTimestamp && new Date(linkTimestamp).toDateString() === new Date().toDateString();
+                if (istHeutigerBridgeLink && istInstagramLink(event.meta.linkText)) mission.likesGegeben++;
                 await checkMissionen(uid, name);
             }
 
@@ -1732,7 +1751,8 @@ app.get('/like-from-app', async (req, res) => {
         if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
         // Mission aktualisieren
         const mission = getMission(uid);
-        if (istInstagramLink(lnk.text)) mission.likesGegeben++;
+        const istHeutigerLinkApp = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
+        if (istHeutigerLinkApp && istInstagramLink(lnk.text)) mission.likesGegeben++;
         await checkMissionen(uid, u?.name||'User');
     }
 

@@ -2033,6 +2033,32 @@ app.post('/mark-notifications-read', (req, res) => {
     res.json({ok:true});
 });
 
+
+app.post('/send-message-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { from, to, text } = req.body || {};
+    if (!from || !to || !text) return res.json({ok:false});
+    if (!d.messages) d.messages = {};
+    const chatKey = [String(from), String(to)].sort().join('_');
+    if (!d.messages[chatKey]) d.messages[chatKey] = [];
+    d.messages[chatKey].push({ from: String(from), to: String(to), text: text.slice(0,500), timestamp: Date.now(), read: false });
+    if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
+    // Benachrichtigung
+    const fromUser = d.users[from];
+    if (fromUser) addNotification(String(to), '💬', (fromUser.spitzname||fromUser.name||'Jemand') + ': ' + text.slice(0,40));
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/mark-messages-read', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, chatKey } = req.body || {};
+    if (!uid || !chatKey || !d.messages?.[chatKey]) return res.json({ok:false});
+    d.messages[chatKey].forEach(m => { if (m.to === String(uid)) m.read = true; });
+    speichern();
+    res.json({ok:true});
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

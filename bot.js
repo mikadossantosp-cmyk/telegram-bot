@@ -1033,6 +1033,11 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;
+        // Benachrichtigung an Poster
+        if (!istAdminId(uid) && lnk.user_id !== uid) {
+            const likerName = d.users[uid]?.spitzname || d.users[uid]?.name || 'Jemand';
+            addNotification(String(lnk.user_id), '❤️', likerName + ' hat deinen Link geliked');
+        }
 
         const istHeutigerLink = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
         let vergebenXP = 0;
@@ -1254,6 +1259,30 @@ async function gruppenMitgliederPruefen() {
     }
     speichern();
     console.log('✅ Mitglieder geprüft: ' + aktiv + ' aktiv, ' + geloescht + ' gelöscht');
+}
+
+
+
+function updateStreak(uid) {
+    const u = d.users[uid];
+    if (!u) return;
+    const heute = new Date().toDateString();
+    const gestern = new Date(Date.now() - 86400000).toDateString();
+    if (u.lastStreakDay === heute) return; // Heute bereits gezählt
+    if (u.lastStreakDay === gestern) {
+        u.streak = (u.streak || 0) + 1; // Streak verlängern
+    } else {
+        u.streak = 1; // Streak neu starten
+    }
+    u.lastStreakDay = heute;
+}
+
+function addNotification(targetUid, icon, text) {
+    if (!d.notifications) d.notifications = {};
+    if (!d.notifications[targetUid]) d.notifications[targetUid] = [];
+    d.notifications[targetUid].push({ icon, text, timestamp: Date.now(), read: false });
+    // Max 50 Benachrichtigungen pro User
+    if (d.notifications[targetUid].length > 50) d.notifications[targetUid].shift();
 }
 
 async function zeitCheck() {
@@ -1804,11 +1833,15 @@ app.post('/follow-api', (req, res) => {
     if (!followerUid || !targetUid) return res.json({ok:false});
     if (!d.users[followerUid]) return res.json({ok:false});
     if (!d.users[followerUid].following) d.users[followerUid].following = [];
+    if (!d.users[targetUid]) return res.json({ok:false});
     if (!d.users[targetUid].followers) d.users[targetUid].followers = [];
     const idx = d.users[followerUid].following.indexOf(targetUid);
     if (idx === -1) {
         d.users[followerUid].following.push(targetUid);
         d.users[targetUid].followers.push(followerUid);
+        // Benachrichtigung
+        const followerName = d.users[followerUid]?.spitzname || d.users[followerUid]?.name || 'Jemand';
+        addNotification(targetUid, '👤', followerName + ' folgt dir jetzt');
     } else {
         d.users[followerUid].following.splice(idx, 1);
         d.users[targetUid].followers = d.users[targetUid].followers.filter(id => id !== followerUid);
@@ -1839,6 +1872,11 @@ app.post('/comment-api', (req, res) => {
     if (!d.comments[linkId]) d.comments[linkId] = [];
     d.comments[linkId].push({ uid, name, text: text.slice(0,200), timestamp: Date.now() });
     if (d.comments[linkId].length > 100) d.comments[linkId].shift();
+    // Post Owner benachrichtigen
+    const postOwnerUid = linkId.split('_')[0];
+    if (postOwnerUid && postOwnerUid !== uid && d.users[postOwnerUid]) {
+        addNotification(postOwnerUid, '💬', (name||'Jemand') + ' hat kommentiert: ' + text.slice(0,40));
+    }
     speichern();
     res.json({ok:true});
 });
@@ -1981,6 +2019,16 @@ app.post('/pin-post-api', (req, res) => {
     // Alle anderen entpinnen
     d.posts[uid].forEach(p => p.pinned = false);
     post.pinned = true;
+    speichern();
+    res.json({ok:true});
+});
+
+
+app.post('/mark-notifications-read', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid } = req.body || {};
+    if (!uid || !d.notifications?.[uid]) return res.json({ok:false});
+    d.notifications[uid].forEach(n => n.read = true);
     speichern();
     res.json({ok:true});
 });

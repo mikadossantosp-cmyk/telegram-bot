@@ -1165,6 +1165,7 @@ await ctx.telegram.editMessageText(
     finally { likeInProgress.delete(likeKey); }
 });
 bot.action(/^show_(\d+)$/, async (ctx) => {
+    const uid = ctx.from.id;
     const msgId = parseInt(ctx.match[1]);
 
     if (!d.links[msgId]) return ctx.answerCbQuery('❌ Nicht gefunden');
@@ -1177,7 +1178,7 @@ bot.action(/^show_(\d+)$/, async (ctx) => {
 
     const uData = user(uid);
 
-const posterLabel = isAdminId(uid)
+const posterLabel = isAdminId(lnk.user_id)
   ? `⚙️ Admin ${uData.instagram ? '@' + uData.instagram : ctx.from.first_name}`
   : `${u.role} ${uData.instagram ? '@' + uData.instagram : ctx.from.first_name}`;
 

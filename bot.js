@@ -1137,14 +1137,11 @@ if (show && likerListe.length > 0) {
         ).join('\n');
 }
 
-const posterLabel = istAdminId(lnk.user_id)
-    ? '⚙️ Admin ' + lnk.user_name
-    : poster.role + ' ' + lnk.user_name;
+const posterName = istAdminId(uid)
+    ? '⚙️ Admin'
+    : u.role;
 
-const posterStats = istAdminId(lnk.user_id)
-    ? ''
-    : '  |  ⭐ ' + poster.xp + ' XP';
-
+const displayName = ctx.from.first_name;
 await ctx.telegram.editMessageText(
     lnk.chat_id,
     lnk.counter_msg_id,

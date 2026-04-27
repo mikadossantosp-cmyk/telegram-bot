@@ -14,7 +14,7 @@ const app = express();
 
 const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(Number);
 
-function isAdminId(uid) {
+function istAdminId(uid) {
   return ADMIN_IDS.includes(uid);
 }
 // ================================

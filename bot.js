@@ -998,10 +998,19 @@ bot.on('message', async (ctx) => {
             const posterStats = istAdminId(uid) ? '' : '  |  ⭐ ' + u.xp + ' XP';
             let botMsg;
             try {
-                botMsg = await bot.telegram.sendMessage(ctx.chat.id,
-                    posterName + '\n🔗 ' + text + '\n\n👍 0 Likes' + posterStats,
-                    { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + msgId)]]).reply_markup }
-                );
+                `👤 ${posterName}
+🔗 ${text}
+
+━━━━━━━━━━━━━━━
+❤️ 0 Likes${posterStats}`,
+{
+    parse_mode: 'HTML',
+    reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❤️ Like (0)', 'like_' + msgId)],
+        [Markup.button.callback('👀 Anzeigen', 'show_' + msgId)]
+    ]).reply_markup
+}
+                    );
             } catch (e) {
                 console.log('Fehler beim Posten:', e.message);
                 speichern();
@@ -1113,16 +1122,99 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         try {
             const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : poster.role + ' ' + lnk.user_name;
             const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + poster.xp + ' XP';
-            await ctx.telegram.editMessageText(
-                lnk.chat_id, lnk.counter_msg_id, null,
-                posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-                { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + msgId)]]).reply_markup }
-            );
+            const likerListe = Object.values(lnk.likerNames || {});
+const show = lnk.showLikes || false;
+
+let likerText = '';
+if (show && likerListe.length > 0) {
+    likerText = '\n\n👥 <b>Likes:</b>\n' +
+        likerListe.map(l => 
+            l.insta
+                ? `• <a href="https://instagram.com/${l.insta}">${l.name}</a>`
+                : `• ${l.name}`
+        ).join('\n');
+}
+
+const posterLabel = istAdminId(lnk.user_id)
+    ? '⚙️ Admin ' + lnk.user_name
+    : poster.role + ' ' + lnk.user_name;
+
+const posterStats = istAdminId(lnk.user_id)
+    ? ''
+    : '  |  ⭐ ' + poster.xp + ' XP';
+
+await ctx.telegram.editMessageText(
+    lnk.chat_id,
+    lnk.counter_msg_id,
+    null,
+`👤 ${posterLabel}
+🔗 ${lnk.text}
+
+━━━━━━━━━━━━━━━
+❤️ ${anz} Likes${posterStats}${likerText}`,
+{
+    parse_mode: 'HTML',
+    reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback(`❤️ Like (${anz})`, 'like_' + msgId)],
+        [Markup.button.callback(show ? '🔽 Ausblenden' : '👀 Anzeigen', 'show_' + msgId)]
+    ]).reply_markup
+});
         } catch (e) { console.log('Edit Fehler:', e.message); }
 
         speichernDebounced();
     } catch (e) { console.log('Like Fehler:', e.message); }
     finally { likeInProgress.delete(likeKey); }
+});
+bot.action(/^show_(\d+)$/, async (ctx) => {
+    const msgId = parseInt(ctx.match[1]);
+
+    if (!d.links[msgId]) return ctx.answerCbQuery('❌ Nicht gefunden');
+
+    const lnk = d.links[msgId];
+    lnk.showLikes = !lnk.showLikes;
+
+    const anz = lnk.likes.size;
+    const poster = user(lnk.user_id, lnk.user_name);
+
+    const posterLabel = istAdminId(lnk.user_id)
+        ? '⚙️ Admin ' + lnk.user_name
+        : poster.role + ' ' + lnk.user_name;
+
+    const posterStats = istAdminId(lnk.user_id)
+        ? ''
+        : '  |  ⭐ ' + poster.xp + ' XP';
+
+    const likerListe = Object.values(lnk.likerNames || {});
+    let likerText = '';
+
+    if (lnk.showLikes && likerListe.length > 0) {
+        likerText = '\n\n👥 <b>Likes:</b>\n' +
+            likerListe.map(l => 
+                l.insta
+                    ? `• <a href="https://instagram.com/${l.insta}">${l.name}</a>`
+                    : `• ${l.name}`
+            ).join('\n');
+    }
+
+    await ctx.telegram.editMessageText(
+        lnk.chat_id,
+        lnk.counter_msg_id,
+        null,
+`👤 ${posterLabel}
+🔗 ${lnk.text}
+
+━━━━━━━━━━━━━━━
+❤️ ${anz} Likes${posterStats}${likerText}`,
+        {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback(`❤️ Like (${anz})`, 'like_' + msgId)],
+                [Markup.button.callback(lnk.showLikes ? '🔽 Ausblenden' : '👀 Anzeigen', 'show_' + msgId)]
+            ]).reply_markup
+        }
+    );
+
+    ctx.answerCbQuery();
 });
 
 // ================================

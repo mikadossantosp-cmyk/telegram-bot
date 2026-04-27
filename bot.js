@@ -1012,12 +1012,6 @@ bot.on('message', async (ctx) => {
                 [Markup.button.callback('👀 Anzeigen', 'show_' + msgId)]
             ]).reply_markup
         }
-    );
-} catch (e) {
-    console.log('Fehler beim Posten:', e.message);
-    speichern();
-    return;
-}
                     );
             } catch (e) {
                 console.log('Fehler beim Posten:', e.message);

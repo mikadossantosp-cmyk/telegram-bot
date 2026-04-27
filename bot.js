@@ -1175,9 +1175,11 @@ bot.action(/^show_(\d+)$/, async (ctx) => {
     const anz = lnk.likes.size;
     const poster = user(lnk.user_id, lnk.user_name);
 
-    const posterLabel = istAdminId(lnk.user_id)
-        ? '⚙️ Admin ' + lnk.user_name
-        : poster.role + ' ' + lnk.user_name;
+    const uData = user(uid);
+
+const posterLabel = isAdminId(uid)
+  ? `⚙️ Admin ${uData.instagram ? '@' + uData.instagram : ctx.from.first_name}`
+  : `${u.role} ${uData.instagram ? '@' + uData.instagram : ctx.from.first_name}`;
 
     const posterStats = istAdminId(lnk.user_id)
         ? ''
@@ -1190,8 +1192,8 @@ bot.action(/^show_(\d+)$/, async (ctx) => {
         likerText = '\n\n👥 <b>Likes:</b>\n' +
             likerListe.map(l => 
                 l.insta
-                    ? `• <a href="https://instagram.com/${l.insta}">${l.name}</a>`
-                    : `• ${l.name}`
+  ? `• <a href="https://instagram.com/${l.insta}">@${l.insta}</a>`
+  : `• ${l.name}`
             ).join('\n');
     }
 

@@ -998,17 +998,25 @@ bot.on('message', async (ctx) => {
             const posterStats = istAdminId(uid) ? '' : '  |  ⭐ ' + u.xp + ' XP';
             let botMsg;
             try {
-                `👤 ${posterName}
+    botMsg = await bot.telegram.sendMessage(
+        ctx.chat.id,
+        `👤 ${posterName}
 🔗 ${text}
 
-━━━━━━━━━━━━━━━
+────────────
 ❤️ 0 Likes${posterStats}`,
-{
-    parse_mode: 'HTML',
-    reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❤️ Like (0)', 'like_' + msgId)],
-        [Markup.button.callback('👀 Anzeigen', 'show_' + msgId)]
-    ]).reply_markup
+        {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('❤️ Like (0)', 'like_' + msgId)],
+                [Markup.button.callback('👀 Anzeigen', 'show_' + msgId)]
+            ]).reply_markup
+        }
+    );
+} catch (e) {
+    console.log('Fehler beim Posten:', e.message);
+    speichern();
+    return;
 }
                     );
             } catch (e) {

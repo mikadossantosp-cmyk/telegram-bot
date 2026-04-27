@@ -12,9 +12,11 @@ process.env.TZ = 'Europe/Berlin';
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 
-const ADMIN_IDS = new Set([1094738615]);
-function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
+const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(Number);
 
+function isAdminId(uid) {
+  return ADMIN_IDS.includes(uid);
+}
 // ================================
 // DATEN
 // ================================

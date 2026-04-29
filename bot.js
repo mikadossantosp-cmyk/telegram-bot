@@ -2226,9 +2226,34 @@ app.get('/telegram-feed', (req, res) => {
     res.json({ messages: d.communityFeed || [] });
 });
 
-app.get('/forum-topics', (req, res) => {
+app.get('/forum-topics', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    // If threads already loaded, return immediately
+    if (d.threads && d.threads.length > 0) return res.json({ threads: d.threads });
+    // Otherwise try live fetch
+    await ladeForumTopics();
+    // Final fallback: build from received messages
+    if ((!d.threads || d.threads.length === 0) && Object.keys(d.threadMessages || {}).length > 0) {
+        d.threads = Object.keys(d.threadMessages).map(tid => ({
+            id: tid,
+            name: tid === 'general' ? 'Allgemein' : `Thread ${tid}`,
+            emoji: tid === 'general' ? '💬' : '📌',
+            last_msg: d.threadMessages[tid]?.[0] || null,
+            msg_count: d.threadMessages[tid]?.length || 0
+        }));
+        console.log('⚠️ Threads aus Nachrichten gebaut:', d.threads.length);
+    }
     res.json({ threads: d.threads || [] });
+});
+
+app.get('/forum-debug', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const info = { GROUP_B_ID, threadsCount: (d.threads||[]).length, threadMsgKeys: Object.keys(d.threadMessages||{}), error: null, apiResult: null };
+    if (GROUP_B_ID) {
+        try { info.apiResult = await bot.telegram.callApi('getForumTopics', { chat_id: GROUP_B_ID, limit: 10 }); }
+        catch (e) { info.error = e.message; }
+    }
+    res.json(info);
 });
 
 app.get('/thread-messages/:threadId', (req, res) => {

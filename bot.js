@@ -882,6 +882,8 @@ bot.on('message', async (ctx) => {
                 name: (ctx.from.first_name || '') + (ctx.from.last_name ? ' ' + ctx.from.last_name : ''),
                 text: ctx.message.text,
                 timestamp: (ctx.message.date || Math.floor(Date.now() / 1000)) * 1000,
+                thread_id: ctx.message.message_thread_id || null,
+                msg_id: ctx.message.message_id || null,
             };
             if (!d.communityFeed) d.communityFeed = [];
             d.communityFeed.unshift(feedEntry);
@@ -1132,11 +1134,17 @@ bot.action(/^liker_(\d+)$/, async (ctx) => {
     const names = Object.values(lnk.likerNames || {}).map(l => l.name);
     if (!names.length) { try { await ctx.answerCbQuery('Noch keine Likes 👀', { show_alert: true }); } catch (e) {} return; }
 
-    let text;
-    if (names.length <= 3) {
-        text = '👥 ' + names.join(', ');
-    } else {
-        text = '👥 ' + names.slice(0, 2).join(', ') + ' und ' + (names.length - 2) + ' weitere';
+    // Show all liker names; Telegram alert max ~200 chars
+    let text = '👥 ' + names.join(', ');
+    if (text.length > 195) {
+        let shown = 0;
+        let built = '👥 ';
+        for (const n of names) {
+            if ((built + n).length > 185) { built += `+${names.length - shown} weitere`; break; }
+            built += (shown > 0 ? ', ' : '') + n;
+            shown++;
+        }
+        text = built;
     }
     try { await ctx.answerCbQuery(text, { show_alert: true }); } catch (e) {}
 });
@@ -2106,6 +2114,22 @@ app.post('/mark-messages-read', (req, res) => {
     d.messages[chatKey].forEach(m => { if (m.to === String(uid)) m.read = true; });
     speichern();
     res.json({ok:true});
+});
+
+app.post('/send-group-message', async (req, res) => {
+    const { text, uid } = req.body || {};
+    if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ ok: false, error: 'User nicht gefunden' });
+    const name = u.spitzname || u.name || 'User';
+    const label = (u.role || '🆕') + ' ' + name;
+    try {
+        await bot.telegram.sendMessage(GROUP_B_ID, `💬 ${label}:
+${text.trim()}`);
+        res.json({ ok: true });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
 });
 
 app.get('/telegram-feed', (req, res) => {

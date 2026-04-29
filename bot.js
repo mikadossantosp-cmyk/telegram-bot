@@ -2320,6 +2320,21 @@ app.get('/tg-file/:fileId', async (req, res) => {
     } catch (e) { res.status(404).json({ error: 'Datei nicht gefunden' }); }
 });
 
+app.post('/rename-thread', (req, res) => {
+    const { uid, thread_id, name } = req.body || {};
+    if (!uid || !thread_id || !name?.trim()) return res.json({ ok: false, error: 'Fehlende Parameter' });
+    if (!d.threads) d.threads = [];
+    let thr = d.threads.find(t => String(t.id) === String(thread_id));
+    if (!thr) {
+        thr = { id: thread_id === 'general' ? 'general' : Number(thread_id), name: name.trim(), emoji: '📌', last_msg: null, msg_count: 0 };
+        d.threads.push(thr);
+    } else {
+        thr.name = name.trim();
+    }
+    speichern();
+    res.json({ ok: true });
+});
+
 app.post('/mark-read', (req, res) => {
     const { uid, thread_id } = req.body || {};
     if (!uid || !thread_id) return res.json({ ok: false });

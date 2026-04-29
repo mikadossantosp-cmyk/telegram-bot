@@ -914,9 +914,14 @@ bot.on('message', async (ctx) => {
                 if (!d.threadMessages[threadId]) d.threadMessages[threadId] = [];
                 d.threadMessages[threadId].unshift(entry);
                 if (d.threadMessages[threadId].length > 100) d.threadMessages[threadId] = d.threadMessages[threadId].slice(0, 100);
-                // Update thread metadata
+                // Update or auto-create thread metadata
+                if (!d.threads) d.threads = [];
                 let thr = d.threads.find(t => String(t.id) === threadId);
-                if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length; }
+                if (!thr) {
+                    thr = { id: threadId === 'general' ? 'general' : Number(threadId), name: threadId === 'general' ? 'Allgemein' : `Thread ${threadId}`, emoji: threadId === 'general' ? '💬' : '📌', last_msg: null, msg_count: 0 };
+                    threadId === 'general' ? d.threads.unshift(thr) : d.threads.push(thr);
+                }
+                thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length;
                 // Track daily group messages
                 if (!d.dailyGroupMsgs[senderUid]) d.dailyGroupMsgs[senderUid] = 0;
                 d.dailyGroupMsgs[senderUid]++;
@@ -2239,6 +2244,12 @@ app.get('/forum-topics', async (req, res) => {
     // Always ensure 'general' exists
     if (!d.threads.find(t => String(t.id) === 'general')) {
         d.threads.unshift({ id: 'general', name: 'Allgemein', emoji: '💬', last_msg: d.threadMessages?.['general']?.[0] || null, msg_count: d.threadMessages?.['general']?.length || 0 });
+    }
+    // Merge any threads discovered from messages not yet in list
+    for (const tid of Object.keys(d.threadMessages || {})) {
+        if (!d.threads.find(t => String(t.id) === tid)) {
+            d.threads.push({ id: tid === 'general' ? 'general' : Number(tid), name: `Thread ${tid}`, emoji: '📌', last_msg: d.threadMessages[tid]?.[0] || null, msg_count: d.threadMessages[tid]?.length || 0 });
+        }
     }
     res.json({ threads: d.threads });
 });

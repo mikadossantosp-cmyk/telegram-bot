@@ -29,6 +29,11 @@ let d = {
     gepostet: [], seasonStart: Date.now(),
     seasonGewinner: [],
     communityFeed: [],
+    threadMessages: {},
+    threads: [],
+    dailyLogins: {},
+    dailyGroupMsgs: {},
+    threadLastRead: {},
     dailyXP: {}, weeklyXP: {},
     dailyReset: null, weeklyReset: null,
     bonusLinks: {},
@@ -67,6 +72,7 @@ function laden() {
             warteNachricht: {}, dmNachrichten: {}, instaWarte: {}, missionQueue: {},
             gesternDailyXP: {}, badgeTracker: {}, m1Streak: {}, missionAuswertungErledigt: {},
             _lastEvents: {},
+            threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {},
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
         };
@@ -875,19 +881,52 @@ bot.on('message', async (ctx) => {
         if (!ctx.message || !ctx.from) return;
         if (!istGruppe(ctx.chat.type)) return;
 
-        // Community Feed – capture text messages from GROUP_B_ID
-        if (ctx.chat.id === GROUP_B_ID && ctx.message.text) {
-            const feedEntry = {
-                username: ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Unbekannt'),
-                name: (ctx.from.first_name || '') + (ctx.from.last_name ? ' ' + ctx.from.last_name : ''),
-                text: ctx.message.text,
-                timestamp: (ctx.message.date || Math.floor(Date.now() / 1000)) * 1000,
-                thread_id: ctx.message.message_thread_id || null,
-                msg_id: ctx.message.message_id || null,
-            };
-            if (!d.communityFeed) d.communityFeed = [];
-            d.communityFeed.unshift(feedEntry);
-            if (d.communityFeed.length > 100) d.communityFeed = d.communityFeed.slice(0, 100);
+        // Community Feed – alle GROUP_B Nachrichten (außer Bot)
+        if (ctx.chat.id === GROUP_B_ID && !ctx.from.is_bot) {
+            const threadId = String(ctx.message.message_thread_id || 'general');
+            const senderUid = String(ctx.from.id);
+            const senderUser = d.users[senderUid];
+            let msgType = 'text', msgContent = '', mediaId = null;
+            if (ctx.message.text) {
+                msgContent = ctx.message.text; msgType = 'text';
+            } else if (ctx.message.photo?.length) {
+                mediaId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+                msgContent = ctx.message.caption || ''; msgType = 'photo';
+            } else if (ctx.message.sticker) {
+                mediaId = ctx.message.sticker.file_id;
+                msgContent = ctx.message.sticker.emoji || '🎭'; msgType = 'sticker';
+            } else if (ctx.message.video) {
+                msgContent = ctx.message.caption || ''; msgType = 'video';
+            }
+            if (msgType) {
+                const tgName = ctx.from.username ? '@' + ctx.from.username : null;
+                const entry = {
+                    uid: senderUid,
+                    tgName,
+                    name: senderUser?.spitzname || senderUser?.name || ctx.from.first_name || 'Unbekannt',
+                    role: senderUser?.role || null,
+                    type: msgType,
+                    text: msgContent,
+                    mediaId,
+                    timestamp: (ctx.message.date || Math.floor(Date.now() / 1000)) * 1000,
+                    msg_id: ctx.message.message_id,
+                };
+                if (!d.threadMessages[threadId]) d.threadMessages[threadId] = [];
+                d.threadMessages[threadId].unshift(entry);
+                if (d.threadMessages[threadId].length > 100) d.threadMessages[threadId] = d.threadMessages[threadId].slice(0, 100);
+                // Update thread metadata
+                let thr = d.threads.find(t => String(t.id) === threadId);
+                if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length; }
+                // Track daily group messages
+                if (!d.dailyGroupMsgs[senderUid]) d.dailyGroupMsgs[senderUid] = 0;
+                d.dailyGroupMsgs[senderUid]++;
+                // Backwards compat communityFeed
+                if (msgType === 'text') {
+                    if (!d.communityFeed) d.communityFeed = [];
+                    d.communityFeed.unshift({ username: tgName || entry.name, name: entry.name, text: msgContent, timestamp: entry.timestamp, thread_id: threadId === 'general' ? null : Number(threadId), msg_id: entry.msg_id });
+                    if (d.communityFeed.length > 100) d.communityFeed = d.communityFeed.slice(0, 100);
+                }
+            }
         }
 
         const uid = ctx.from.id;
@@ -1209,12 +1248,61 @@ async function sendeLinkAnAlle(linkData) {
     speichern();
 }
 
+async function aktivitätsScore(uid) {
+    const logins = d.dailyLogins[uid] || 0;
+    const groupMsgs = d.dailyGroupMsgs[uid] || 0;
+    const m = d.missionen[uid];
+    const heute = new Date().toDateString();
+    const likesGegeben = (m?.date === heute ? m.likesGegeben || 0 : 0);
+    const missionen = (m?.date === heute ? (m.m1 ? 1 : 0) + (m.m2 ? 1 : 0) + (m.m3 ? 1 : 0) : 0);
+    return logins * 3 + groupMsgs * 2 + likesGegeben + missionen;
+}
+
 async function dailyRankingAbschluss() {
     const sorted = Object.entries(d.dailyXP).filter(([uid]) => d.users[uid] && d.dailyXP[uid] > 0 && !istAdminId(uid)).sort((a, b) => b[1] - a[1]);
     if (!sorted.length) return;
+    // Tiebreaker: sort by activity score within same XP groups
+    const withScore = await Promise.all(sorted.map(async ([uid, xp]) => ({ uid, xp, score: await aktivitätsScore(uid) })));
+    withScore.sort((a, b) => b.xp !== a.xp ? b.xp - a.xp : b.score !== a.score ? b.score - a.score : Math.random() - 0.5);
+    // Send tie notifications
+    let i = 0;
+    while (i < withScore.length) {
+        const xp = withScore[i].xp;
+        let j = i + 1;
+        while (j < withScore.length && withScore[j].xp === xp) j++;
+        if (j > i + 1) {
+            const tiedGroup = withScore.slice(i, j);
+            for (let k = 0; k < tiedGroup.length; k++) {
+                const { uid } = tiedGroup[k];
+                const myRank = i + k + 1;
+                const otherNames = tiedGroup.filter((_, idx) => idx !== k).map(e => d.users[e.uid]?.spitzname || d.users[e.uid]?.name || 'User');
+                const othersStr = otherNames.length === 1 ? otherNames[0] : otherNames.slice(0,-1).join(', ') + ' und ' + otherNames[otherNames.length-1];
+                const rankRange = `Platz ${i+1}–${j}`;
+                const msg = myRank <= 3
+                    ? `🎲 *Gleichstand & Verlosung!*
+
+Du und ${othersStr} hattet alle *${xp} XP* und wärt auf ${rankRange} gleichauf.
+
+Eine automatische Verlosung nach Aktivität hat stattgefunden — du hast gewonnen! 🎉
+
+🏆 *Dein aktueller Rang: Platz ${myRank}*
+Top ${myRank} Bonus folgt!`
+                    : `🎲 *Gleichstand & Verlosung!*
+
+Du und ${othersStr} hattet alle *${xp} XP* und wärt auf ${rankRange} gleichauf.
+
+Eine automatische Verlosung nach Aktivität hat stattgefunden — diesmal war ${tiedGroup[0] && tiedGroup[0].uid !== uid ? (d.users[tiedGroup[0].uid]?.spitzname || d.users[tiedGroup[0].uid]?.name || 'ein anderer User') : othersStr} vorne.
+
+📊 *Dein aktueller Rang: Platz ${myRank}*
+Mehr Aktivität morgen für einen besseren Platz! 💪`;
+                try { await bot.telegram.sendMessage(Number(uid), msg, { parse_mode: 'Markdown' }); await new Promise(r => setTimeout(r, 200)); } catch (e) {}
+            }
+        }
+        i = j;
+    }
     const bel = [{ xp: 10, links: 1, text: '🥇' }, { xp: 5, links: 0, text: '🥈' }, { xp: 2, links: 0, text: '🥉' }];
-    for (let i = 0; i < Math.min(3, sorted.length); i++) {
-        const [uid] = sorted[i];
+    for (let i = 0; i < Math.min(3, withScore.length); i++) {
+        const { uid } = withScore[i];
         const u = d.users[uid];
         const b = bel[i];
         xpAdd(uid, b.xp, u.name);
@@ -1223,6 +1311,7 @@ async function dailyRankingAbschluss() {
     }
     d.gesternDailyXP = Object.assign({}, d.dailyXP);
     d.dailyXP = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {};
+    d.dailyLogins = {}; d.dailyGroupMsgs = {};
     d.dailyReset = Date.now();
     speichern();
 }
@@ -2137,11 +2226,94 @@ app.get('/telegram-feed', (req, res) => {
     res.json({ messages: d.communityFeed || [] });
 });
 
+app.get('/forum-topics', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({ threads: d.threads || [] });
+});
+
+app.get('/thread-messages/:threadId', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({ messages: d.threadMessages[req.params.threadId] || [] });
+});
+
+app.post('/send-thread-message', async (req, res) => {
+    const { text, uid, thread_id } = req.body || {};
+    if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ ok: false, error: 'User nicht gefunden' });
+    const tgName = u.username ? '@' + u.username : (u.spitzname || u.name || 'User');
+    const label = (u.role || '🆕') + ' ' + tgName;
+    try {
+        const opts = { parse_mode: 'Markdown' };
+        if (thread_id && thread_id !== 'general') opts.message_thread_id = Number(thread_id);
+        await bot.telegram.sendMessage(GROUP_B_ID, `${label}:
+${text.trim()}`, opts);
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.post('/create-thread', async (req, res) => {
+    const { name, emoji, uid } = req.body || {};
+    if (!name?.trim()) return res.json({ ok: false, error: 'Kein Name' });
+    if (!istAdminId(Number(uid))) return res.json({ ok: false, error: 'Kein Admin' });
+    try {
+        const result = await bot.telegram.callApi('createForumTopic', { chat_id: GROUP_B_ID, name: name.trim(), ...(emoji ? { icon_emoji_id: emoji } : {}) });
+        const newThread = { id: result.message_thread_id, name: result.name, emoji: emoji || '💬', last_msg: null, msg_count: 0 };
+        if (!d.threads) d.threads = [];
+        d.threads.push(newThread);
+        speichern();
+        res.json({ ok: true, thread: newThread });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.get('/tg-file/:fileId', async (req, res) => {
+    try {
+        const file = await bot.telegram.getFile(req.params.fileId);
+        res.redirect(`https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`);
+    } catch (e) { res.status(404).json({ error: 'Datei nicht gefunden' }); }
+});
+
+app.post('/mark-read', (req, res) => {
+    const { uid, thread_id } = req.body || {};
+    if (!uid || !thread_id) return res.json({ ok: false });
+    if (!d.threadLastRead[uid]) d.threadLastRead[uid] = {};
+    d.threadLastRead[uid][thread_id] = Date.now();
+    speichern();
+    res.json({ ok: true });
+});
+
+app.post('/track-login', (req, res) => {
+    const { uid } = req.body || {};
+    if (!uid || !d.users[String(uid)]) return res.json({ ok: false });
+    if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
+    d.dailyLogins[uid]++;
+    res.json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch();
 console.log('🤖 Bot läuft!');
+
+async function ladeForumTopics() {
+    if (!GROUP_B_ID) return;
+    try {
+        const result = await bot.telegram.callApi('getForumTopics', { chat_id: GROUP_B_ID, limit: 100 });
+        const topics = result?.topics || [];
+        const existing = new Map((d.threads || []).map(t => [String(t.id), t]));
+        const updated = topics.map(t => {
+            const ex = existing.get(String(t.message_thread_id));
+            return { id: t.message_thread_id, name: t.name, emoji: t.icon_emoji_id || '💬', last_msg: ex?.last_msg || null, msg_count: ex?.msg_count || (d.threadMessages[String(t.message_thread_id)] || []).length };
+        });
+        // Add general chat at top
+        const gen = existing.get('general');
+        const generalEntry = { id: 'general', name: 'Allgemein', emoji: '💬', last_msg: gen?.last_msg || null, msg_count: gen?.msg_count || (d.threadMessages['general'] || []).length };
+        d.threads = [generalEntry, ...updated];
+        console.log(`✅ ${d.threads.length} Forum-Topics geladen`);
+    } catch (e) { console.log('Forum Topics Fehler:', e.message); }
+}
+setTimeout(ladeForumTopics, 3000);
 
 process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason); });
 process.on('uncaughtException', (error)  => { console.log('Uncaught:', error.message); });

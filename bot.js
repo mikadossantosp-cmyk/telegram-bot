@@ -1115,16 +1115,15 @@ bot.action(/^liker_(\d+)$/, async (ctx) => {
     }
     if (!lnk) { try { await ctx.answerCbQuery('❌ Nicht gefunden.'); } catch (e) {} return; }
 
-    const names = Object.values(lnk.likerNames || {}).map(l => l.name);
-    if (!names.length) { try { await ctx.answerCbQuery('Noch keine Likes 👀', { show_alert: true }); } catch (e) {} return; }
+    const likers = Object.values(lnk.likerNames || {});
+    if (!likers.length) { try { await ctx.answerCbQuery('Noch keine Likes 👀', { show_alert: true }); } catch (e) {} return; }
 
-    let text;
-    if (names.length <= 3) {
-        text = '👥 ' + names.join(', ');
-    } else {
-        text = '👥 ' + names.slice(0, 2).join(', ') + ' und ' + (names.length - 2) + ' weitere';
-    }
-    try { await ctx.answerCbQuery(text, { show_alert: true }); } catch (e) {}
+    try { await ctx.answerCbQuery(); } catch (e) {}
+
+    const lines = likers.map((l, i) => (i + 1) + '. ' + l.name + (l.insta ? '  ·  📸 @' + l.insta : ''));
+    const text = '👥 *' + likers.length + ' Liker*\n━━━━━━━━━━━━━━\n\n' + lines.join('\n');
+    const msg = await ctx.reply(text, { parse_mode: 'Markdown' });
+    setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch (e) {} }, 10000);
 });
 
 bot.action('remind_insta', async (ctx) => {
@@ -1489,16 +1488,14 @@ app.post('/bridge-event', async (req, res) => {
             try {
                 const anz = link.likes.size;
                 const poster = d.users[String(link.user_id)] || {};
-                const posterLabel = istAdminId(link.user_id) ? '⚙️ Admin ' + link.user_name : (poster.role||'🆕') + ' ' + link.user_name;
-                const posterStats = istAdminId(link.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
                 const chatId = link.chat_id || GROUP_B_ID;
                 console.log('[LIKE_GIVEN] Updating Telegram chat_id:', chatId, 'msg_id:', link.counter_msg_id);
                 await bot.telegram.editMessageText(
                     Number(chatId),
                     Number(link.counter_msg_id),
                     null,
-                    posterLabel + '\n🔗 ' + link.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-                    { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + link.counter_msg_id)]]).reply_markup }
+                    buildLinkKarte(link.user_name, poster.role||'🆕', link.text, anz, poster.xp||0, istAdminId(link.user_id)),
+                    { reply_markup: buildLinkButtons(link.counter_msg_id, anz) }
                 );
                 console.log('[LIKE_GIVEN] ✅ Telegram Counter updated:', anz);
             } catch(e) { console.log('[LIKE_GIVEN] Telegram update Fehler:', e.message); }
@@ -1831,14 +1828,12 @@ app.get('/like-from-app', async (req, res) => {
     try {
         const poster = d.users[String(lnk.user_id)] || {};
         const anz = lnk.likes.size;
-        const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : (poster.role||'🆕') + ' ' + lnk.user_name;
-        const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
         await bot.telegram.editMessageText(
             lnk.chat_id,
             lnk.counter_msg_id,
             null,
-            posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + lnk.counter_msg_id)]]).reply_markup }
+            buildLinkKarte(lnk.user_name, poster.role||'🆕', lnk.text, anz, poster.xp||0, istAdminId(lnk.user_id)),
+            { reply_markup: buildLinkButtons(lnk.counter_msg_id, anz) }
         );
     } catch(e) { console.log('Telegram Sync Fehler:', e.message); }
 
@@ -1848,7 +1843,7 @@ app.get('/like-from-app', async (req, res) => {
             const liker = d.users[uid] || {};
             const nb = xpBisNaechstesBadge(liker.xp||0);
             const eventBonus = d.xpEvent?.aktiv && d.xpEvent?.multiplier > 1 ? ` (+${Math.round((d.xpEvent.multiplier-1)*100)}% Event)` : '';
-            const feedbackText = '🎉 +5 XP' + eventBonus + '\n' + (liker.role||'🆕') + ' | ⭐ ' + (liker.xp||0) + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
+            const feedbackText = '🎉 +5 XP' + eventBonus + '  ·  ⭐ ' + (liker.xp||0) + '\n' + (liker.role||'🆕') + (nb ? '  ·  ⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
 
 
             const feedbackMsg = await bot.telegram.sendMessage(lnk.chat_id, feedbackText, { reply_to_message_id: lnk.counter_msg_id });
@@ -1977,19 +1972,18 @@ app.post('/post-link-from-app', async (req, res) => {
 
         // Link in Gruppe senden
         console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
-        const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
-        const msgText = posterLabel + '\n🔗 ' + url + (caption ? '\n\n💬 ' + caption : '') + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP';
+        const displayName = u.spitzname||u.name||name;
         const botMsg = await bot.telegram.sendMessage(
             GROUP_A_ID,
-            msgText,
-            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
+            buildLinkKarte(displayName, u.role||'🆕', url + (caption ? '\n\n💬 ' + caption : ''), 0, u.xp||0, false),
+            { reply_markup: buildLinkButtons(0, 0) }
         );
         console.log('[APP-LINK] Gesendet an Gruppe B, msgId:', botMsg.message_id);
 
         // Button mit echter msgId updaten
         const mapKey = 'A_' + botMsg.message_id;
         await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
-            Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + botMsg.message_id)]]).reply_markup
+            buildLinkButtons(botMsg.message_id, 0)
         );
 
         // Link speichern

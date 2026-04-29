@@ -2329,6 +2329,32 @@ app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); 
 bot.launch();
 console.log('🤖 Bot läuft!');
 
+// Migrate communityFeed → threadMessages['general'] on startup
+function migriereAlteDaten() {
+    if (!d.communityFeed?.length) return;
+    if (!d.threadMessages) d.threadMessages = {};
+    if (!d.threadMessages['general']) d.threadMessages['general'] = [];
+    const existingIds = new Set(d.threadMessages['general'].map(m => m.msg_id));
+    let added = 0;
+    for (const m of d.communityFeed) {
+        if (!existingIds.has(m.msg_id)) {
+            d.threadMessages['general'].push({
+                uid: String(m.uid || ''),
+                tgName: m.username || null,
+                name: m.name || m.username || 'Unbekannt',
+                role: null, type: 'text', text: m.text || '',
+                mediaId: null,
+                timestamp: m.timestamp,
+                msg_id: m.msg_id
+            });
+            added++;
+        }
+    }
+    d.threadMessages['general'].sort((a, b) => b.timestamp - a.timestamp);
+    if (d.threadMessages['general'].length > 100) d.threadMessages['general'] = d.threadMessages['general'].slice(0, 100);
+    if (added > 0) { console.log(`✅ ${added} alte Nachrichten nach threadMessages['general'] migriert`); speichern(); }
+}
+
 async function ladeForumTopics() {
     if (!GROUP_B_ID) return;
     try {
@@ -2339,14 +2365,14 @@ async function ladeForumTopics() {
             const ex = existing.get(String(t.message_thread_id));
             return { id: t.message_thread_id, name: t.name, emoji: t.icon_emoji_id || '💬', last_msg: ex?.last_msg || null, msg_count: ex?.msg_count || (d.threadMessages[String(t.message_thread_id)] || []).length };
         });
-        // Add general chat at top
         const gen = existing.get('general');
-        const generalEntry = { id: 'general', name: 'Allgemein', emoji: '💬', last_msg: gen?.last_msg || null, msg_count: gen?.msg_count || (d.threadMessages['general'] || []).length };
+        const generalEntry = { id: 'general', name: 'Allgemein', emoji: '💬', last_msg: gen?.last_msg || (d.threadMessages['general']?.[0] || null), msg_count: (d.threadMessages['general'] || []).length };
         d.threads = [generalEntry, ...updated];
         console.log(`✅ ${d.threads.length} Forum-Topics geladen`);
-    } catch (e) { console.log('Forum Topics Fehler:', e.message); }
+    } catch (e) { console.log('Forum Topics Fehler (normal wenn keine Forum-Gruppe):', e.message); }
 }
-setTimeout(ladeForumTopics, 3000);
+
+setTimeout(() => { migriereAlteDaten(); ladeForumTopics(); }, 2000);
 
 process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason); });
 process.on('uncaughtException', (error)  => { console.log('Uncaught:', error.message); });

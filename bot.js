@@ -844,6 +844,20 @@ bot.on('left_chat_member', async (ctx) => {
     } catch(e) { console.log('left_chat_member Fehler:', e.message); }
 });
 
+// Capture forum topic names when topics are created
+bot.on('message', async (ctx) => {
+    if (ctx.chat?.id === GROUP_B_ID && ctx.message?.forum_topic_created) {
+        const name = ctx.message.forum_topic_created.name;
+        const emoji = ctx.message.forum_topic_created.icon_emoji_id || '📌';
+        const topicId = String(ctx.message.message_id);
+        if (!d.threads) d.threads = [];
+        const existing = d.threads.find(t => String(t.id) === topicId);
+        if (existing) { existing.name = name; existing.emoji = emoji; }
+        else d.threads.push({ id: Number(topicId), name, emoji, last_msg: null, msg_count: 0 });
+        speichern();
+    }
+});
+
 bot.on('message', async (ctx) => {
     try {
         const uid_msg = ctx.from.id;

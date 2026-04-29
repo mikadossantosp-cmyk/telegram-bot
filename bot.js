@@ -2228,22 +2228,19 @@ app.get('/telegram-feed', (req, res) => {
 
 app.get('/forum-topics', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    // If threads already loaded, return immediately
-    if (d.threads && d.threads.length > 0) return res.json({ threads: d.threads });
-    // Otherwise try live fetch
-    await ladeForumTopics();
-    // Final fallback: build from received messages
-    if ((!d.threads || d.threads.length === 0) && Object.keys(d.threadMessages || {}).length > 0) {
-        d.threads = Object.keys(d.threadMessages).map(tid => ({
-            id: tid,
-            name: tid === 'general' ? 'Allgemein' : `Thread ${tid}`,
-            emoji: tid === 'general' ? '💬' : '📌',
-            last_msg: d.threadMessages[tid]?.[0] || null,
-            msg_count: d.threadMessages[tid]?.length || 0
-        }));
-        console.log('⚠️ Threads aus Nachrichten gebaut:', d.threads.length);
+    if (!d.threads || d.threads.length === 0) await ladeForumTopics();
+    // Build from received messages if API failed
+    if (!d.threads || d.threads.length === 0) {
+        const msgKeys = Object.keys(d.threadMessages || {});
+        d.threads = msgKeys.length > 0
+            ? msgKeys.map(tid => ({ id: tid, name: tid === 'general' ? 'Allgemein' : `Thread ${tid}`, emoji: tid === 'general' ? '💬' : '📌', last_msg: d.threadMessages[tid]?.[0] || null, msg_count: d.threadMessages[tid]?.length || 0 }))
+            : [{ id: 'general', name: 'Allgemein', emoji: '💬', last_msg: null, msg_count: 0 }];
     }
-    res.json({ threads: d.threads || [] });
+    // Always ensure 'general' exists
+    if (!d.threads.find(t => String(t.id) === 'general')) {
+        d.threads.unshift({ id: 'general', name: 'Allgemein', emoji: '💬', last_msg: d.threadMessages?.['general']?.[0] || null, msg_count: d.threadMessages?.['general']?.length || 0 });
+    }
+    res.json({ threads: d.threads });
 });
 
 app.get('/forum-debug', async (req, res) => {

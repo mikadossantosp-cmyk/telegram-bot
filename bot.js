@@ -680,7 +680,7 @@ bot.command('cleanlinks', async (ctx) => {
             );
         } catch(e) {
             const errText = ((e?.response?.description || '') + ' ' + (e?.message || '')).toLowerCase();
-            const isGone = errText.includes('not found') || errText.includes('invalid') || errText.includes('deleted');
+            const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
             const isNotModified = errText.includes('not modified');
             if (isGone && !isNotModified) {
                 console.log('[cleanlinks] Lösche key=' + key + ' err=' + (e?.response?.description || e?.message));
@@ -1580,7 +1580,7 @@ async function cleanupDeletedLinks() {
             );
         } catch(e) {
             const errText = ((e?.response?.description || '') + ' ' + (e?.message || '')).toLowerCase();
-            const isGone = errText.includes('not found') || errText.includes('invalid') || errText.includes('deleted');
+            const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
             const isNotModified = errText.includes('not modified');
             if (isGone && !isNotModified) {
                 if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];

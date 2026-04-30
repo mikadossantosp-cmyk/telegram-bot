@@ -2259,6 +2259,37 @@ app.post('/mark-messages-read', (req, res) => {
     res.json({ok:true});
 });
 
+app.post('/delete-dm-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { chatKey, timestamp, uid } = req.body || {};
+    if (!chatKey || !timestamp || !d.messages?.[chatKey]) return res.json({ok:false});
+    const msg = d.messages[chatKey].find(m => m.timestamp === Number(timestamp));
+    if (!msg) return res.json({ok:false});
+    const isAdmin = d.users?.[String(uid)]?.role?.includes('Admin');
+    if (msg.from !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff'});
+    d.messages[chatKey] = d.messages[chatKey].filter(m => m.timestamp !== Number(timestamp));
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/delete-thread-msg-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { threadId, timestamp, msgId, uid } = req.body || {};
+    if (!threadId || !timestamp) return res.json({ok:false});
+    const isAdmin = d.users?.[String(uid)]?.role?.includes('Admin');
+    const msgs = d.threadMessages?.[threadId] || [];
+    const msg = msgs.find(m => m.timestamp === Number(timestamp));
+    if (!msg) return res.json({ok:false});
+    if (msg.uid && msg.uid !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff'});
+    d.threadMessages[threadId] = msgs.filter(m => m.timestamp !== Number(timestamp));
+    if (d.communityFeed) d.communityFeed = d.communityFeed.filter(m => m.timestamp !== Number(timestamp));
+    speichern();
+    if (msgId && GROUP_B_ID) {
+        try { await bot.telegram.deleteMessage(GROUP_B_ID, Number(msgId)); } catch(e) {}
+    }
+    res.json({ok:true});
+});
+
 app.post('/send-group-message', async (req, res) => {
     const { text, uid } = req.body || {};
     if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });

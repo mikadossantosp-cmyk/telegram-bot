@@ -2523,13 +2523,29 @@ app.post('/track-login', (req, res) => {
 
 app.post('/add-project-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { uid, projectId, title, description, link } = req.body || {};
+    const { uid, projectId, title, description, link, docName } = req.body || {};
     if (!uid || !projectId || !title?.trim()) return res.json({ok:false, error:'Fehlende Felder'});
     const u = d.users[String(uid)];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     if (!u.projects) u.projects = [];
     if (u.projects.length >= 2) return res.json({ok:false, error:'Max 2 Projekte erlaubt'});
-    u.projects.push({ id: projectId, title: title.trim(), description: (description||'').trim(), link: (link||'').trim(), timestamp: Date.now() });
+    u.projects.push({ id: projectId, title: title.trim(), description: (description||'').trim(), link: (link||'').trim(), docName: (docName||'').trim(), timestamp: Date.now() });
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/update-project-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, projectId, title, description, link, docName } = req.body || {};
+    if (!uid || !projectId || !title?.trim()) return res.json({ok:false, error:'Fehlende Felder'});
+    const u = d.users[String(uid)];
+    if (!u || !u.projects) return res.json({ok:false, error:'Projekt nicht gefunden'});
+    const proj = u.projects.find(p => p.id === String(projectId));
+    if (!proj) return res.json({ok:false, error:'Projekt nicht gefunden'});
+    proj.title = title.trim();
+    proj.description = (description||'').trim();
+    proj.link = (link||'').trim();
+    proj.docName = (docName||'').trim();
     speichern();
     res.json({ok:true});
 });

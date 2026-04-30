@@ -204,7 +204,7 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [] };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -2435,7 +2435,7 @@ app.get('/thread-messages/:threadId', (req, res) => {
 });
 
 app.post('/send-thread-message', async (req, res) => {
-    const { text, uid, thread_id } = req.body || {};
+    const { text, uid, thread_id, replyTo } = req.body || {};
     if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });
     const u = d.users[String(uid)];
     if (!u) return res.json({ ok: false, error: 'User nicht gefunden' });
@@ -2444,8 +2444,8 @@ app.post('/send-thread-message', async (req, res) => {
     try {
         const opts = { parse_mode: 'Markdown' };
         if (thread_id && thread_id !== 'general') opts.message_thread_id = Number(thread_id);
+        if (replyTo?.msgId) opts.reply_to_message_id = Number(replyTo.msgId);
         const sent = await bot.telegram.sendMessage(GROUP_B_ID, `${label}:\n${text.trim()}`, opts);
-        // Also store in threadMessages so it appears in web chat immediately
         const tid = String(thread_id || 'general');
         if (!d.threadMessages[tid]) d.threadMessages[tid] = [];
         const entry = {
@@ -2457,17 +2457,49 @@ app.post('/send-thread-message', async (req, res) => {
             text: text.trim(),
             mediaId: null,
             timestamp: Date.now(),
-            msg_id: sent.message_id
+            msg_id: sent.message_id,
+            replyTo: replyTo ? { timestamp: replyTo.timestamp, name: replyTo.name, text: (replyTo.text||'').slice(0,100), msgId: replyTo.msgId } : null
         };
         d.threadMessages[tid].unshift(entry);
         if (d.threadMessages[tid].length > 200) d.threadMessages[tid] = d.threadMessages[tid].slice(0, 200);
-        // Update thread last_msg
         if (!d.threads) d.threads = [];
         let thr = d.threads.find(t => String(t.id) === tid);
         if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
         speichern();
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.post('/react-thread-msg-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { threadId, timestamp, emoji, uid } = req.body || {};
+    if (!threadId || !timestamp || !emoji || !uid) return res.json({ok:false});
+    const msgs = d.threadMessages?.[String(threadId)] || [];
+    const msg = msgs.find(m => m.timestamp === Number(timestamp));
+    if (!msg) return res.json({ok:false});
+    if (!msg.reactions) msg.reactions = {};
+    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+    const uidStr = String(uid);
+    const idx = msg.reactions[emoji].indexOf(uidStr);
+    if (idx >= 0) {
+        msg.reactions[emoji].splice(idx, 1);
+        if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
+    } else {
+        msg.reactions[emoji].push(uidStr);
+    }
+    speichern();
+    if (msg.msg_id && GROUP_B_ID) {
+        try {
+            const reactionEmojis = Object.keys(msg.reactions||{}).slice(0,3);
+            await bot.telegram.callApi('setMessageReaction', {
+                chat_id: GROUP_B_ID,
+                message_id: Number(msg.msg_id),
+                reaction: reactionEmojis.map(e=>({type:'emoji',emoji:e})),
+                is_big: false
+            });
+        } catch(e) {}
+    }
+    res.json({ ok: true, reactions: msg.reactions });
 });
 
 app.post('/create-thread', async (req, res) => {
@@ -2482,6 +2514,19 @@ app.post('/create-thread', async (req, res) => {
         speichern();
         res.json({ ok: true, thread: newThread });
     } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.post('/complete-profile-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid } = req.body || {};
+    if (!uid) return res.json({ok:false});
+    const u = d.users[String(uid)];
+    if (!u || u.profileCompletionRewarded) return res.json({ok:false, alreadyRewarded:true});
+    u.profileCompletionRewarded = true;
+    u.diamonds = (u.diamonds||0) + 1;
+    speichern();
+    addNotification(String(uid), '🏆 Profil 100% vollständig! Du erhältst 💎 1 Diamant als Belohnung!');
+    res.json({ ok: true, diamonds: u.diamonds });
 });
 
 app.get('/tg-file/:fileId', async (req, res) => {

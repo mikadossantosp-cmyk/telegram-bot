@@ -204,7 +204,7 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false, inventory: [], activeRing: null };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -2527,6 +2527,53 @@ app.post('/complete-profile-api', async (req, res) => {
     speichern();
     addNotification(String(uid), '🏆 Profil 100% vollständig! Du erhältst 💎 1 Diamant als Belohnung!');
     res.json({ ok: true, diamonds: u.diamonds });
+});
+
+app.post('/buy-item-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, itemId } = req.body || {};
+    if (!uid || !itemId) return res.json({ok:false, error:'Fehlende Parameter'});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+    if (!u.inventory) u.inventory = [];
+    if (u.inventory.includes(itemId)) return res.json({ok:false, error:'Item bereits besessen'});
+    const ITEM_PRICES = { ring_flame:8, ring_ocean:8, ring_gold:10, ring_purple:12, ring_rainbow:15, ring_diamond:20 };
+    const price = ITEM_PRICES[itemId];
+    if (!price) return res.json({ok:false, error:'Unbekanntes Item'});
+    if ((u.diamonds||0) < price) return res.json({ok:false, error:`Nicht genug Diamanten (benötigt: ${price})`});
+    u.diamonds -= price;
+    u.inventory.push(itemId);
+    speichern();
+    const itemNames = { ring_flame:'🔥 Flame Ring', ring_ocean:'🌊 Ocean Ring', ring_gold:'✨ Gold Ring', ring_purple:'🔮 Cosmic Ring', ring_rainbow:'🌈 Rainbow Ring', ring_diamond:'💎 Diamond Ring' };
+    addNotification(String(uid), `🎁 ${itemNames[itemId]||itemId} gekauft! Wähle es in deinem Profil unter "Items" aus. 💎 -${price} Diamanten.`);
+    res.json({ ok: true, diamonds: u.diamonds, inventory: u.inventory });
+});
+
+app.post('/set-active-ring-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, ringId } = req.body || {};
+    if (!uid) return res.json({ok:false});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false});
+    if (ringId && !(u.inventory||[]).includes(ringId)) return res.json({ok:false, error:'Item nicht im Inventar'});
+    u.activeRing = ringId || null;
+    speichern();
+    res.json({ ok: true, activeRing: u.activeRing });
+});
+
+app.post('/buy-extralink-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid } = req.body || {};
+    if (!uid) return res.json({ok:false, error:'Fehlende UID'});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+    if ((u.diamonds||0) < 5) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 5)'});
+    u.diamonds -= 5;
+    if (!d.bonusLinks) d.bonusLinks = {};
+    d.bonusLinks[String(uid)] = (d.bonusLinks[String(uid)] || 0) + 1;
+    speichern();
+    addNotification(String(uid), '🔗 Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten. 💎 -5 Diamanten.');
+    res.json({ ok: true, diamonds: u.diamonds, bonusLinks: d.bonusLinks[String(uid)] });
 });
 
 app.get('/tg-file/:fileId', async (req, res) => {

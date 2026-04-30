@@ -2293,8 +2293,28 @@ app.post('/send-thread-message', async (req, res) => {
     try {
         const opts = { parse_mode: 'Markdown' };
         if (thread_id && thread_id !== 'general') opts.message_thread_id = Number(thread_id);
-        await bot.telegram.sendMessage(GROUP_B_ID, `${label}:
-${text.trim()}`, opts);
+        const sent = await bot.telegram.sendMessage(GROUP_B_ID, `${label}:\n${text.trim()}`, opts);
+        // Also store in threadMessages so it appears in web chat immediately
+        const tid = String(thread_id || 'general');
+        if (!d.threadMessages[tid]) d.threadMessages[tid] = [];
+        const entry = {
+            uid: String(uid),
+            tgName,
+            name: u.spitzname || u.name || tgName,
+            role: u.role || null,
+            type: 'text',
+            text: text.trim(),
+            mediaId: null,
+            timestamp: Date.now(),
+            msg_id: sent.message_id
+        };
+        d.threadMessages[tid].unshift(entry);
+        if (d.threadMessages[tid].length > 200) d.threadMessages[tid] = d.threadMessages[tid].slice(0, 200);
+        // Update thread last_msg
+        if (!d.threads) d.threads = [];
+        let thr = d.threads.find(t => String(t.id) === tid);
+        if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
+        speichern();
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });

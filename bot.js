@@ -82,6 +82,7 @@ function laden() {
         while (linkKeys.length > 500) { delete d.links[linkKeys.shift()]; }
         for (const uid in d.users) {
             if (d.users[uid].inGruppe === undefined) d.users[uid].inGruppe = true;
+            if (!d.users[uid].projects) d.users[uid].projects = [];
         }
         console.log('✅ Daten geladen');
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -2518,6 +2519,30 @@ app.post('/track-login', (req, res) => {
     if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
     d.dailyLogins[uid]++;
     res.json({ ok: true });
+});
+
+app.post('/add-project-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, projectId, title, description, link } = req.body || {};
+    if (!uid || !projectId || !title?.trim()) return res.json({ok:false, error:'Fehlende Felder'});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+    if (!u.projects) u.projects = [];
+    if (u.projects.length >= 2) return res.json({ok:false, error:'Max 2 Projekte erlaubt'});
+    u.projects.push({ id: projectId, title: title.trim(), description: (description||'').trim(), link: (link||'').trim(), timestamp: Date.now() });
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/delete-project-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, projectId } = req.body || {};
+    if (!uid || !projectId) return res.json({ok:false});
+    const u = d.users[String(uid)];
+    if (!u || !u.projects) return res.json({ok:false});
+    u.projects = u.projects.filter(p => p.id !== String(projectId));
+    speichern();
+    res.json({ok:true});
 });
 
 const PORT = process.env.PORT || 3000;

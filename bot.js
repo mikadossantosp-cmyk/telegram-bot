@@ -1751,10 +1751,19 @@ app.get('/give-bonus', async (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/delete-link', (req, res) => {
+app.get('/delete-link', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const msgId = req.query.id;
-    if (d.links[msgId]) { delete d.links[msgId]; speichern(); }
+    if (d.links[msgId]) {
+        const link = d.links[msgId];
+        if (link.chat_id && link.counter_msg_id) {
+            bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{});
+        }
+        // Remove from dmNachrichten
+        if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+        delete d.links[msgId];
+        speichern();
+    }
     res.json({ ok: true });
 });
 
@@ -2140,21 +2149,20 @@ app.post('/post-link-from-app', async (req, res) => {
             } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
         }
 
-        // Link in Gruppe senden
+        // Link in Gruppe senden (gleiche Formatierung wie Telegram-Post)
         console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
-        const posterLabel = (u.role||'🆕') + ' ' + (u.spitzname||u.name||name);
-        const msgText = posterLabel + '\n🔗 ' + url + (caption ? '\n\n💬 ' + caption : '') + '\n\n👍 0 Likes  |  ⭐ ' + (u.xp||0) + ' XP';
+        const isAdmin = istAdminId(uid);
         const botMsg = await bot.telegram.sendMessage(
             GROUP_A_ID,
-            msgText,
+            buildLinkKarte(u.spitzname||u.name||name, u.role||'🆕 New', url, 0, u.xp||0, isAdmin) + (caption ? '\n💬 ' + caption : ''),
             { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
         );
-        console.log('[APP-LINK] Gesendet an Gruppe B, msgId:', botMsg.message_id);
+        console.log('[APP-LINK] Gesendet an Gruppe A, msgId:', botMsg.message_id);
 
         // Button mit echter msgId updaten
         const mapKey = 'A_' + botMsg.message_id;
         await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
-            Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_' + botMsg.message_id)]]).reply_markup
+            buildLinkButtons(botMsg.message_id, 0)
         );
 
         // Link speichern
@@ -2181,7 +2189,7 @@ app.post('/post-link-from-app', async (req, res) => {
         if (istInstagramLink(url)) mission.linksGepostet++;
         await checkMissionen(uid, u.name||name);
 
-        // DM an alle User senden (wie bei Telegram)
+        // DM an alle User senden
         await sendeLinkAnAlle(linkData);
 
         // Bridge Bot informieren
@@ -2234,18 +2242,30 @@ app.post('/mark-notifications-read', (req, res) => {
 });
 
 
-app.post('/send-message-api', (req, res) => {
+app.post('/send-message-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { from, to, text } = req.body || {};
-    if (!from || !to || !text) return res.json({ok:false});
+    const { from, to, text, image, audio } = req.body || {};
+    if (!from || !to || (!text?.trim() && !image && !audio)) return res.json({ok:false});
     if (!d.messages) d.messages = {};
     const chatKey = [String(from), String(to)].sort().join('_');
     if (!d.messages[chatKey]) d.messages[chatKey] = [];
-    d.messages[chatKey].push({ from: String(from), to: String(to), text: text.slice(0,500), timestamp: Date.now(), read: false });
+    d.messages[chatKey].push({ from: String(from), to: String(to), text: (text||'').slice(0,500), image: image||null, audio: audio||null, timestamp: Date.now(), read: false });
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
-    // Benachrichtigung
     const fromUser = d.users[from];
-    if (fromUser) addNotification(String(to), '💬', (fromUser.spitzname||fromUser.name||'Jemand') + ': ' + text.slice(0,40));
+    const senderName = fromUser?.spitzname || fromUser?.name || 'Jemand';
+    if (fromUser) addNotification(String(to), '💬', senderName + (text ? ': ' + text.slice(0,40) : ' hat dir etwas gesendet'));
+    // Telegram DM weiterleiten
+    if (d.users[to]?.started) {
+        try {
+            const tgText = image ? '📷 Foto' : audio ? '🎤 Sprachnachricht' : text;
+            await bot.telegram.sendMessage(Number(to),
+                '💬 *' + senderName + ':*
+
+' + tgText,
+                { parse_mode: 'Markdown' }
+            );
+        } catch(e) {}
+    }
     speichern();
     res.json({ok:true});
 });

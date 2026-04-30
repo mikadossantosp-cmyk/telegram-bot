@@ -7,7 +7,7 @@ if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
-const APP_URL        = process.env.APP_URL || '';
+const APP_URL        = process.env.APP_URL || 'https://site--creatorboost-app--899dydmn7d7v.code.run/feed';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));

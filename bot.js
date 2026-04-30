@@ -82,6 +82,7 @@ function laden() {
         while (linkKeys.length > 500) { delete d.links[linkKeys.shift()]; }
         for (const uid in d.users) {
             if (d.users[uid].inGruppe === undefined) d.users[uid].inGruppe = true;
+            if (!d.users[uid].projects) d.users[uid].projects = [];
         }
         console.log('✅ Daten geladen');
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -663,9 +664,11 @@ bot.command('testmissionauswertung', async (ctx) => {
     await ctx.reply('✅ Auswertung!');
 });
 bot.command('cleanlinks', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return;
+    if (!istAdminId(ctx.from.id) && !await istAdmin(ctx, ctx.from.id)) {
+        return ctx.reply('❌ Nur für Admins.');
+    }
     const vorher = Object.keys(d.links).length;
-    await ctx.reply('🔍 Prüfe alle Links...');
+    await ctx.reply('🔍 Prüfe alle ' + vorher + ' Links...');
     const keys = Object.keys(d.links);
     let removed = 0;
     for (const key of keys) {
@@ -677,13 +680,16 @@ bot.command('cleanlinks', async (ctx) => {
                 buildLinkButtons(link.counter_msg_id, link.likes?.size || 0)
             );
         } catch(e) {
-            const msg = e?.message || '';
-            if (msg.includes('message to edit not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message not found')) {
+            const errText = ((e?.response?.description || '') + ' ' + (e?.message || '')).toLowerCase();
+            const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
+            const isNotModified = errText.includes('not modified');
+            if (isGone && !isNotModified) {
+                console.log('[cleanlinks] Lösche key=' + key + ' err=' + (e?.response?.description || e?.message));
                 if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
                 delete d.links[key]; removed++;
             }
         }
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 200));
     }
     if (removed) speichern();
     await ctx.reply('✅ ' + removed + ' gelöschte Links bereinigt. Vorher: ' + vorher + ' → Jetzt: ' + Object.keys(d.links).length);
@@ -1574,8 +1580,10 @@ async function cleanupDeletedLinks() {
                 buildLinkButtons(link.counter_msg_id, link.likes?.size || 0)
             );
         } catch(e) {
-            const msg = e?.message || '';
-            if (msg.includes('message to edit not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message not found')) {
+            const errText = ((e?.response?.description || '') + ' ' + (e?.message || '')).toLowerCase();
+            const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
+            const isNotModified = errText.includes('not modified');
+            if (isGone && !isNotModified) {
                 if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
                 delete d.links[key];
                 changed = true;
@@ -2511,6 +2519,30 @@ app.post('/track-login', (req, res) => {
     if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
     d.dailyLogins[uid]++;
     res.json({ ok: true });
+});
+
+app.post('/add-project-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, projectId, title, description, link } = req.body || {};
+    if (!uid || !projectId || !title?.trim()) return res.json({ok:false, error:'Fehlende Felder'});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+    if (!u.projects) u.projects = [];
+    if (u.projects.length >= 2) return res.json({ok:false, error:'Max 2 Projekte erlaubt'});
+    u.projects.push({ id: projectId, title: title.trim(), description: (description||'').trim(), link: (link||'').trim(), timestamp: Date.now() });
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/delete-project-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, projectId } = req.body || {};
+    if (!uid || !projectId) return res.json({ok:false});
+    const u = d.users[String(uid)];
+    if (!u || !u.projects) return res.json({ok:false});
+    u.projects = u.projects.filter(p => p.id !== String(projectId));
+    speichern();
+    res.json({ok:true});
 });
 
 const PORT = process.env.PORT || 3000;

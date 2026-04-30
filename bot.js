@@ -662,6 +662,32 @@ bot.command('testmissionauswertung', async (ctx) => {
     await missionenAuswerten();
     await ctx.reply('✅ Auswertung!');
 });
+bot.command('cleanlinks', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const vorher = Object.keys(d.links).length;
+    await ctx.reply('🔍 Prüfe alle Links...');
+    const keys = Object.keys(d.links);
+    let removed = 0;
+    for (const key of keys) {
+        const link = d.links[key];
+        if (!link?.chat_id || !link?.counter_msg_id) { delete d.links[key]; removed++; continue; }
+        try {
+            await bot.telegram.editMessageReplyMarkup(
+                link.chat_id, link.counter_msg_id, null,
+                buildLinkButtons(link.counter_msg_id, link.likes?.size || 0)
+            );
+        } catch(e) {
+            const msg = e?.message || '';
+            if (msg.includes('message to edit not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message not found')) {
+                if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+                delete d.links[key]; removed++;
+            }
+        }
+        await new Promise(r => setTimeout(r, 300));
+    }
+    if (removed) speichern();
+    await ctx.reply('✅ ' + removed + ' gelöschte Links bereinigt. Vorher: ' + vorher + ' → Jetzt: ' + Object.keys(d.links).length);
+});
 bot.command('testweeklyranking', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await weeklyRankingDM(); await ctx.reply('✅ Weekly!'); });
 bot.command('time', (ctx) => { ctx.reply('🕒 ' + new Date().toString()); });
 
@@ -1561,32 +1587,6 @@ async function cleanupDeletedLinks() {
 }
 setInterval(cleanupDeletedLinks, 3 * 60 * 1000); // alle 3 Minuten
 
-bot.command('cleanlinks', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return;
-    const vorher = Object.keys(d.links).length;
-    await ctx.reply('🔍 Prüfe alle Links...');
-    const keys = Object.keys(d.links);
-    let removed = 0;
-    for (const key of keys) {
-        const link = d.links[key];
-        if (!link?.chat_id || !link?.counter_msg_id) { delete d.links[key]; removed++; continue; }
-        try {
-            await bot.telegram.editMessageReplyMarkup(
-                link.chat_id, link.counter_msg_id, null,
-                buildLinkButtons(link.counter_msg_id, link.likes?.size || 0)
-            );
-        } catch(e) {
-            const msg = e?.message || '';
-            if (msg.includes('message to edit not found') || msg.includes('MESSAGE_ID_INVALID') || msg.includes('message not found')) {
-                if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
-                delete d.links[key]; removed++;
-            }
-        }
-        await new Promise(r => setTimeout(r, 300));
-    }
-    if (removed) speichern();
-    await ctx.reply('✅ ' + removed + ' gelöschte Links bereinigt. Vorher: ' + vorher + ' → Jetzt: ' + Object.keys(d.links).length);
-});
 
 app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;

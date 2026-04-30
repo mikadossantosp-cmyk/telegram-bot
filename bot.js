@@ -7,6 +7,7 @@ if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
+const APP_URL        = process.env.APP_URL || DASHBOARD_URL || '';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
@@ -814,13 +815,19 @@ bot.command('mycode', async (ctx) => {
         speichern();
     }
 
+    const appLink = APP_URL || 'https://creatorx.app';
     await ctx.reply(
-        '🔐 *Dein CreatorBoost Login Code*\n\n' +
+        '🔐 *Dein CreatorX Login Code*\n\n' +
         '`' + u.appCode + '`\n\n' +
         '👆 Tippe auf den Code zum Kopieren\n\n' +
-        '📱 Öffne die App und trage diesen Code ein.\n' +
+        '🌐 *Link zur App:*\n' + appLink + '\n\n' +
+        '⚠️ *Wichtig:* Öffne den Link in einem richtigen Browser (Chrome, Safari) — nicht direkt in Telegram!\n\n' +
+        '👉 Entweder den Link kopieren und im Browser eingeben, oder auf den Link tippen → dann oben rechts „Im Browser öffnen" wählen.\n\n' +
+        '📲 *App auf Homescreen hinzufügen:*\n' +
+        '• *iPhone (Safari):* Teilen-Symbol → „Zum Home-Bildschirm"\n' +
+        '• *Android (Chrome):* Menü (⋮) → „Zum Startbildschirm hinzufügen"\n\n' +
         '⚠️ Teile deinen Code mit niemandem!',
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🚀 App öffnen', url: appLink }]] } }
     );
 });
 
@@ -842,6 +849,20 @@ bot.on('left_chat_member', async (ctx) => {
             console.log('User gelöscht:', m.first_name, uid);
         }
     } catch(e) { console.log('left_chat_member Fehler:', e.message); }
+});
+
+// Capture forum topic names when topics are created
+bot.on('message', async (ctx) => {
+    if (ctx.chat?.id === GROUP_B_ID && ctx.message?.forum_topic_created) {
+        const name = ctx.message.forum_topic_created.name;
+        const emoji = ctx.message.forum_topic_created.icon_emoji_id || '📌';
+        const topicId = String(ctx.message.message_id);
+        if (!d.threads) d.threads = [];
+        const existing = d.threads.find(t => String(t.id) === topicId);
+        if (existing) { existing.name = name; existing.emoji = emoji; }
+        else d.threads.push({ id: Number(topicId), name, emoji, last_msg: null, msg_count: 0 });
+        speichern();
+    }
 });
 
 bot.on('message', async (ctx) => {
@@ -914,9 +935,14 @@ bot.on('message', async (ctx) => {
                 if (!d.threadMessages[threadId]) d.threadMessages[threadId] = [];
                 d.threadMessages[threadId].unshift(entry);
                 if (d.threadMessages[threadId].length > 100) d.threadMessages[threadId] = d.threadMessages[threadId].slice(0, 100);
-                // Update thread metadata
+                // Update or auto-create thread metadata
+                if (!d.threads) d.threads = [];
                 let thr = d.threads.find(t => String(t.id) === threadId);
-                if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length; }
+                if (!thr) {
+                    thr = { id: threadId === 'general' ? 'general' : Number(threadId), name: threadId === 'general' ? 'Allgemein' : `Thread ${threadId}`, emoji: threadId === 'general' ? '💬' : '📌', last_msg: null, msg_count: 0 };
+                    threadId === 'general' ? d.threads.unshift(thr) : d.threads.push(thr);
+                }
+                thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length;
                 // Track daily group messages
                 if (!d.dailyGroupMsgs[senderUid]) d.dailyGroupMsgs[senderUid] = 0;
                 d.dailyGroupMsgs[senderUid]++;
@@ -2226,9 +2252,37 @@ app.get('/telegram-feed', (req, res) => {
     res.json({ messages: d.communityFeed || [] });
 });
 
-app.get('/forum-topics', (req, res) => {
+app.get('/forum-topics', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.json({ threads: d.threads || [] });
+    if (!d.threads || d.threads.length === 0) await ladeForumTopics();
+    // Build from received messages if API failed
+    if (!d.threads || d.threads.length === 0) {
+        const msgKeys = Object.keys(d.threadMessages || {});
+        d.threads = msgKeys.length > 0
+            ? msgKeys.map(tid => ({ id: tid, name: tid === 'general' ? 'Allgemein' : `Thread ${tid}`, emoji: tid === 'general' ? '💬' : '📌', last_msg: d.threadMessages[tid]?.[0] || null, msg_count: d.threadMessages[tid]?.length || 0 }))
+            : [{ id: 'general', name: 'Allgemein', emoji: '💬', last_msg: null, msg_count: 0 }];
+    }
+    // Always ensure 'general' exists
+    if (!d.threads.find(t => String(t.id) === 'general')) {
+        d.threads.unshift({ id: 'general', name: 'Allgemein', emoji: '💬', last_msg: d.threadMessages?.['general']?.[0] || null, msg_count: d.threadMessages?.['general']?.length || 0 });
+    }
+    // Merge any threads discovered from messages not yet in list
+    for (const tid of Object.keys(d.threadMessages || {})) {
+        if (!d.threads.find(t => String(t.id) === tid)) {
+            d.threads.push({ id: tid === 'general' ? 'general' : Number(tid), name: `Thread ${tid}`, emoji: '📌', last_msg: d.threadMessages[tid]?.[0] || null, msg_count: d.threadMessages[tid]?.length || 0 });
+        }
+    }
+    res.json({ threads: d.threads });
+});
+
+app.get('/forum-debug', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const info = { GROUP_B_ID, threadsCount: (d.threads||[]).length, threadMsgKeys: Object.keys(d.threadMessages||{}), error: null, apiResult: null };
+    if (GROUP_B_ID) {
+        try { info.apiResult = await bot.telegram.callApi('getForumTopics', { chat_id: GROUP_B_ID, limit: 10 }); }
+        catch (e) { info.error = e.message; }
+    }
+    res.json(info);
 });
 
 app.get('/thread-messages/:threadId', (req, res) => {
@@ -2246,8 +2300,28 @@ app.post('/send-thread-message', async (req, res) => {
     try {
         const opts = { parse_mode: 'Markdown' };
         if (thread_id && thread_id !== 'general') opts.message_thread_id = Number(thread_id);
-        await bot.telegram.sendMessage(GROUP_B_ID, `${label}:
-${text.trim()}`, opts);
+        const sent = await bot.telegram.sendMessage(GROUP_B_ID, `${label}:\n${text.trim()}`, opts);
+        // Also store in threadMessages so it appears in web chat immediately
+        const tid = String(thread_id || 'general');
+        if (!d.threadMessages[tid]) d.threadMessages[tid] = [];
+        const entry = {
+            uid: String(uid),
+            tgName,
+            name: u.spitzname || u.name || tgName,
+            role: u.role || null,
+            type: 'text',
+            text: text.trim(),
+            mediaId: null,
+            timestamp: Date.now(),
+            msg_id: sent.message_id
+        };
+        d.threadMessages[tid].unshift(entry);
+        if (d.threadMessages[tid].length > 200) d.threadMessages[tid] = d.threadMessages[tid].slice(0, 200);
+        // Update thread last_msg
+        if (!d.threads) d.threads = [];
+        let thr = d.threads.find(t => String(t.id) === tid);
+        if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
+        speichern();
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -2273,6 +2347,21 @@ app.get('/tg-file/:fileId', async (req, res) => {
     } catch (e) { res.status(404).json({ error: 'Datei nicht gefunden' }); }
 });
 
+app.post('/rename-thread', (req, res) => {
+    const { uid, thread_id, name } = req.body || {};
+    if (!uid || !thread_id || !name?.trim()) return res.json({ ok: false, error: 'Fehlende Parameter' });
+    if (!d.threads) d.threads = [];
+    let thr = d.threads.find(t => String(t.id) === String(thread_id));
+    if (!thr) {
+        thr = { id: thread_id === 'general' ? 'general' : Number(thread_id), name: name.trim(), emoji: '📌', last_msg: null, msg_count: 0 };
+        d.threads.push(thr);
+    } else {
+        thr.name = name.trim();
+    }
+    speichern();
+    res.json({ ok: true });
+});
+
 app.post('/mark-read', (req, res) => {
     const { uid, thread_id } = req.body || {};
     if (!uid || !thread_id) return res.json({ ok: false });
@@ -2296,6 +2385,32 @@ app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); 
 bot.launch();
 console.log('🤖 Bot läuft!');
 
+// Migrate communityFeed → threadMessages['general'] on startup
+function migriereAlteDaten() {
+    if (!d.communityFeed?.length) return;
+    if (!d.threadMessages) d.threadMessages = {};
+    if (!d.threadMessages['general']) d.threadMessages['general'] = [];
+    const existingIds = new Set(d.threadMessages['general'].map(m => m.msg_id));
+    let added = 0;
+    for (const m of d.communityFeed) {
+        if (!existingIds.has(m.msg_id)) {
+            d.threadMessages['general'].push({
+                uid: String(m.uid || ''),
+                tgName: m.username || null,
+                name: m.name || m.username || 'Unbekannt',
+                role: null, type: 'text', text: m.text || '',
+                mediaId: null,
+                timestamp: m.timestamp,
+                msg_id: m.msg_id
+            });
+            added++;
+        }
+    }
+    d.threadMessages['general'].sort((a, b) => b.timestamp - a.timestamp);
+    if (d.threadMessages['general'].length > 100) d.threadMessages['general'] = d.threadMessages['general'].slice(0, 100);
+    if (added > 0) { console.log(`✅ ${added} alte Nachrichten nach threadMessages['general'] migriert`); speichern(); }
+}
+
 async function ladeForumTopics() {
     if (!GROUP_B_ID) return;
     try {
@@ -2306,14 +2421,14 @@ async function ladeForumTopics() {
             const ex = existing.get(String(t.message_thread_id));
             return { id: t.message_thread_id, name: t.name, emoji: t.icon_emoji_id || '💬', last_msg: ex?.last_msg || null, msg_count: ex?.msg_count || (d.threadMessages[String(t.message_thread_id)] || []).length };
         });
-        // Add general chat at top
         const gen = existing.get('general');
-        const generalEntry = { id: 'general', name: 'Allgemein', emoji: '💬', last_msg: gen?.last_msg || null, msg_count: gen?.msg_count || (d.threadMessages['general'] || []).length };
+        const generalEntry = { id: 'general', name: 'Allgemein', emoji: '💬', last_msg: gen?.last_msg || (d.threadMessages['general']?.[0] || null), msg_count: (d.threadMessages['general'] || []).length };
         d.threads = [generalEntry, ...updated];
         console.log(`✅ ${d.threads.length} Forum-Topics geladen`);
-    } catch (e) { console.log('Forum Topics Fehler:', e.message); }
+    } catch (e) { console.log('Forum Topics Fehler (normal wenn keine Forum-Gruppe):', e.message); }
 }
-setTimeout(ladeForumTopics, 3000);
+
+setTimeout(() => { migriereAlteDaten(); ladeForumTopics(); }, 2000);
 
 process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason); });
 process.on('uncaughtException', (error)  => { console.log('Uncaught:', error.message); });

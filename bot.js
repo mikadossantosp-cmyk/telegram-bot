@@ -612,6 +612,33 @@ bot.command('unban', async (ctx) => {
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
 
+bot.command('fixlink', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const reply = ctx.message.reply_to_message;
+    if (!reply) return ctx.reply('❌ Antworte auf eine Link-Nachricht mit /fixlink');
+    const text = reply.text || reply.caption || '';
+    const url = linkUrl(text);
+    if (!url) return ctx.reply('❌ Kein Link in der Nachricht gefunden.');
+    const userId = reply.from?.id;
+    const userName = reply.from?.first_name || 'User';
+    const u = userId ? user(userId, userName) : {};
+    const msgId = reply.message_id;
+    try { await ctx.telegram.deleteMessage(ctx.chat.id, msgId); } catch (e) {}
+    try { await ctx.deleteMessage(); } catch (e) {}
+    const isAdmin = istAdminId(userId);
+    let botMsg;
+    try {
+        botMsg = await bot.telegram.sendMessage(ctx.chat.id,
+            buildLinkKarte(userName, u.role || '🆕 New', url, 0, u.xp || 0, isAdmin),
+            { reply_markup: buildLinkButtons(msgId, 0) }
+        );
+    } catch (e) { return ctx.reply('❌ Fehler: ' + e.message); }
+    const mapKey = MEINE_GRUPPE + '_' + msgId;
+    d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now() };
+    if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; }
+    speichern();
+});
+
 bot.command('extralink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht vom User!');

@@ -73,7 +73,7 @@ function laden() {
             warteNachricht: {}, dmNachrichten: {}, instaWarte: {}, missionQueue: {},
             gesternDailyXP: {}, badgeTracker: {}, m1Streak: {}, missionAuswertungErledigt: {},
             _lastEvents: {},
-            threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {},
+            threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {}, superlinks: {}, fullEngagementThreadId: null,
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
             newsletter: [], pinnedEngages: {},
@@ -123,6 +123,142 @@ function speichernDebounced() {
 
 setInterval(speichern, 30000);
 laden();
+
+// ── FULL ENGAGEMENT / SUPERLINK SYSTEM ──
+
+function getBerlinWeekKey() {
+    const now = new Date(); // TZ already set to Europe/Berlin
+    const day = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (day - 1));
+    return monday.getFullYear() + '-' + String(monday.getMonth()+1).padStart(2,'0') + '-' + String(monday.getDate()).padStart(2,'0');
+}
+
+function isSuperLinkPostingAllowed() {
+    const day = new Date().getDay();
+    return day >= 1 && day <= 6; // Mon–Sat
+}
+
+function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerNames) {
+    const topLikers = Object.values(likerNames||{}).slice(0,5);
+    const likerLine = topLikers.length ? '\n👥 ' + topLikers.join(', ') + (Object.keys(likerNames||{}).length > 5 ? ` +${Object.keys(likerNames).length-5}` : '') : '';
+    return `⭐ *SUPERLINK*\n\n👤 ${userName}${insta ? ' (@' + insta + ')' : ''}\n🔗 ${url}${caption ? '\n💬 ' + caption : ''}\n\n🙏 *Bitte Liken, Kommentieren, Teilen und Speichern\\!*\n\n━━━━━━━━━━━━━━\n❤️ ${likeCount} Like${likeCount!==1?'s':''}${likerLine}\n━━━━━━━━━━━━━━`;
+}
+
+function buildSuperLinkButtons(slId, likeCount) {
+    return { inline_keyboard: [[
+        Markup.button.callback('❤️ Like · ' + likeCount, 'sllike_' + slId),
+        Markup.button.callback('👁 Liker', 'slliker_' + slId)
+    ]] };
+}
+
+async function updateSuperLinkCard(slId) {
+    const sl = d.superlinks?.[slId];
+    if (!sl || !sl.msg_id || !d.fullEngagementThreadId) return;
+    const u = d.users[sl.uid];
+    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u?.instagram, sl.url, sl.caption, sl.likes.length, sl.likerNames);
+    try {
+        await bot.telegram.editMessageText(GROUP_B_ID, sl.msg_id, undefined, cardText, {
+            parse_mode: 'Markdown',
+            reply_markup: buildSuperLinkButtons(slId, sl.likes.length)
+        });
+    } catch(e) {}
+}
+
+async function handleSuperlink(ctx, senderUid, senderUser, text) {
+    const uidStr = String(senderUid);
+    if (!senderUser?.instagram) {
+        try { await ctx.deleteMessage(); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Zuerst Instagram verbinden\\! Schreibe /setinsta', { parse_mode: 'Markdown' }); } catch(e) {}
+        return;
+    }
+    if (!isSuperLinkPostingAllowed()) {
+        try { await ctx.deleteMessage(); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks sind nur Montag bis Samstag möglich\\!', { parse_mode: 'Markdown' }); } catch(e) {}
+        return;
+    }
+    const week = getBerlinWeekKey();
+    const existingThisWeek = Object.values(d.superlinks||{}).find(s => s.uid === uidStr && s.week === week);
+    if (existingThisWeek) {
+        try { await ctx.deleteMessage(); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits einen Superlink gepostet\\! Nur 1 Superlink pro Woche erlaubt\\.', { parse_mode: 'Markdown' }); } catch(e) {}
+        return;
+    }
+    const urlMatch = text.match(/https?:\/\/(www\.)?instagram\.com\/[^\s]+/i);
+    const url = urlMatch ? urlMatch[0].replace(/[.,;!?]+$/, '') : text.trim();
+    const caption = text.replace(url, '').trim();
+    try { await ctx.deleteMessage(); } catch(e) {}
+    const slId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    const u = d.users[uidStr];
+    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||ctx.from.first_name||'User', u?.instagram, url, caption, 0, {});
+    const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
+        parse_mode: 'Markdown',
+        message_thread_id: Number(d.fullEngagementThreadId),
+        reply_markup: buildSuperLinkButtons(slId, 0)
+    });
+    d.superlinks = d.superlinks || {};
+    d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+    speichern();
+    try {
+        await bot.telegram.sendMessage(Number(senderUid),
+            '⭐ *Dein Superlink wurde gepostet\\!*\n\nSuperlinks können 1× pro Woche gepostet werden\\. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* \\(Liken, Kommentieren, Teilen, Speichern\\)\\.',
+            { parse_mode: 'MarkdownV2' });
+    } catch(e) {}
+}
+
+async function runEngagementCheck(isReminder = false) {
+    const weekKey = getBerlinWeekKey();
+    const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
+    if (!weekSuperlinks.length) return { checked: 0, warned: 0 };
+    const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
+    let warned = 0;
+    for (const uid of posters) {
+        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
+        if (!otherLinks.length) continue;
+        const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
+        if (!likedAll) {
+            warned++;
+            if (isReminder) {
+                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+            } else {
+                const u = d.users[uid];
+                if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.warnings = (u.warnings||0) + 1; }
+                addNotification(uid, '⚠️', 'Full Engagement Pflicht verletzt! -50 XP');
+                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP und eine Verwarnung wurden vergeben\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+            }
+        }
+    }
+    if (!isReminder) speichern();
+    return { checked: posters.length, warned };
+}
+
+const _seenEngagementJobs = {};
+setInterval(async () => {
+    const now = new Date();
+    if (now.getDay() !== 0) return;
+    const wk = getBerlinWeekKey();
+    const h = now.getHours(), m = now.getMinutes();
+    if (h === 21 && m === 0 && !_seenEngagementJobs[wk+'_r']) {
+        _seenEngagementJobs[wk+'_r'] = true;
+        await runEngagementCheck(true).catch(()=>{});
+    }
+    if (h === 23 && m === 59 && !_seenEngagementJobs[wk+'_p']) {
+        _seenEngagementJobs[wk+'_p'] = true;
+        await runEngagementCheck(false).catch(()=>{});
+    }
+}, 60000);
+
+async function ensureFullEngagementThread() {
+    if (d.fullEngagementThreadId) return d.fullEngagementThreadId;
+    if (!GROUP_B_ID) return null;
+    try {
+        const result = await bot.telegram.callApi('createForumTopic', { chat_id: GROUP_B_ID, name: 'Full Engagement' });
+        d.fullEngagementThreadId = result.message_thread_id;
+        speichern();
+        console.log('✅ Full Engagement Thread erstellt:', d.fullEngagementThreadId);
+        return d.fullEngagementThreadId;
+    } catch(e) { console.log('Full Engagement Thread Fehler:', e.message); return null; }
+}
 
 async function checkInstagramForAllUsers() {
     for (const [uid, u] of Object.entries(d.users)) {
@@ -968,6 +1104,19 @@ bot.on('message', async (ctx) => {
         if (ctx.chat.id === GROUP_B_ID && !ctx.from.is_bot) {
             const threadId = String(ctx.message.message_thread_id || 'general');
             const senderUid = String(ctx.from.id);
+
+            // Full Engagement thread → handle as Superlink
+            if (d.fullEngagementThreadId && threadId === String(d.fullEngagementThreadId)) {
+                const text = ctx.message.text || ctx.message.caption || '';
+                if (text && text.includes('instagram.com')) {
+                    await handleSuperlink(ctx, senderUid, d.users[senderUid], text).catch(()=>{});
+                } else if (text && !ctx.from.is_bot) {
+                    try { await ctx.deleteMessage(); } catch(e) {}
+                    try { await bot.telegram.sendMessage(Number(senderUid), '⭐ Hier nur Instagram-Links posten\\! Nutze z\\.B\\.: https://www\\.instagram\\.com/p/XYZ', { parse_mode: 'MarkdownV2', message_thread_id: Number(d.fullEngagementThreadId) }); } catch(e) {}
+                }
+                return;
+            }
+
             const senderUser = d.users[senderUid];
             let msgType = 'text', msgContent = '', mediaId = null;
             if (ctx.message.text) {
@@ -1296,6 +1445,84 @@ bot.action('set_insta', async (ctx) => {
         await ctx.answerCbQuery('✅ Sende mir jetzt deinen Insta Namen');
         await ctx.reply('📸 Schick mir jetzt deinen Instagram Namen.\n\n(z.B. max123)');
     } catch (err) { console.log('FEHLER set_insta:', err); }
+});
+
+// ── SUPERLINK ACTIONS ──
+const slLikeInProgress = new Set();
+bot.action(/^sllike_(.+)$/, async (ctx) => {
+    const slId = ctx.match[1];
+    const uid = String(ctx.from.id);
+    if (slLikeInProgress.has(uid + '_' + slId)) return ctx.answerCbQuery('⏳');
+    slLikeInProgress.add(uid + '_' + slId);
+    try {
+        const sl = d.superlinks?.[slId];
+        if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
+        if (sl.uid === uid) return ctx.answerCbQuery('❌ Du kannst deinen eigenen Link nicht liken');
+        if (!Array.isArray(sl.likes)) sl.likes = [];
+        if (!sl.likerNames) sl.likerNames = {};
+        const idx = sl.likes.indexOf(uid);
+        if (idx >= 0) {
+            sl.likes.splice(idx, 1);
+            delete sl.likerNames[uid];
+            await ctx.answerCbQuery('💔 Like entfernt');
+        } else {
+            sl.likes.push(uid);
+            const u = d.users[uid];
+            sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
+            addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
+            await ctx.answerCbQuery('❤️ Geliked!');
+        }
+        speichern();
+        await updateSuperLinkCard(slId);
+    } finally { slLikeInProgress.delete(uid + '_' + slId); }
+});
+
+bot.action(/^slliker_(.+)$/, async (ctx) => {
+    const slId = ctx.match[1];
+    const sl = d.superlinks?.[slId];
+    if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
+    const likes = Array.isArray(sl.likes) ? sl.likes : [];
+    if (!likes.length) return ctx.answerCbQuery('Noch niemand geliked');
+    const names = Object.values(sl.likerNames||{}).slice(0,10).join(', ') || likes.map(id=>{const u=d.users[id];return u?.spitzname||u?.name||'User';}).join(', ');
+    await ctx.answerCbQuery('❤️ ' + likes.length + ' Likes: ' + names.slice(0,190), { show_alert: true });
+});
+
+bot.command('checkengagement', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const weekKey = getBerlinWeekKey();
+    const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
+    if (!weekSuperlinks.length) return ctx.reply('📊 Keine Superlinks diese Woche.');
+    const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
+    let report = `📊 *Full Engagement Woche ${weekKey}*\n${weekSuperlinks.length} Superlinks von ${posters.length} Usern\n\n`;
+    for (const uid of posters) {
+        const u = d.users[uid];
+        const name = u?.spitzname||u?.name||uid;
+        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
+        const likedCount = otherLinks.filter(s => Array.isArray(s.likes) && s.likes.includes(uid)).length;
+        const status = likedCount >= otherLinks.length ? '✅' : `⚠️ ${likedCount}/${otherLinks.length}`;
+        report += `${status} ${name}\n`;
+    }
+    await ctx.reply(report, { parse_mode: 'Markdown' });
+});
+
+bot.command('runengagementcheck', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Führe Engagement-Check durch...');
+    const result = await runEngagementCheck(false);
+    await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
+});
+
+bot.action(/^slreport_(.+)$/, async (ctx) => {
+    const parts = ctx.match[1].split('_');
+    const slId = parts[0];
+    const likerUid = parts[1];
+    const sl = d.superlinks?.[slId];
+    if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
+    const likerUser = d.users[likerUid];
+    const likerName = likerUser?.spitzname||likerUser?.name||'User';
+    meldenWarte.set(ctx.from.id, { step: 'nachricht', gemeldeterUid: likerUid, gemeldeterName: likerName, context: 'superlink', slId });
+    await ctx.answerCbQuery('✅ Meldung geöffnet');
+    await bot.telegram.sendMessage(ctx.from.id, `🚨 Melde ${likerName} wegen mangelndem Engagement.\n\nSchreibe jetzt die Details (oder einfach "Kein Engagement"):`, {});
 });
 
 async function topLinks(chatId) {
@@ -2716,10 +2943,89 @@ app.post('/delete-newsletter-api', (req, res) => {
     res.json({ok:true});
 });
 
+// ── SUPERLINK APIs ──
+app.get('/superlinks', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const sls = Object.values(d.superlinks||{}).sort((a,b)=>b.timestamp-a.timestamp);
+    res.json({ superlinks: sls, fullEngagementThreadId: d.fullEngagementThreadId });
+});
+
+app.post('/like-superlink-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { slId, uid } = req.body || {};
+    if (!slId || !uid) return res.json({ok:false, error:'Fehlende Felder'});
+    const sl = d.superlinks?.[slId];
+    if (!sl) return res.json({ok:false, error:'Superlink nicht gefunden'});
+    if (String(sl.uid) === String(uid)) return res.json({ok:false, error:'Eigener Post'});
+    if (!Array.isArray(sl.likes)) sl.likes = [];
+    if (!sl.likerNames) sl.likerNames = {};
+    const idx = sl.likes.indexOf(String(uid));
+    if (idx >= 0) {
+        sl.likes.splice(idx, 1);
+        delete sl.likerNames[String(uid)];
+    } else {
+        sl.likes.push(String(uid));
+        const u = d.users[String(uid)];
+        sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';
+        addNotification(String(sl.uid), '❤️', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked!');
+    }
+    speichern();
+    updateSuperLinkCard(slId).catch(()=>{});
+    res.json({ok:true, liked: idx<0, likes: sl.likes.length});
+});
+
+app.post('/post-superlink-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, url, caption } = req.body || {};
+    if (!uid || !url) return res.json({ok:false, error:'Fehlende Felder'});
+    const u = d.users[String(uid)];
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+    if (!u.instagram) return res.json({ok:false, error:'Bitte zuerst /setinsta im Bot setzen'});
+    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa gepostet werden'});
+    const week = getBerlinWeekKey();
+    const existing = Object.values(d.superlinks||{}).find(s=>s.uid===String(uid)&&s.week===week);
+    if (existing) return res.json({ok:false, error:'Du hast diese Woche bereits einen Superlink gepostet'});
+    if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});
+    let feThreadId;
+    try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
+    if (!feThreadId) return res.json({ok:false, error:'Full Engagement Thread nicht verfügbar'});
+    const slId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u.instagram, url, caption||'', 0, {});
+    try {
+        const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
+            parse_mode: 'Markdown',
+            message_thread_id: Number(feThreadId),
+            reply_markup: buildSuperLinkButtons(slId, 0)
+        });
+        d.superlinks = d.superlinks || {};
+        d.superlinks[slId] = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+        speichern();
+        try { await bot.telegram.sendMessage(Number(uid), '⭐ Dein Superlink wurde gepostet!'); } catch(e) {}
+        res.json({ok:true, slId});
+    } catch(e) { res.json({ok:false, error:'Telegram Fehler: '+e.message}); }
+});
+
+app.post('/report-nonengager-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { reporterUid, likerUid, slId } = req.body || {};
+    if (!reporterUid || !likerUid || !slId) return res.json({ok:false});
+    const sl = d.superlinks?.[slId];
+    if (!sl || String(sl.uid) !== String(reporterUid)) return res.json({ok:false, error:'Nur Poster kann reporten'});
+    const reporter = d.users[String(reporterUid)];
+    const liker = d.users[String(likerUid)];
+    const msg = `🚨 *Engagement Report*\n\nPoster: ${reporter?.spitzname||reporter?.name||'User'}\nGemeldet: ${liker?.spitzname||liker?.name||'User'}\nLink: ${sl.url}\nGrund: Hat nicht geliked/kommentiert/geteilt/gespeichert`;
+    for (const adminId of ADMIN_IDS) {
+        try { await bot.telegram.sendMessage(adminId, msg, { parse_mode: 'Markdown' }); } catch(e){}
+    }
+    res.json({ok:true});
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
-bot.launch();
+bot.launch().then(() => {
+    setTimeout(() => ensureFullEngagementThread().catch(()=>{}), 5000);
+});
 console.log('🤖 Bot läuft!');
 
 // Migrate communityFeed → threadMessages['general'] on startup

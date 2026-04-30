@@ -7,6 +7,7 @@ if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
+const APP_URL        = process.env.APP_URL || DASHBOARD_URL || '';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
@@ -814,13 +815,19 @@ bot.command('mycode', async (ctx) => {
         speichern();
     }
 
+    const appLink = APP_URL || 'https://creatorx.app';
     await ctx.reply(
-        '🔐 *Dein CreatorBoost Login Code*\n\n' +
+        '🔐 *Dein CreatorX Login Code*\n\n' +
         '`' + u.appCode + '`\n\n' +
         '👆 Tippe auf den Code zum Kopieren\n\n' +
-        '📱 Öffne die App und trage diesen Code ein.\n' +
+        '🌐 *Link zur App:*\n' + appLink + '\n\n' +
+        '⚠️ *Wichtig:* Öffne den Link in einem richtigen Browser (Chrome, Safari) — nicht direkt in Telegram!\n\n' +
+        '👉 Entweder den Link kopieren und im Browser eingeben, oder auf den Link tippen → dann oben rechts „Im Browser öffnen" wählen.\n\n' +
+        '📲 *App auf Homescreen hinzufügen:*\n' +
+        '• *iPhone (Safari):* Teilen-Symbol → „Zum Home-Bildschirm"\n' +
+        '• *Android (Chrome):* Menü (⋮) → „Zum Startbildschirm hinzufügen"\n\n' +
         '⚠️ Teile deinen Code mit niemandem!',
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🚀 App öffnen', url: appLink }]] } }
     );
 });
 

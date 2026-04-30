@@ -2259,9 +2259,7 @@ app.post('/send-message-api', async (req, res) => {
         try {
             const tgText = image ? '📷 Foto' : audio ? '🎤 Sprachnachricht' : text;
             await bot.telegram.sendMessage(Number(to),
-                '💬 *' + senderName + ':*
-
-' + tgText,
+                '💬 *' + senderName + ':*\n\n' + tgText,
                 { parse_mode: 'Markdown' }
             );
         } catch(e) {}

@@ -76,6 +76,7 @@ function laden() {
             threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {},
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
+            newsletter: [], pinnedEngages: {},
         };
         for (const [key, val] of Object.entries(defaults)) { if (!d[key]) d[key] = val; }
         const linkKeys = Object.keys(d.links).sort((a, b) => d.links[a].timestamp - d.links[b].timestamp);
@@ -83,6 +84,7 @@ function laden() {
         for (const uid in d.users) {
             if (d.users[uid].inGruppe === undefined) d.users[uid].inGruppe = true;
             if (!d.users[uid].projects) d.users[uid].projects = [];
+            if (d.users[uid].diamonds === undefined) d.users[uid].diamonds = 0;
         }
         console.log('✅ Daten geladen');
     } catch (e) { console.log('Ladefehler:', e.message); }
@@ -202,7 +204,7 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [] };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -2557,6 +2559,67 @@ app.post('/delete-project-api', (req, res) => {
     const u = d.users[String(uid)];
     if (!u || !u.projects) return res.json({ok:false});
     u.projects = u.projects.filter(p => p.id !== String(projectId));
+    speichern();
+    res.json({ok:true});
+});
+
+function addDiamond(uid, amount) {
+    const u = d.users[String(uid)];
+    if (!u) return;
+    if (u.diamonds === undefined) u.diamonds = 0;
+    u.diamonds += amount;
+}
+
+app.post('/engage-pinned-post-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { engagerUid, ownerUid } = req.body || {};
+    if (!engagerUid || !ownerUid || engagerUid === ownerUid) return res.json({ok:false});
+    if (!d.pinnedEngages) d.pinnedEngages = {};
+    if (!d.pinnedEngages[ownerUid]) d.pinnedEngages[ownerUid] = [];
+    if (d.pinnedEngages[ownerUid].includes(String(engagerUid))) return res.json({ok:false, alreadyDone:true});
+    d.pinnedEngages[ownerUid].push(String(engagerUid));
+    addDiamond(ownerUid, 1);
+    addNotification(ownerUid, '💎', 'Jemand hat deinen Post engagiert! +1 Diamant');
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/add-newsletter-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, title, content } = req.body || {};
+    if (!uid || !content?.trim()) return res.json({ok:false, error:'Inhalt fehlt'});
+    if (!istAdminId(Number(uid))) return res.json({ok:false, error:'Kein Admin'});
+    if (!d.newsletter) d.newsletter = [];
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    d.newsletter.push({ id, title: (title||'').trim(), content: content.trim(), timestamp: Date.now() });
+    // Alle User benachrichtigen
+    for (const tUid of Object.keys(d.users||{})) {
+        if (!istAdminId(Number(tUid))) addNotification(tUid, '📩', (title||'Neuer Newsletter').slice(0,60) || 'Neuer Newsletter-Eintrag');
+    }
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/edit-newsletter-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, id, title, content } = req.body || {};
+    if (!uid || !id || !content?.trim()) return res.json({ok:false});
+    if (!istAdminId(Number(uid))) return res.json({ok:false, error:'Kein Admin'});
+    const entry = (d.newsletter||[]).find(e=>e.id===id);
+    if (!entry) return res.json({ok:false, error:'Nicht gefunden'});
+    entry.title = (title||'').trim();
+    entry.content = content.trim();
+    entry.editedAt = Date.now();
+    speichern();
+    res.json({ok:true});
+});
+
+app.post('/delete-newsletter-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, id } = req.body || {};
+    if (!uid || !id) return res.json({ok:false});
+    if (!istAdminId(Number(uid))) return res.json({ok:false, error:'Kein Admin'});
+    d.newsletter = (d.newsletter||[]).filter(e=>e.id!==id);
     speichern();
     res.json({ok:true});
 });

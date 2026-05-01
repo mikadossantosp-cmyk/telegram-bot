@@ -48,6 +48,7 @@ let d = {
     m1Streak: {},
     backupDatum: null,
     _lastEvents: {},
+    _seenEngagementJobs: {},
     xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
 };
 
@@ -257,16 +258,17 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
-const _seenEngagementJobs = {};
 setInterval(async () => {
     const now = new Date();
     const day = now.getDay(); // 0=So, 1=Mo, ..., 6=Sa
     const wk = getBerlinWeekKey();
     const h = now.getHours(), m = now.getMinutes();
+    if (!d._seenEngagementJobs) d._seenEngagementJobs = {};
 
     // Montag 08:00 → Neue Engagement-Woche ankündigen
-    if (day === 1 && h === 8 && m === 0 && !_seenEngagementJobs[wk+'_open']) {
-        _seenEngagementJobs[wk+'_open'] = true;
+    if (day === 1 && h === 8 && m === 0 && !d._seenEngagementJobs[wk+'_open']) {
+        d._seenEngagementJobs[wk+'_open'] = true;
+        speichern();
         try {
             const threadId = await ensureFullEngagementThread();
             if (threadId && GROUP_B_ID) {
@@ -282,13 +284,15 @@ setInterval(async () => {
     }
 
     // Sonntag 21:00 → Erinnerung
-    if (day === 0 && h === 21 && m === 0 && !_seenEngagementJobs[wk+'_r']) {
-        _seenEngagementJobs[wk+'_r'] = true;
+    if (day === 0 && h === 21 && m === 0 && !d._seenEngagementJobs[wk+'_r']) {
+        d._seenEngagementJobs[wk+'_r'] = true;
+        speichern();
         await runEngagementCheck(true).catch(()=>{});
     }
     // Sonntag 23:59 → Finale Auswertung
-    if (day === 0 && h === 23 && m === 59 && !_seenEngagementJobs[wk+'_p']) {
-        _seenEngagementJobs[wk+'_p'] = true;
+    if (day === 0 && h === 23 && m === 59 && !d._seenEngagementJobs[wk+'_p']) {
+        d._seenEngagementJobs[wk+'_p'] = true;
+        speichern();
         await runEngagementCheck(false).catch(()=>{});
     }
 }, 60000);
@@ -332,6 +336,7 @@ async function backup() {
 }
 
 function badge(xp) {
+    if (xp >= 5000) return '👑 Elite';
     if (xp >= 1000) return '🏅 Erfahrener';
     if (xp >= 500)  return '⬆️ Aufsteiger';
     if (xp >= 50)   return '📘 Anfänger';
@@ -342,6 +347,7 @@ function xpBisNaechstesBadge(xp) {
     if (xp < 50)   return { ziel: '📘 Anfänger',   fehlend: 50 - xp };
     if (xp < 500)  return { ziel: '⬆️ Aufsteiger', fehlend: 500 - xp };
     if (xp < 1000) return { ziel: '🏅 Erfahrener', fehlend: 1000 - xp };
+    if (xp < 5000) return { ziel: '👑 Elite',       fehlend: 5000 - xp };
     return null;
 }
 function level(xp) { return Math.floor(xp / 100) + 1; }
@@ -1101,6 +1107,10 @@ bot.on('left_chat_member', async (ctx) => {
             delete d.tracker[uid];
             delete d.counter[uid];
             delete d.badgeTracker[uid];
+            delete d.wochenMissionen[uid];
+            delete d.missionQueue[uid];
+            delete d.m1Streak[uid];
+            if (d.notifications) delete d.notifications[uid];
             speichern();
             console.log('User gelöscht:', m.first_name, uid);
         }
@@ -1875,6 +1885,10 @@ async function gruppenMitgliederPruefen() {
                 delete d.tracker[uid];
                 delete d.counter[uid];
                 delete d.badgeTracker[uid];
+                delete d.wochenMissionen[uid];
+                delete d.missionQueue[uid];
+                delete d.m1Streak[uid];
+                if (d.notifications) delete d.notifications[uid];
                 geloescht++;
             } else {
                 d.users[uid].inGruppe = true;
@@ -3119,7 +3133,7 @@ app.post('/buy-extralink-api', (req, res) => {
     if (!d.bonusLinks) d.bonusLinks = {};
     d.bonusLinks[String(uid)] = (d.bonusLinks[String(uid)] || 0) + 1;
     speichern();
-    addNotification(String(uid), `🔗 Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten.${isAdminEl ? ' (Admin – kostenlos)' : ' 💎 -5 Diamanten.'}`);
+    addNotification(String(uid), '🔗', `Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten.${isAdminEl ? ' (Admin – kostenlos)' : ' 💎 -5 Diamanten.'}`);
     res.json({ ok: true, diamonds: u.diamonds, bonusLinks: d.bonusLinks[String(uid)] });
 });
 

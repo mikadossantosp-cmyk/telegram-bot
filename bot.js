@@ -2501,6 +2501,7 @@ app.get('/like-from-app', async (req, res) => {
         if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
         // Mission aktualisieren
         const mission = getMission(uid);
+        updateMissionProgress(uid);
         const istHeutigerLinkApp = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
         if (istHeutigerLinkApp && istInstagramLink(lnk.text)) mission.likesGegeben++;
         await checkMissionen(uid, u?.name||'User');

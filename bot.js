@@ -2918,33 +2918,36 @@ app.post('/send-thread-message', async (req, res) => {
     if (!u) return res.json({ ok: false, error: 'User nicht gefunden' });
     const tgName = u.username ? '@' + u.username : (u.spitzname || u.name || 'User');
     const label = (u.role || '🆕') + ' ' + tgName;
-    try {
+    const tid = String(thread_id || 'general');
+    if (!d.threadMessages[tid]) d.threadMessages[tid] = [];
+    const entry = {
+        uid: String(uid),
+        tgName,
+        name: u.spitzname || u.name || tgName,
+        role: u.role || null,
+        type: 'text',
+        text: text.trim(),
+        mediaId: null,
+        timestamp: Date.now(),
+        msg_id: null,
+        replyTo: replyTo ? { timestamp: replyTo.timestamp, name: replyTo.name, text: (replyTo.text||'').slice(0,100), msgId: replyTo.msgId } : null
+    };
+    d.threadMessages[tid].unshift(entry);
+    if (d.threadMessages[tid].length > 200) d.threadMessages[tid] = d.threadMessages[tid].slice(0, 200);
+    if (!d.threads) d.threads = [];
+    let thr = d.threads.find(t => String(t.id) === tid);
+    if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
+    speichernDebounced();
+    res.json({ ok: true });
+    // Telegram-Nachricht asynchron (kein await → blockiert Response nicht)
+    if (GROUP_B_ID) {
         const opts = { parse_mode: 'Markdown' };
-        if (thread_id && thread_id !== 'general') opts.message_thread_id = Number(thread_id);
+        if (tid !== 'general') opts.message_thread_id = Number(tid);
         if (replyTo?.msgId) opts.reply_to_message_id = Number(replyTo.msgId);
-        const sent = await bot.telegram.sendMessage(GROUP_B_ID, `${label}:\n${text.trim()}`, opts);
-        const tid = String(thread_id || 'general');
-        if (!d.threadMessages[tid]) d.threadMessages[tid] = [];
-        const entry = {
-            uid: String(uid),
-            tgName,
-            name: u.spitzname || u.name || tgName,
-            role: u.role || null,
-            type: 'text',
-            text: text.trim(),
-            mediaId: null,
-            timestamp: Date.now(),
-            msg_id: sent.message_id,
-            replyTo: replyTo ? { timestamp: replyTo.timestamp, name: replyTo.name, text: (replyTo.text||'').slice(0,100), msgId: replyTo.msgId } : null
-        };
-        d.threadMessages[tid].unshift(entry);
-        if (d.threadMessages[tid].length > 200) d.threadMessages[tid] = d.threadMessages[tid].slice(0, 200);
-        if (!d.threads) d.threads = [];
-        let thr = d.threads.find(t => String(t.id) === tid);
-        if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
-        speichern();
-        res.json({ ok: true });
-    } catch (e) { res.json({ ok: false, error: e.message }); }
+        bot.telegram.sendMessage(GROUP_B_ID, `${label}:\n${text.trim()}`, opts)
+            .then(sent => { entry.msg_id = sent.message_id; speichernDebounced(); })
+            .catch(e => console.log('Thread-Telegram-Send Fehler:', e.message));
+    }
 });
 
 app.post('/react-thread-msg-api', async (req, res) => {

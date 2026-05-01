@@ -955,6 +955,7 @@ bot.command('checkmembers', async (ctx) => {
 // MELDEN SYSTEM
 // ================================
 const meldenWarte = new Map();
+const restoreWaiting = new Set();
 
 bot.command('melden', async (ctx) => {
     const uid = ctx.from.id;
@@ -1066,6 +1067,24 @@ bot.on('message', async (ctx, next) => {
 bot.on('message', async (ctx) => {
     try {
         const uid_msg = ctx.from.id;
+
+        // Restore Data via document upload
+        if (restoreWaiting.has(uid_msg) && ctx.message?.document) {
+            const doc = ctx.message.document;
+            restoreWaiting.delete(uid_msg);
+            try {
+                const fileLink = await bot.telegram.getFileLink(doc.file_id);
+                const resp = await fetch(fileLink.href);
+                const text = await resp.text();
+                const parsed = JSON.parse(text);
+                Object.assign(d, parsed);
+                speichern();
+                await ctx.reply(`✅ Daten wiederhergestellt! ${Object.keys(parsed.users||{}).length} User geladen.`);
+            } catch (e) {
+                await ctx.reply('❌ Fehler beim Laden: ' + e.message);
+            }
+            return;
+        }
 
         // Melden System
         if (meldenWarte.has(uid_msg) && istPrivat(ctx.chat.type)) {
@@ -1514,25 +1533,8 @@ bot.command('runengagementcheck', async (ctx) => {
 
 bot.command('restoredata', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return ctx.reply('❌ Nur Admins!');
-    await ctx.reply('📂 Schicke mir jetzt die daten.json Datei als Dokument in diese Unterhaltung.');
-    const waitForDoc = async (docCtx) => {
-        const doc = docCtx.message?.document;
-        if (!doc || !doc.file_name?.endsWith('.json')) return;
-        try {
-            const fileLink = await bot.telegram.getFileLink(doc.file_id);
-            const resp = await fetch(fileLink.href);
-            const text = await resp.text();
-            const parsed = JSON.parse(text);
-            // Merge: keep runtime structure, overlay saved data
-            Object.assign(d, parsed);
-            saveData();
-            await docCtx.reply(`✅ Daten wiederhergestellt! ${Object.keys(parsed.users||{}).length} User geladen.`);
-            bot.off('message', waitForDoc);
-        } catch (e) {
-            await docCtx.reply('❌ Fehler: ' + e.message);
-        }
-    };
-    bot.on('message', waitForDoc);
+    restoreWaiting.add(ctx.from.id);
+    await ctx.reply('📂 Schicke mir jetzt die daten.json Datei als Dokument in diesen Chat.');
 });
 
 bot.action(/^slreport_(.+)$/, async (ctx) => {

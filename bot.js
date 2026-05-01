@@ -258,7 +258,7 @@ async function runEngagementCheck(isReminder = false) {
                 try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
             } else {
                 const u = d.users[uid];
-                if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.warnings = (u.warnings||0) + 1; }
+                if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
                 addNotification(uid, '⚠️', 'Full Engagement Pflicht verletzt! -50 XP');
                 try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP und eine Verwarnung wurden vergeben\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
             }
@@ -828,7 +828,7 @@ bot.command('unban', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht.');
     const userId = ctx.message.reply_to_message.from.id;
-    try { await ctx.telegram.unbanChatMember(ctx.chat.id, userId); if (d.users[userId]) d.users[userId].warnings = 0; await ctx.reply('✅ Entbannt!'); }
+    try { await ctx.telegram.unbanChatMember(ctx.chat.id, userId); if (d.users[userId]) { d.users[userId].warnings = 0; speichern(); } await ctx.reply('✅ Entbannt!'); }
     catch (e) { await ctx.reply('❌ Fehler.'); }
 });
 
@@ -1792,7 +1792,7 @@ bot.command('fethread', async (ctx) => {
         await bot.telegram.sendMessage(GROUP_B_ID,
             '⭐ *Full Engagement Thread geöffnet!*\n\n' +
             'Hier könnt ihr eure Superlinks posten.\n\n' +
-            '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
+            '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
             '📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
             { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
         );
@@ -1808,11 +1808,14 @@ bot.command('superlink', async (ctx) => {
 
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).sort((a,b) => b.timestamp - a.timestamp).filter(s => s.week === weekKey);
-    const mySlThisWeek = weekSuperlinks.find(s => s.uid === uid);
-    const canPost = !mySlThisWeek && isSuperLinkPostingAllowed();
+    const isElitePlusSL = u.role === '🌟 Elite+';
+    const maxSLCmd = isElitePlusSL ? 2 : 1;
+    const mySlCountThisWeek = weekSuperlinks.filter(s => s.uid === uid).length;
+    const mySlThisWeek = mySlCountThisWeek > 0;
+    const canPost = mySlCountThisWeek < maxSLCmd && isSuperLinkPostingAllowed();
 
     let text = '⭐ *Full Engagement – Superlinks*\n\n';
-    text += '📌 *Regeln:*\n• 1 Superlink pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n';
+    text += '📌 *Regeln:*\n• ' + maxSLCmd + ' Superlink' + (maxSLCmd > 1 ? 's' : '') + ' pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n';
 
     if (weekSuperlinks.length === 0) {
         text += '📭 Noch keine Superlinks diese Woche.\n\n';
@@ -1829,8 +1832,11 @@ bot.command('superlink', async (ctx) => {
         text += '\n\n';
     }
 
-    if (mySlThisWeek) {
-        text += `✅ *Du hast diese Woche bereits gepostet.*`;
+    if (mySlThisWeek && !canPost) {
+        text += `✅ *Du hast diese Woche bereits ${mySlCountThisWeek}/${maxSLCmd} Superlink(s) gepostet.*`;
+    } else if (mySlThisWeek && canPost) {
+        text += `⭐ *${mySlCountThisWeek}/${maxSLCmd} Superlinks gepostet — noch 1 übrig!*\n📲 Schicke mir deinen Instagram-Link als nächste Nachricht.`;
+        _slWaiting[uid] = Date.now();
     } else if (!isSuperLinkPostingAllowed()) {
         text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
     } else if (!u.instagram) {
@@ -3102,7 +3108,7 @@ app.post('/fethread-announce-api', async (req, res) => {
         await bot.telegram.sendMessage(GROUP_B_ID,
             '⭐ *Full Engagement Thread!*\n\n' +
             'Hier postet ihr eure Superlinks für diese Woche.\n\n' +
-            '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
+            '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
             '📲 Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
             { parse_mode: 'Markdown', message_thread_id: Number(d.fullEngagementThreadId) }
         );
@@ -3128,7 +3134,7 @@ async function fethreadCreate(res) {
     if (!threadId) return res.json({ ok: false, error: createError, hint: 'Ist Forum-Modus in Gruppe B aktiv? Hat der Bot "Themen verwalten" als Admin-Recht?' });
     try {
         await bot.telegram.sendMessage(GROUP_B_ID,
-            '⭐ *Full Engagement Thread geöffnet!*\n\nHier könnt ihr eure Superlinks posten.\n\n📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
+            '⭐ *Full Engagement Thread geöffnet!*\n\nHier könnt ihr eure Superlinks posten.\n\n📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
             { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
         );
     } catch(e) {}
@@ -3614,7 +3620,7 @@ bot.launch().then(() => {
                 await bot.telegram.sendMessage(GROUP_B_ID,
                     '⭐ *Full Engagement Thread geöffnet!*\n\n' +
                     'Hier könnt ihr eure Superlinks posten.\n\n' +
-                    '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
+                    '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
                     '📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
                     { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
                 );

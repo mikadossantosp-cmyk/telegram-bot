@@ -2836,10 +2836,45 @@ app.get('/forum-debug', async (req, res) => {
     res.json(info);
 });
 
-app.get('/admin/create-fethread', async (req, res) => {
-    const secret = req.query.secret || req.headers['x-bridge-secret'];
-    if (secret !== BRIDGE_SECRET) return res.status(403).send('Forbidden');
-    if (!GROUP_B_ID) return res.json({ ok: false, error: 'GROUP_B_ID nicht gesetzt in Railway Variables!' });
+app.get('/fethread-setup', (req, res) => {
+    const status = d.fullEngagementThreadId ? `✅ Thread-ID: ${d.fullEngagementThreadId}` : '❌ Kein Thread gesetzt';
+    const groupStatus = GROUP_B_ID ? `✅ GROUP_B_ID: ${GROUP_B_ID}` : '❌ GROUP_B_ID nicht gesetzt!';
+    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Full Engagement Setup</title>
+<style>body{font-family:sans-serif;max-width:480px;margin:40px auto;padding:20px;background:#111;color:#fff}
+h2{color:#fff;margin-bottom:4px}p{color:#aaa;font-size:14px;margin-bottom:24px}
+.status{background:#1e1e1e;border-radius:10px;padding:14px;margin-bottom:20px;font-size:14px;line-height:2}
+button{width:100%;padding:14px;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;margin-bottom:10px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.result{background:#1e1e1e;border-radius:10px;padding:14px;margin-top:16px;font-size:13px;display:none;white-space:pre-wrap;word-break:break-all}
+.ok{color:#22c55e}.err{color:#ef4444}</style></head>
+<body>
+<h2>⭐ Full Engagement Setup</h2>
+<p>Erstellt den Full Engagement Thread in Gruppe B</p>
+<div class="status">${groupStatus}<br>${status}</div>
+<button id="btn" onclick="createThread()">🚀 Thread erstellen / zurücksetzen</button>
+<div class="result" id="result"></div>
+<script>
+async function createThread(){
+  const btn=document.getElementById('btn');
+  const res=document.getElementById('result');
+  btn.disabled=true;btn.textContent='⏳ Erstelle Thread...';
+  res.style.display='none';
+  try{
+    const r=await fetch('/fethread-setup',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const data=await r.json();
+    res.style.display='block';
+    if(data.ok){res.className='result ok';res.textContent='✅ Erfolgreich!\\nThread-ID: '+data.threadId;}
+    else{res.className='result err';res.textContent='❌ Fehler: '+data.error+'\\n\\nHinweis: '+data.hint;}
+    btn.textContent='🔄 Nochmal versuchen';
+  }catch(e){res.style.display='block';res.className='result err';res.textContent='❌ '+e.message;btn.textContent='🔄 Nochmal versuchen';}
+  btn.disabled=false;
+}
+</script></body></html>`);
+});
+
+app.post('/fethread-setup', async (req, res) => {
+    if (!GROUP_B_ID) return res.json({ ok: false, error: 'GROUP_B_ID nicht gesetzt in Railway Variables!', hint: 'Gehe zu Railway → telegram-bot → Variables und setze GROUP_B_ID.' });
     const oldId = d.fullEngagementThreadId;
     d.fullEngagementThreadId = null;
     let threadId = null, createError = null;
@@ -2849,14 +2884,14 @@ app.get('/admin/create-fethread', async (req, res) => {
         d.fullEngagementThreadId = threadId;
         speichern();
     } catch(e) { createError = e.message; d.fullEngagementThreadId = oldId; }
-    if (!threadId) return res.json({ ok: false, error: createError, hint: 'Forum-Modus in Gruppe B aktiviert? Bot hat "Manage Topics" Recht?' });
+    if (!threadId) return res.json({ ok: false, error: createError, hint: 'Ist Forum-Modus in Gruppe B aktiv? Hat der Bot "Themen verwalten" als Admin-Recht?' });
     try {
         await bot.telegram.sendMessage(GROUP_B_ID,
             '⭐ *Full Engagement Thread geöffnet!*\n\nHier könnt ihr eure Superlinks posten.\n\n📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
             { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
         );
     } catch(e) {}
-    res.json({ ok: true, threadId, message: 'Full Engagement Thread erfolgreich erstellt!' });
+    res.json({ ok: true, threadId });
 });
 
 app.get('/thread-messages/:threadId', (req, res) => {

@@ -3295,9 +3295,6 @@ bot.launch().then(() => {
             // Prüfe ob gespeicherter Thread noch existiert
             if (d.fullEngagementThreadId) {
                 try {
-                    await bot.telegram.callApi('getForumTopicIconStickers', {});
-                    // Thread-ID validieren durch Senden einer test-Message versuchen wir nicht,
-                    // aber prüfen ob Forum-Modus aktiv ist
                     const topics = await bot.telegram.callApi('getForumTopics', { chat_id: GROUP_B_ID, limit: 100 });
                     const exists = topics.topics?.some(t => t.message_thread_id === Number(d.fullEngagementThreadId));
                     if (!exists) {

@@ -1671,12 +1671,57 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
 
 bot.action(/^slliker_(.+)$/, async (ctx) => {
     const slId = ctx.match[1];
+    const uid = String(ctx.from.id);
     const sl = d.superlinks?.[slId];
     if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
+    await ctx.answerCbQuery();
     const likes = Array.isArray(sl.likes) ? sl.likes : [];
-    if (!likes.length) return ctx.answerCbQuery('Noch niemand geliked');
-    const names = Object.values(sl.likerNames||{}).slice(0,10).join(', ') || likes.map(id=>{const u=d.users[id];return u?.spitzname||u?.name||'User';}).join(', ');
-    await ctx.answerCbQuery('❤️ ' + likes.length + ' Likes: ' + names.slice(0,190), { show_alert: true });
+    const isPoster = sl.uid === uid;
+    const poster = d.users[sl.uid];
+    const posterName = poster?.spitzname||poster?.name||'User';
+    if (!likes.length) {
+        return bot.telegram.sendMessage(ctx.chat.id,
+            '👁 *Superlink von ' + posterName + '*\n\nNoch keine Likes.',
+            { parse_mode:'Markdown', message_thread_id: ctx.callbackQuery?.message?.message_thread_id||undefined }
+        );
+    }
+    let text = '👁 *Likes für Superlink von ' + posterName + ':*\n' + sl.url.slice(0,50) + '\n\n';
+    const buttons = [];
+    likes.forEach((likerUid, i) => {
+        const liker = d.users[String(likerUid)];
+        const name = liker?.spitzname||liker?.name||'User';
+        text += (i + 1) + '. ' + name + '\n';
+        if (isPoster) buttons.push([Markup.button.callback('🚩 ' + name + ' melden', 'slrepuser_' + slId + '_' + likerUid)]);
+    });
+    if (!isPoster) text += '\n_Nur der Poster kann Engager melden._';
+    await bot.telegram.sendMessage(ctx.chat.id, text, {
+        parse_mode: 'Markdown',
+        message_thread_id: ctx.callbackQuery?.message?.message_thread_id||undefined,
+        reply_markup: buttons.length ? Markup.inlineKeyboard(buttons).reply_markup : undefined,
+    });
+});
+
+bot.action(/^slrepuser_(\w+)_(\d+)$/, async (ctx) => {
+    try {
+        const slId = ctx.match[1];
+        const likerUid = ctx.match[2];
+        const reporterUid = String(ctx.from.id);
+        const sl = d.superlinks?.[slId];
+        if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
+        if (sl.uid !== reporterUid) return ctx.answerCbQuery('❌ Nur der Poster kann melden');
+        const reporter = d.users[reporterUid];
+        const liker = d.users[likerUid];
+        const adminMsg = '🚨 *Engagement Report*\n\n' +
+            '👤 *Poster:* ' + (reporter?.spitzname||reporter?.name||'User') + '\n' +
+            '🚩 *Gemeldet:* ' + (liker?.spitzname||liker?.name||likerUid) + '\n' +
+            '🔗 ' + sl.url + '\n' +
+            'Grund: Hat nicht vollständig geliked/kommentiert/geteilt/gespeichert\n' +
+            '📅 Woche: ' + sl.week;
+        for (const adminId of ADMIN_IDS) {
+            try { await bot.telegram.sendMessage(Number(adminId), adminMsg, { parse_mode: 'Markdown' }); } catch(e){}
+        }
+        await ctx.answerCbQuery('✅ ' + (liker?.name||'User') + ' wurde gemeldet!', { show_alert: true });
+    } catch(e) { console.log('slrepuser Fehler:', e.message); await ctx.answerCbQuery('❌ Fehler'); }
 });
 
 bot.action(/^slrep_(.+)$/, async (ctx) => {

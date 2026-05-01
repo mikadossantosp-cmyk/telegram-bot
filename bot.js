@@ -1849,6 +1849,36 @@ async function cleanupDeletedLinks() {
 setInterval(cleanupDeletedLinks, 3 * 60 * 1000); // alle 3 Minuten
 
 
+app.get('/restore-upload', (req, res) => {
+    const key = req.query.key;
+    if (key !== BRIDGE_SECRET) return res.status(403).send('Falscher Key');
+    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Daten hochladen</title>
+    <style>body{font-family:sans-serif;max-width:500px;margin:40px auto;padding:20px}
+    input,button{width:100%;padding:12px;margin:8px 0;font-size:16px;box-sizing:border-box}
+    button{background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer}</style></head>
+    <body><h2>📂 Daten wiederherstellen</h2>
+    <form method="POST" action="/restore-upload?key=${key}" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".json" required>
+    <button type="submit">Hochladen ✅</button></form></body></html>`);
+});
+
+app.post('/restore-upload', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+    const key = req.query.key;
+    if (key !== BRIDGE_SECRET) return res.status(403).send('Falscher Key');
+    try {
+        // Parse multipart form data manually
+        const body = req.body.toString();
+        const jsonMatch = body.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return res.status(400).send('Keine JSON Daten gefunden');
+        const parsed = JSON.parse(jsonMatch[0]);
+        Object.assign(d, parsed);
+        speichern();
+        res.send(`<h2>✅ Fertig! ${Object.keys(parsed.users||{}).length} User wiederhergestellt.</h2>`);
+    } catch (e) {
+        res.status(500).send('Fehler: ' + e.message);
+    }
+});
+
 app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;
     if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });

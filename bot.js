@@ -1854,32 +1854,41 @@ app.get('/restore-upload', (req, res) => {
     if (key !== BRIDGE_SECRET) return res.status(403).send('Falscher Key');
     res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Daten hochladen</title>
     <style>body{font-family:sans-serif;max-width:500px;margin:40px auto;padding:20px}
-    input,button{width:100%;padding:12px;margin:8px 0;font-size:16px;box-sizing:border-box}
-    button{background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer}</style></head>
+    input,textarea,button{width:100%;padding:12px;margin:8px 0;font-size:14px;box-sizing:border-box}
+    button{background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:16px}</style></head>
     <body><h2>📂 Daten wiederherstellen</h2>
+    <p>Option 1: Datei hochladen</p>
     <form method="POST" action="/restore-upload?key=${key}" enctype="multipart/form-data">
     <input type="file" name="file" accept=".json" required>
-    <button type="submit">Hochladen ✅</button></form></body></html>`);
+    <button type="submit">Hochladen ✅</button></form>
+    <hr><p>Option 2: JSON direkt einfügen</p>
+    <form method="POST" action="/restore-json?key=${key}">
+    <textarea name="json" rows="6" placeholder='{"users":{...}}'></textarea>
+    <button type="submit">Einfügen ✅</button></form>
+    </body></html>`);
+});
+
+app.post('/restore-json', express.urlencoded({ extended: true, limit: '50mb' }), (req, res) => {
+    const key = req.query.key;
+    if (key !== BRIDGE_SECRET) return res.status(403).send('Falscher Key');
+    try {
+        const parsed = JSON.parse(req.body.json);
+        fs.writeFileSync(DATA_FILE, JSON.stringify(parsed));
+        ladeDaten();
+        res.send(`<h2>✅ ${Object.keys(d.users||{}).length} User, ${Object.keys(d.links||{}).length} Links geladen!</h2>`);
+    } catch(e) { res.status(500).send('Fehler: ' + e.message); }
 });
 
 app.post('/restore-upload', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
     const key = req.query.key;
     if (key !== BRIDGE_SECRET) return res.status(403).send('Falscher Key');
     try {
-        // Parse multipart form data manually
         const body = req.body.toString();
         const jsonMatch = body.match(/\{[\s\S]*\}/);
         if (!jsonMatch) return res.status(400).send('Keine JSON Daten gefunden');
-        const parsed = JSON.parse(jsonMatch[0]);
-        Object.assign(d, parsed);
-        // Convert likes back to Sets (same as ladeDaten)
-        for (const k of Object.keys(d.links||{})) {
-            const link = d.links[k];
-            link.likes = new Set(Array.isArray(link.likes) ? link.likes : Object.keys(link.likes||{}));
-            if (!link.likerNames) link.likerNames = {};
-        }
-        speichern();
-        res.send(`<h2>✅ Fertig! ${Object.keys(parsed.users||{}).length} User, ${Object.keys(parsed.links||{}).length} Links wiederhergestellt.</h2>`);
+        fs.writeFileSync(DATA_FILE, jsonMatch[0]);
+        ladeDaten();
+        res.send(`<h2>✅ ${Object.keys(d.users||{}).length} User, ${Object.keys(d.links||{}).length} Links geladen!</h2>`);
     } catch (e) {
         res.status(500).send('Fehler: ' + e.message);
     }

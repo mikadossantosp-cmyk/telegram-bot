@@ -2876,7 +2876,16 @@ async function createThread(){
 </script></body></html>`);
 });
 
+app.post('/fethread-setup-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    return fethreadCreate(res);
+});
+
 app.post('/fethread-setup', async (req, res) => {
+    return fethreadCreate(res);
+});
+
+async function fethreadCreate(res) {
     if (!GROUP_B_ID) return res.json({ ok: false, error: 'GROUP_B_ID nicht gesetzt in Railway Variables!', hint: 'Gehe zu Railway → telegram-bot → Variables und setze GROUP_B_ID.' });
     const oldId = d.fullEngagementThreadId;
     d.fullEngagementThreadId = null;

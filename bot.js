@@ -2616,12 +2616,15 @@ app.post('/post-link-from-app', async (req, res) => {
     if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check - Admins haben kein Limit
+    let usedBonusLink = false;
     if (!istAdminId(uid)) {
         const todayLinks = Object.values(d.links).filter(l =>
             l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
         ).length;
-        const maxLinks = 1 + (d.bonusLinks?.[uid] || 0);
+        const bonusAvail = d.bonusLinks?.[uid] || 0;
+        const maxLinks = 1 + bonusAvail;
         if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
+        if (todayLinks >= 1) usedBonusLink = true;
     }
     console.log('[APP-LINK] Checks OK - sende Link...');
 
@@ -2667,6 +2670,13 @@ app.post('/post-link-from-app', async (req, res) => {
         };
         d.links[mapKey] = linkData;
         console.log('[APP-LINK] Link gespeichert als:', mapKey);
+
+        // Bonus-Link verbrauchen falls verwendet
+        if (usedBonusLink && d.bonusLinks?.[uid] > 0) {
+            d.bonusLinks[uid]--;
+            if (d.bonusLinks[uid] <= 0) delete d.bonusLinks[uid];
+            console.log('[APP-LINK] Bonus-Link verbraucht, verbleibend:', d.bonusLinks[uid] || 0);
+        }
 
         // XP vergeben
         xpAddMitDaily(uid, 1, u.name||name);
@@ -3097,6 +3107,21 @@ app.post('/buy-extralink-api', (req, res) => {
     speichern();
     addNotification(String(uid), `🔗 Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten.${isAdminEl ? ' (Admin – kostenlos)' : ' 💎 -5 Diamanten.'}`);
     res.json({ ok: true, diamonds: u.diamonds, bonusLinks: d.bonusLinks[String(uid)] });
+});
+
+app.get('/link-status-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String(req.query.uid || '');
+    if (!uid) return res.json({ok:false});
+    const heute = new Date().toDateString();
+    const todayCount = Object.values(d.links).filter(l =>
+        l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
+    ).length;
+    const bonusLinks = d.bonusLinks?.[uid] || 0;
+    const isAdmin = istAdminId(Number(uid));
+    const maxLinks = isAdmin ? 999 : 1 + bonusLinks;
+    const canPost = isAdmin || todayCount < maxLinks;
+    res.json({ ok: true, todayCount, bonusLinks, maxLinks, canPost, isAdmin });
 });
 
 app.get('/tg-file/:fileId', async (req, res) => {

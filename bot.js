@@ -1532,7 +1532,6 @@ bot.command('runengagementcheck', async (ctx) => {
 });
 
 bot.command('restoredata', async (ctx) => {
-    if (!istAdminId(ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     restoreWaiting.add(ctx.from.id);
     await ctx.reply('📂 Schicke mir jetzt die daten.json Datei als Dokument in diesen Chat.');
 });

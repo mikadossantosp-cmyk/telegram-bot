@@ -576,7 +576,7 @@ bot.start(async (ctx) => {
 bot.command('help', async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    const text = '📋 *Bot Hilfe*\n━━━━━━━━━━━━━━\n\n🔗 *Link System*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n🎯 *Tägliche Missionen*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ Auswertung um 12:00 Uhr\n\n📅 *Wochen Missionen*\n• 7× M1 → +10 XP\n• 7× M2 → +15 XP\n• 7× M3 → +20 XP\n\n🏅 *Badges*\n• 🆕 New: 0–49 XP\n• 📘 Anfänger: 50–499 XP\n• ⬆️ Aufsteiger: 500–999 XP\n• 🏅 Erfahrener: 1000–4999 XP\n• 👑 Elite: 5000+ XP\n\n━━━━━━━━━━━━━━\n👤 *Profil*\n• /profil — dein Profil\n• /profil @username — fremdes Profil\n• /setbio — Bio setzen\n• /setspitzname — Spitzname\n• /setinsta — Instagram\n\n📊 *Rankings*\n• /ranking — Gesamt\n• /dailyranking — Heute\n• /weeklyranking — Diese Woche\n\n🎁 *Sonstiges*\n• /daily — Täglicher Bonus\n• /missionen — Missions Übersicht';
+    const text = '📋 *Bot Hilfe*\n━━━━━━━━━━━━━━\n\n🔗 *Link System*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n⭐ *Full Engagement (Superlinks)*\n• 1 Superlink pro Woche (Mo–Sa)\n• Alle Mitglieder müssen liken, kommentieren, teilen & speichern\n• Wer nicht engaged: −50 XP\n• /superlink — Status & posten\n\n🎯 *Tägliche Missionen*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ Auswertung um 12:00 Uhr\n\n📅 *Wochen Missionen*\n• 7× M1 → +10 XP\n• 7× M2 → +15 XP\n• 7× M3 → +20 XP\n\n🏅 *Badges*\n• 🆕 New: 0–49 XP\n• 📘 Anfänger: 50–499 XP\n• ⬆️ Aufsteiger: 500–999 XP\n• 🏅 Erfahrener: 1000–4999 XP\n• 👑 Elite: 5000+ XP\n\n━━━━━━━━━━━━━━\n👤 *Profil*\n• /profil — dein Profil\n• /profil @username — fremdes Profil\n• /setbio — Bio setzen\n• /setspitzname — Spitzname\n• /setinsta — Instagram\n\n📊 *Rankings*\n• /ranking — Gesamt\n• /dailyranking — Heute\n• /weeklyranking — Diese Woche\n\n🎁 *Sonstiges*\n• /daily — Täglicher Bonus\n• /missionen — Missions Übersicht\n• /superlink — Engagement Status';
     if (u.started) {
         try { await ctx.telegram.sendMessage(uid, text, { parse_mode: 'Markdown' }); if (!istPrivat(ctx.chat.type)) await ctx.reply('📩 Hilfe per DM!'); }
         catch (e) { await ctx.reply(text, { parse_mode: 'Markdown' }); }
@@ -1116,6 +1116,25 @@ bot.on('message', async (ctx) => {
             return;
         }
 
+        // Superlink-Wartestand: User antwortet mit Instagram-Link nach /superlink
+        if (istPrivat(ctx.chat.type) && d._slWaiting?.[String(ctx.from.id)]) {
+            const uid = String(ctx.from.id);
+            const waitedAt = d._slWaiting[uid];
+            if (Date.now() - waitedAt < 5 * 60 * 1000) { // 5 Minuten Fenster
+                const text = ctx.message.text || '';
+                if (text.includes('instagram.com')) {
+                    delete d._slWaiting[uid];
+                    await handleSuperlink(ctx, uid, d.users[uid], text).catch(e => ctx.reply('❌ Fehler: ' + e.message));
+                    return;
+                } else if (text && !text.startsWith('/')) {
+                    await ctx.reply('❌ Bitte sende einen gültigen Instagram-Link (instagram.com/...)');
+                    return;
+                }
+            } else {
+                delete d._slWaiting[uid];
+            }
+        }
+
         if (!ctx.message || !ctx.from) return;
         if (!istGruppe(ctx.chat.type)) return;
 
@@ -1529,6 +1548,65 @@ bot.command('runengagementcheck', async (ctx) => {
     await ctx.reply('⏳ Führe Engagement-Check durch...');
     const result = await runEngagementCheck(false);
     await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
+});
+
+bot.command('superlink', async (ctx) => {
+    const uid = String(ctx.from.id);
+    const u = user(ctx.from.id, ctx.from.first_name);
+    if (!u.started) return ctx.reply('⚠️ Starte zuerst den Bot per DM mit /start');
+    if (istAdminId(ctx.from.id)) return ctx.reply('⚙️ Admins können keine Superlinks posten.');
+
+    const weekKey = getBerlinWeekKey();
+    const weekSuperlinks = Object.values(d.superlinks||{}).sort((a,b) => b.timestamp - a.timestamp).filter(s => s.week === weekKey);
+    const mySlThisWeek = weekSuperlinks.find(s => s.uid === uid);
+    const canPost = !mySlThisWeek && isSuperLinkPostingAllowed();
+
+    let text = '⭐ *Full Engagement – Superlinks*\n\n';
+    text += '📌 *Regeln:*\n• 1 Superlink pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen Superlinks liken, kommentieren, teilen & speichern\n• Verstoß → \\-50 XP\n\n';
+
+    if (weekSuperlinks.length === 0) {
+        text += '📭 Noch keine Superlinks diese Woche\\.\n\n';
+    } else {
+        text += `📊 *Diese Woche: ${weekSuperlinks.length} Superlink${weekSuperlinks.length !== 1 ? 's' : ''}*\n`;
+        for (const sl of weekSuperlinks) {
+            const poster = d.users[sl.uid];
+            const name = poster?.spitzname || poster?.name || 'User';
+            const liked = (sl.likes||[]).includes(uid);
+            const isOwn = sl.uid === uid;
+            text += `\n• [${name}](${sl.url})${isOwn ? ' \\(dein\\)' : liked ? ' ✅' : ' ❌ noch nicht geliked'}`;
+        }
+        text += '\n\n';
+    }
+
+    if (mySlThisWeek) {
+        text += `✅ *Du hast diese Woche bereits gepostet\\.*\nDein Link: ${mySlThisWeek.url.replace(/[_.~]/g, '\\$&')}`;
+    } else if (!isSuperLinkPostingAllowed()) {
+        text += '⏰ Superlinks können nur Mo–Sa gepostet werden\\.';
+    } else {
+        if (!u.instagram) {
+            text += '⚠️ Bitte zuerst /setinsta verwenden um deinen Instagram Namen einzutragen\\.';
+        } else {
+            text += '📲 *Superlink posten:*\nSchicke mir deinen Instagram Link als Antwort auf diese Nachricht\\.';
+        }
+    }
+
+    const buttons = [];
+    if (canPost && u.instagram) buttons.push([{ text: '📲 Superlink per App posten', url: APP_URL || 'https://creatorx.app' }]);
+    if (weekSuperlinks.length > 0 && d.fullEngagementThreadId && GROUP_B_ID) {
+        try {
+            const chatInfo = await bot.telegram.getChat(GROUP_B_ID);
+            if (chatInfo.username) buttons.push([{ text: '📂 Zum Engagement Thread', url: `https://t.me/${chatInfo.username}/${d.fullEngagementThreadId}` }]);
+        } catch(e) {}
+    }
+
+    await ctx.reply(text, { parse_mode: 'MarkdownV2', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
+
+    // If user replies with a link, handle as superlink
+    if (canPost && u.instagram) {
+        // Mark that we're waiting for a superlink from this user
+        if (!d._slWaiting) d._slWaiting = {};
+        d._slWaiting[uid] = Date.now();
+    }
 });
 
 bot.command('restoredata', async (ctx) => {

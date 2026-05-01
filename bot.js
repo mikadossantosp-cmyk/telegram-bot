@@ -2481,36 +2481,30 @@ app.get('/like-from-app', async (req, res) => {
 
     speichernDebounced();
 
-    // Telegram Counter sofort updaten
-    try {
-        const poster = d.users[String(lnk.user_id)] || {};
-        const anz = lnk.likes.size;
-        const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : (poster.role||'🆕') + ' ' + lnk.user_name;
-        const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
-        await bot.telegram.editMessageText(
-            lnk.chat_id,
-            lnk.counter_msg_id,
-            null,
-            posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + lnk.counter_msg_id)]]).reply_markup }
-        );
-    } catch(e) { console.log('Telegram Sync Fehler:', e.message); }
+    // Sofort antworten – Telegram-Updates im Hintergrund
+    const liked = !wasLiked;
+    res.json({ok:true, liked, likes: lnk.likes.size});
 
-    // Feedback Nachricht in Telegram
-    if (!wasLiked && !istAdminId(uid)) {
-        try {
-            const liker = d.users[uid] || {};
-            const nb = xpBisNaechstesBadge(liker.xp||0);
-            const eventBonus = d.xpEvent?.aktiv && d.xpEvent?.multiplier > 1 ? ` (+${Math.round((d.xpEvent.multiplier-1)*100)}% Event)` : '';
-            const feedbackText = '🎉 +5 XP' + eventBonus + '\n' + (liker.role||'🆕') + ' | ⭐ ' + (liker.xp||0) + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
+    // Telegram Counter + Feedback asynchron (kein await → blockiert Response nicht)
+    const anz = lnk.likes.size;
+    const poster = d.users[String(lnk.user_id)] || {};
+    const posterLabel = istAdminId(lnk.user_id) ? '⚙️ Admin ' + lnk.user_name : (poster.role||'🆕') + ' ' + lnk.user_name;
+    const posterStats = istAdminId(lnk.user_id) ? '' : '  |  ⭐ ' + (poster.xp||0) + ' XP';
+    bot.telegram.editMessageText(
+        lnk.chat_id, lnk.counter_msg_id, null,
+        posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
+        { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + lnk.counter_msg_id)]]).reply_markup }
+    ).catch(e => console.log('Telegram Sync Fehler:', e.message));
 
-
-            const feedbackMsg = await bot.telegram.sendMessage(lnk.chat_id, feedbackText, { reply_to_message_id: lnk.counter_msg_id });
-            setTimeout(async () => { try { await bot.telegram.deleteMessage(lnk.chat_id, feedbackMsg.message_id); } catch(e) {} }, 8000);
-        } catch(e) { console.log('Feedback Fehler:', e.message); }
+    if (liked && !istAdminId(uid)) {
+        const liker = d.users[uid] || {};
+        const nb = xpBisNaechstesBadge(liker.xp||0);
+        const eventBonus = d.xpEvent?.aktiv && d.xpEvent?.multiplier > 1 ? ` (+${Math.round((d.xpEvent.multiplier-1)*100)}% Event)` : '';
+        const feedbackText = '🎉 +5 XP' + eventBonus + '\n' + (liker.role||'🆕') + ' | ⭐ ' + (liker.xp||0) + (nb ? '\n⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : '');
+        bot.telegram.sendMessage(lnk.chat_id, feedbackText, { reply_to_message_id: lnk.counter_msg_id })
+            .then(feedbackMsg => setTimeout(() => bot.telegram.deleteMessage(lnk.chat_id, feedbackMsg.message_id).catch(()=>{}), 8000))
+            .catch(e => console.log('Feedback Fehler:', e.message));
     }
-
-    res.json({ok:true, liked: !wasLiked, likes: lnk.likes.size});
 });
 
 

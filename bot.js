@@ -1872,8 +1872,14 @@ app.post('/restore-upload', express.raw({ type: '*/*', limit: '50mb' }), async (
         if (!jsonMatch) return res.status(400).send('Keine JSON Daten gefunden');
         const parsed = JSON.parse(jsonMatch[0]);
         Object.assign(d, parsed);
+        // Convert likes back to Sets (same as ladeDaten)
+        for (const k of Object.keys(d.links||{})) {
+            const link = d.links[k];
+            link.likes = new Set(Array.isArray(link.likes) ? link.likes : Object.keys(link.likes||{}));
+            if (!link.likerNames) link.likerNames = {};
+        }
         speichern();
-        res.send(`<h2>✅ Fertig! ${Object.keys(parsed.users||{}).length} User wiederhergestellt.</h2>`);
+        res.send(`<h2>✅ Fertig! ${Object.keys(parsed.users||{}).length} User, ${Object.keys(parsed.links||{}).length} Links wiederhergestellt.</h2>`);
     } catch (e) {
         res.status(500).send('Fehler: ' + e.message);
     }

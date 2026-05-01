@@ -3084,7 +3084,7 @@ app.post('/complete-profile-api', async (req, res) => {
     u.profileCompletionRewarded = true;
     u.diamonds = (u.diamonds||0) + 1;
     speichern();
-    addNotification(String(uid), '🏆 Profil 100% vollständig! Du erhältst 💎 1 Diamant als Belohnung!');
+    addNotification(String(uid), '🏆', 'Profil 100% vollständig! Du erhältst 💎 1 Diamant als Belohnung!');
     res.json({ ok: true, diamonds: u.diamonds });
 });
 
@@ -3096,7 +3096,11 @@ app.post('/buy-item-api', (req, res) => {
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     if (!u.inventory) u.inventory = [];
     if (u.inventory.includes(itemId)) return res.json({ok:false, error:'Item bereits besessen'});
-    const ITEM_PRICES = { ring_flame:8, ring_ocean:8, ring_gold:10, ring_purple:12, ring_rainbow:15, ring_diamond:20 };
+    const ITEM_PRICES = {
+        ring_flame:8, ring_ocean:8, ring_gold:10, ring_purple:12, ring_rainbow:15, ring_diamond:20,
+        banner_sunset:1, banner_ocean:1, banner_forest:1, banner_candy:1, banner_sky:1, banner_lavender:1,
+        banner_mint:1, banner_peach:1, banner_gold:1, banner_coral:1, banner_aurora:1, banner_rose:1,
+    };
     const price = ITEM_PRICES[itemId];
     if (!price) return res.json({ok:false, error:'Unbekanntes Item'});
     const isAdmin = istAdminId(Number(uid));
@@ -3104,8 +3108,13 @@ app.post('/buy-item-api', (req, res) => {
     if (!isAdmin) u.diamonds -= price;
     u.inventory.push(itemId);
     speichern();
-    const itemNames = { ring_flame:'🔥 Flame Ring', ring_ocean:'🌊 Ocean Ring', ring_gold:'✨ Gold Ring', ring_purple:'🔮 Cosmic Ring', ring_rainbow:'🌈 Rainbow Ring', ring_diamond:'💎 Diamond Ring' };
-    addNotification(String(uid), `🎁 ${itemNames[itemId]||itemId} gekauft! Wähle es in deinem Profil unter "Items" aus.${isAdmin ? ' (Admin – kostenlos)' : ` 💎 -${price} Diamanten.`}`);
+    const itemNames = {
+        ring_flame:'🔥 Flame Ring', ring_ocean:'🌊 Ocean Ring', ring_gold:'✨ Gold Ring', ring_purple:'🔮 Cosmic Ring', ring_rainbow:'🌈 Rainbow Ring', ring_diamond:'💎 Diamond Ring',
+        banner_sunset:'🌅 Sunset Banner', banner_ocean:'🌊 Ocean Banner', banner_forest:'🌿 Forest Banner', banner_candy:'🍭 Candy Banner',
+        banner_sky:'☁️ Sky Blue Banner', banner_lavender:'💜 Lavender Banner', banner_mint:'🌱 Mint Banner', banner_peach:'🍑 Peach Banner',
+        banner_gold:'✨ Golden Hour Banner', banner_coral:'🪸 Coral Banner', banner_aurora:'🌌 Aurora Banner', banner_rose:'🌹 Rose Gold Banner',
+    };
+    addNotification(String(uid), '🎁', `${itemNames[itemId]||itemId} gekauft! Wähle es in deinem Profil unter "Items" aus.${isAdmin ? ' (Admin – kostenlos)' : ` 💎 -${price} Diamanten.`}`);
     res.json({ ok: true, diamonds: u.diamonds, inventory: u.inventory });
 });
 

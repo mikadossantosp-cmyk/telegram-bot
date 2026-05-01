@@ -198,6 +198,20 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+    // Superlink-Karte im Web-Thread speichern
+    const feThreadKey = String(d.fullEngagementThreadId);
+    if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
+    const u2 = d.users[uidStr];
+    d.threadMessages[feThreadKey].unshift({
+        uid: uidStr, tgName: u2?.username ? '@'+u2.username : null,
+        name: u2?.spitzname || u2?.name || ctx.from.first_name || 'User',
+        role: u2?.role || null, type: 'text',
+        text: '🔗 ' + url + (caption ? '\n' + caption : '') + '\n👍 0 Likes',
+        mediaId: null, timestamp: Date.now(), msg_id: sent.message_id, slId
+    });
+    if (d.threadMessages[feThreadKey].length > 100) d.threadMessages[feThreadKey] = d.threadMessages[feThreadKey].slice(0, 100);
+    const feThr = (d.threads||[]).find(t => String(t.id) === feThreadKey);
+    if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
     speichern();
     // DM an Poster
     try {
@@ -2924,7 +2938,18 @@ async function fethreadCreate(res) {
 
 app.get('/thread-messages/:threadId', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.json({ messages: d.threadMessages[req.params.threadId] || [] });
+    const tid = req.params.threadId;
+    let msgs = d.threadMessages[tid] || [];
+    // Fallback für 'general': communityFeed migrieren wenn threadMessages leer
+    if (!msgs.length && tid === 'general' && d.communityFeed?.length) {
+        msgs = d.communityFeed.map(m => ({
+            uid: String(m.uid || ''), tgName: m.username || null,
+            name: m.name || m.username || 'Unbekannt', role: null,
+            type: 'text', text: m.text || '', mediaId: null,
+            timestamp: m.timestamp, msg_id: m.msg_id
+        }));
+    }
+    res.json({ messages: msgs });
 });
 
 app.post('/send-thread-message', async (req, res) => {

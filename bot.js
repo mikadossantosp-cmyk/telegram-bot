@@ -1874,7 +1874,7 @@ app.post('/restore-json', express.urlencoded({ extended: true, limit: '50mb' }),
     try {
         const parsed = JSON.parse(req.body.json);
         fs.writeFileSync(DATA_FILE, JSON.stringify(parsed));
-        ladeDaten();
+        laden();
         res.send(`<h2>✅ ${Object.keys(d.users||{}).length} User, ${Object.keys(d.links||{}).length} Links geladen!</h2>`);
     } catch(e) { res.status(500).send('Fehler: ' + e.message); }
 });
@@ -1887,7 +1887,7 @@ app.post('/restore-upload', express.raw({ type: '*/*', limit: '50mb' }), async (
         const jsonMatch = body.match(/\{[\s\S]*\}/);
         if (!jsonMatch) return res.status(400).send('Keine JSON Daten gefunden');
         fs.writeFileSync(DATA_FILE, jsonMatch[0]);
-        ladeDaten();
+        laden();
         res.send(`<h2>✅ ${Object.keys(d.users||{}).length} User, ${Object.keys(d.links||{}).length} Links geladen!</h2>`);
     } catch (e) {
         res.status(500).send('Fehler: ' + e.message);

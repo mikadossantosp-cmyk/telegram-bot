@@ -180,10 +180,12 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
         return;
     }
     const week = getBerlinWeekKey();
-    const existingThisWeek = Object.values(d.superlinks||{}).find(s => s.uid === uidStr && s.week === week);
-    if (existingThisWeek) {
+    const isElitePlus = d.users[uidStr]?.role === '🌟 Elite+';
+    const maxSuperlinks = isElitePlus ? 2 : 1;
+    const slThisWeek = Object.values(d.superlinks||{}).filter(s => s.uid === uidStr && s.week === week);
+    if (slThisWeek.length >= maxSuperlinks) {
         try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits einen Superlink gepostet! Nur 1 Superlink pro Woche erlaubt.'); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits ' + maxSuperlinks + ' Superlink(s) gepostet! Limit: ' + maxSuperlinks + 'x pro Woche.'); } catch(e) {}
         return;
     }
     const uCheck = d.users[uidStr];
@@ -344,18 +346,20 @@ async function backup() {
 }
 
 function badge(xp) {
-    if (xp >= 5000) return '👑 Elite';
-    if (xp >= 1000) return '🏅 Erfahrener';
-    if (xp >= 500)  return '⬆️ Aufsteiger';
-    if (xp >= 50)   return '📘 Anfänger';
+    if (xp >= 10000) return '🌟 Elite+';
+    if (xp >= 5000)  return '👑 Elite';
+    if (xp >= 1000)  return '🏅 Erfahrener';
+    if (xp >= 500)   return '⬆️ Aufsteiger';
+    if (xp >= 50)    return '📘 Anfänger';
     return '🆕 New';
 }
 function badgeBonusLinks(xp) { return xp >= 1000 ? 1 : 0; }
 function xpBisNaechstesBadge(xp) {
-    if (xp < 50)   return { ziel: '📘 Anfänger',   fehlend: 50 - xp };
-    if (xp < 500)  return { ziel: '⬆️ Aufsteiger', fehlend: 500 - xp };
-    if (xp < 1000) return { ziel: '🏅 Erfahrener', fehlend: 1000 - xp };
-    if (xp < 5000) return { ziel: '👑 Elite',       fehlend: 5000 - xp };
+    if (xp < 50)    return { ziel: '📘 Anfänger',   fehlend: 50 - xp };
+    if (xp < 500)   return { ziel: '⬆️ Aufsteiger', fehlend: 500 - xp };
+    if (xp < 1000)  return { ziel: '🏅 Erfahrener', fehlend: 1000 - xp };
+    if (xp < 5000)  return { ziel: '👑 Elite',       fehlend: 5000 - xp };
+    if (xp < 10000) return { ziel: '🌟 Elite+',      fehlend: 10000 - xp };
     return null;
 }
 function level(xp) { return Math.floor(xp / 100) + 1; }
@@ -372,12 +376,14 @@ function xpAdd(uid, menge, name) {
     // Trophäe bei Badge Aufstieg
     if (alteBadge !== u.role && u.role) {
         if (!u.trophies) u.trophies = [];
-        const trophyMap = { '📘 Anfänger': '📘', '⬆️ Aufsteiger': '⬆️', '🏅 Erfahrener': '🏅', '👑 Elite': '👑' };
+        const trophyMap = { '📘 Anfänger': '📘', '⬆️ Aufsteiger': '⬆️', '🏅 Erfahrener': '🏅', '👑 Elite': '👑', '🌟 Elite+': '🌟' };
         const trophy = trophyMap[u.role];
         if (trophy && !u.trophies.includes(trophy)) u.trophies.push(trophy);
         // Level-Up DM
+        const isElitePlus = u.role === '🌟 Elite+';
+        const levelUpExtra = isElitePlus ? '\n\n🌟 *Elite+ Bonus:* Du erhältst jetzt 2 Superlinks pro Woche!' : '';
         bot.telegram.sendMessage(Number(uid),
-            '🎉 *Badge Aufstieg!*\n\n' + alteBadge + ' → ' + u.role + '\n\n━━━━━━━━━━━━━━\n⭐ ' + u.xp + ' XP\n━━━━━━━━━━━━━━\n\nWeiter so! 💪',
+            '🎉 *Badge Aufstieg!*\n\n' + alteBadge + ' → ' + u.role + '\n\n━━━━━━━━━━━━━━\n⭐ ' + u.xp + ' XP\n━━━━━━━━━━━━━━\n\nWeiter so! 💪' + levelUpExtra,
             { parse_mode: 'Markdown' }
         ).catch(() => {});
     }
@@ -650,7 +656,7 @@ bot.start(async (ctx) => {
 bot.command('help', async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
-    const text = '📋 *Bot Hilfe*\n━━━━━━━━━━━━━━\n\n🔗 *Link System*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n⭐ *Full Engagement (Superlinks)*\n• 1 Superlink pro Woche (Mo–Sa)\n• Alle Mitglieder müssen liken, kommentieren, teilen & speichern\n• Wer nicht engaged: −50 XP\n• /superlink — Status & posten\n\n🎯 *Tägliche Missionen*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ Auswertung um 12:00 Uhr\n\n📅 *Wochen Missionen*\n• 7× M1 → +10 XP\n• 7× M2 → +15 XP\n• 7× M3 → +20 XP\n\n🏅 *Badges*\n• 🆕 New: 0–49 XP\n• 📘 Anfänger: 50–499 XP\n• ⬆️ Aufsteiger: 500–999 XP\n• 🏅 Erfahrener: 1000–4999 XP\n• 👑 Elite: 5000+ XP\n\n━━━━━━━━━━━━━━\n👤 *Profil*\n• /profil — dein Profil\n• /profil @username — fremdes Profil\n• /setbio — Bio setzen\n• /setspitzname — Spitzname\n• /setinsta — Instagram\n\n📊 *Rankings*\n• /ranking — Gesamt\n• /dailyranking — Heute\n• /weeklyranking — Diese Woche\n\n🎁 *Sonstiges*\n• /daily — Täglicher Bonus\n• /missionen — Missions Übersicht\n• /superlink — Engagement Status';
+    const text = '📋 *Bot Hilfe*\n━━━━━━━━━━━━━━\n\n🔗 *Link System*\n• 1 Link pro Tag\n• Doppelte Links geblockt\n• 👍 Likes = XP\n\n👍 *Like System*\n• 1 Like pro Link\n• Kein Self-Like\n• +5 XP pro Like\n\n⭐ *Full Engagement (Superlinks)*\n• 1 Superlink pro Woche (Mo–Sa)\n• Alle Mitglieder müssen liken, kommentieren, teilen & speichern\n• Wer nicht engaged: −50 XP\n• /superlink — Status & posten\n\n🎯 *Tägliche Missionen*\n• M1: 5 Links liken → +5 XP\n• M2: 80% liken → +5 XP\n• M3: Alle liken → +5 XP\n• ⏳ Auswertung um 12:00 Uhr\n\n📅 *Wochen Missionen*\n• 7× M1 → +10 XP\n• 7× M2 → +15 XP\n• 7× M3 → +20 XP\n\n🏅 *Badges*\n• 🆕 New: 0–49 XP\n• 📘 Anfänger: 50–499 XP\n• ⬆️ Aufsteiger: 500–999 XP\n• 🏅 Erfahrener: 1000–4999 XP\n• 👑 Elite: 5000–9999 XP\n• 🌟 Elite+: 10000+ XP (2 Superlinks/Woche)\n\n━━━━━━━━━━━━━━\n👤 *Profil*\n• /profil — dein Profil\n• /profil @username — fremdes Profil\n• /setbio — Bio setzen\n• /setspitzname — Spitzname\n• /setinsta — Instagram\n\n📊 *Rankings*\n• /ranking — Gesamt\n• /dailyranking — Heute\n• /weeklyranking — Diese Woche\n\n🎁 *Sonstiges*\n• /daily — Täglicher Bonus\n• /missionen — Missions Übersicht\n• /superlink — Engagement Status';
     if (u.started) {
         try { await ctx.telegram.sendMessage(uid, text, { parse_mode: 'Markdown' }); if (!istPrivat(ctx.chat.type)) await ctx.reply('📩 Hilfe per DM!'); }
         catch (e) { await ctx.reply(text, { parse_mode: 'Markdown' }); }
@@ -1085,15 +1091,18 @@ async function sendShopNachricht(ctx, uid) {
     const diamonds = u.diamonds || 0;
     const bonusLinks = d.bonusLinks?.[String(uid)] || 0;
     const week = getBerlinWeekKey();
-    const hasSLThisWeek = Object.values(d.superlinks||{}).some(s => s.uid === String(uid) && s.week === week);
+    const isElitePlusShop = u.role === '🌟 Elite+';
+    const maxSLShop = isElitePlusShop ? 2 : 1;
+    const slThisWeekShop = Object.values(d.superlinks||{}).filter(s => s.uid === String(uid) && s.week === week).length;
+    const hasSLThisWeek = slThisWeekShop >= maxSLShop;
     const canBuyEl = diamonds >= 5;
     const canBuySL = diamonds >= 10 && !hasSLThisWeek;
     await ctx.reply(
         '🛒 *Telegram Shop*\n━━━━━━━━━━━━━━\n\n' +
         '💎 Dein Guthaben: *' + diamonds + ' Diamanten*\n\n' +
         '🔗 *Extra-Link — 5 💎*\nErlaubt dir heute einen zusätzlichen Link zu posten.\nVorhanden: ' + bonusLinks + '\n\n' +
-        '⭐ *Superlink — 10 💎*\n1× pro Woche im Full Engagement Thread.\nWird beim Posten via /superlink abgezogen.' +
-        (hasSLThisWeek ? '\n✅ _Diese Woche bereits gepostet_' : ''),
+        '⭐ *Superlink — 10 💎*\n' + maxSLShop + '× pro Woche im Full Engagement Thread.\nWird beim Posten via /superlink abgezogen.' +
+        '\nDiese Woche: ' + slThisWeekShop + '/' + maxSLShop + (hasSLThisWeek ? ' ✅' : ''),
         {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard([
@@ -3526,8 +3535,10 @@ app.post('/post-superlink-api', async (req, res) => {
     if (!u.instagram) return res.json({ok:false, error:'Bitte zuerst /setinsta im Bot setzen'});
     if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa gepostet werden'});
     const week = getBerlinWeekKey();
-    const existing = Object.values(d.superlinks||{}).find(s=>s.uid===String(uid)&&s.week===week);
-    if (existing) return res.json({ok:false, error:'Du hast diese Woche bereits einen Superlink gepostet'});
+    const isElitePlusSL = u.role === '🌟 Elite+';
+    const maxSL = isElitePlusSL ? 2 : 1;
+    const slThisWeekCount = Object.values(d.superlinks||{}).filter(s=>s.uid===String(uid)&&s.week===week).length;
+    if (slThisWeekCount >= maxSL) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
     const isAdminSL = istAdminId(Number(uid));
     if (!isAdminSL && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Superlink)'});
     if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});

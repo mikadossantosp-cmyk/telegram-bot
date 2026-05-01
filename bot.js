@@ -26,7 +26,7 @@ function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
 let d = {
     users: {}, chats: {}, links: {},
-    tracker: {}, counter: {}, warte: {},
+    tracker: {}, counter: {},
     gepostet: [], seasonStart: Date.now(),
     seasonGewinner: [],
     communityFeed: [],
@@ -41,7 +41,7 @@ let d = {
     wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
     warteNachricht: {}, dmNachrichten: {}, instaWarte: {},
     missionen: {}, wochenMissionen: {},
-    missionQueue: {}, missionQueueVerarbeitet: null,
+    missionQueue: {},
     missionAuswertungErledigt: {},
     gesternDailyXP: {},
     badgeTracker: {},
@@ -185,6 +185,12 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
         try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits einen Superlink gepostet! Nur 1 Superlink pro Woche erlaubt.'); } catch(e) {}
         return;
     }
+    const uCheck = d.users[uidStr];
+    if (!istAdminId(Number(senderUid)) && (uCheck?.diamonds||0) < 10) {
+        try { await ctx.deleteMessage(); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Superlink benötigst du 💎 10 Diamanten. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
+        return;
+    }
     const urlMatch = text.match(/https?:\/\/(www\.)?instagram\.com\/[^\s]+/i);
     const url = urlMatch ? urlMatch[0].replace(/[.,;!?]+$/, '') : text.trim();
     const caption = text.replace(url, '').trim();
@@ -199,6 +205,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+    if (!istAdminId(Number(senderUid)) && d.users[uidStr]) d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
     // Superlink-Karte im Web-Thread speichern
     const feThreadKey = String(d.fullEngagementThreadId);
     if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
@@ -629,7 +636,6 @@ bot.start(async (ctx) => {
         try { await bot.telegram.deleteMessage(d.warteNachricht[uid].chatId, d.warteNachricht[uid].msgId); } catch (e) {}
         delete d.warteNachricht[uid];
     }
-    if (d.warte?.[uid]) delete d.warte[uid];
     speichern();
     if (istPrivat(ctx.chat.type)) {
         if (!u.instagram) { d.instaWarte[uid] = true; speichern(); return ctx.reply('📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'); }
@@ -703,7 +709,8 @@ bot.command('profile', async (ctx) => {
         '━━━━━━━━━━━━━━\n\n' +
         '📅 Heute: ' + (d.dailyXP[uid] || 0) + ' XP  ·  📆 Woche: ' + (d.weeklyXP[uid] || 0) + ' XP\n' +
         '👍 Likes heute: ' + (mission.likesGegeben || 0) + '  ·  👍 Gesamt: ' + u.totalLikes + '\n' +
-        '🔗 Links: ' + u.links + (bonusL > 0 ? '  ·  🎁 Bonus: ' + bonusL : '') + '  ·  ⚠️ Warns: ' + u.warnings + '/5',
+        '🔗 Links: ' + u.links + (bonusL > 0 ? '  ·  🎁 Bonus: ' + bonusL : '') + '  ·  ⚠️ Warns: ' + u.warnings + '/5\n' +
+        '🔥 Streak: ' + (u.streak || 0) + ' Tag' + ((u.streak||0) !== 1 ? 'e' : ''),
         { parse_mode: 'HTML' }
     );
 });
@@ -838,7 +845,7 @@ bot.command('fixlink', async (ctx) => {
     } catch (e) { return ctx.reply('❌ Fehler: ' + e.message); }
     const mapKey = MEINE_GRUPPE + '_' + msgId;
     d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now() };
-    if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; }
+    if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; updateStreak(String(userId)); }
     speichern();
 });
 
@@ -992,7 +999,6 @@ bot.command('remindinsta', async (ctx) => {
 bot.on('new_chat_members', async (ctx) => {
     for (const m of ctx.message.new_chat_members) {
         if (m.is_bot) continue;
-        d.warte[m.id] = ctx.chat.id;
         const newU = user(m.id, m.first_name);
         newU.inGruppe = true;
         if (newU.verlaessenAm) delete newU.verlaessenAm;
@@ -2111,7 +2117,7 @@ app.post('/bridge-event', async (req, res) => {
                 d.links[mapKey] = linkData;
                 const url = event.meta.linkText || '';
                 if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
-                if (uid && !istAdminId(Number(uid))) d.users[uid].links = (d.users[uid].links || 0) + 1;
+                if (uid && !istAdminId(Number(uid))) { d.users[uid].links = (d.users[uid].links || 0) + 1; updateStreak(uid); }
                 speichernDebounced();
                 await sendeLinkAnAlle(linkData);
             }
@@ -3098,8 +3104,9 @@ app.post('/buy-item-api', (req, res) => {
     if (u.inventory.includes(itemId)) return res.json({ok:false, error:'Item bereits besessen'});
     const ITEM_PRICES = {
         ring_flame:8, ring_ocean:8, ring_gold:10, ring_purple:12, ring_rainbow:15, ring_diamond:20,
-        banner_sunset:1, banner_ocean:1, banner_forest:1, banner_candy:1, banner_sky:1, banner_lavender:1,
-        banner_mint:1, banner_peach:1, banner_gold:1, banner_coral:1, banner_aurora:1, banner_rose:1,
+        banner_sunset:5, banner_peach:5, banner_mint:5, banner_forest:5,
+        banner_ocean:7, banner_sky:7, banner_lavender:7, banner_rose:7,
+        banner_gold:10, banner_candy:10, banner_coral:10, banner_aurora:10,
     };
     const price = ITEM_PRICES[itemId];
     if (!price) return res.json({ok:false, error:'Unbekanntes Item'});
@@ -3375,6 +3382,8 @@ app.post('/post-superlink-api', async (req, res) => {
     const week = getBerlinWeekKey();
     const existing = Object.values(d.superlinks||{}).find(s=>s.uid===String(uid)&&s.week===week);
     if (existing) return res.json({ok:false, error:'Du hast diese Woche bereits einen Superlink gepostet'});
+    const isAdminSL = istAdminId(Number(uid));
+    if (!isAdminSL && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Superlink)'});
     if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});
     let feThreadId;
     try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
@@ -3390,6 +3399,7 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks = d.superlinks || {};
         const newSL = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
         d.superlinks[slId] = newSL;
+        if (!isAdminSL) u.diamonds = (u.diamonds||0) - 10;
         speichern();
         // DM an Poster
         try { await bot.telegram.sendMessage(Number(uid), '⭐ *Dein Superlink wurde gepostet!*\n\nVergiss nicht: Du bist verpflichtet, *alle anderen Superlinks diese Woche* zu liken, kommentieren, teilen & speichern.', { parse_mode: 'Markdown' }); } catch(e) {}

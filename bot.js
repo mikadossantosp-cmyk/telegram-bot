@@ -882,15 +882,33 @@ bot.command('dellink', async (ctx) => {
     const treffer = Object.entries(d.links).filter(([, l]) => (l.text || '').toLowerCase().includes(suche));
     if (!treffer.length) return ctx.reply('❌ Keine Links mit "' + suche + '" gefunden.');
     let geloescht = 0;
+    const deletedMsgIds = new Set();
     for (const [key, l] of treffer) {
         if (l.counter_msg_id && l.chat_id) {
             try { await bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id); } catch(e) {}
+            deletedMsgIds.add(String(l.counter_msg_id));
         }
         delete d.links[key];
         geloescht++;
     }
+    // Aus threadMessages und communityFeed entfernen
+    for (const threadId of Object.keys(d.threadMessages || {})) {
+        const vorher = d.threadMessages[threadId].length;
+        d.threadMessages[threadId] = d.threadMessages[threadId].filter(m => !deletedMsgIds.has(String(m.msg_id)));
+        // last_msg in d.threads aktualisieren falls gelöscht
+        if (d.threadMessages[threadId].length !== vorher) {
+            const thr = (d.threads||[]).find(t => String(t.id) === threadId);
+            if (thr) {
+                thr.last_msg = d.threadMessages[threadId][0] || null;
+                thr.msg_count = d.threadMessages[threadId].length;
+            }
+        }
+    }
+    if (d.communityFeed) {
+        d.communityFeed = d.communityFeed.filter(m => !deletedMsgIds.has(String(m.msg_id)));
+    }
     speichern();
-    await ctx.reply('✅ ' + geloescht + ' Link(s) mit "' + suche + '" gelöscht.');
+    await ctx.reply('✅ ' + geloescht + ' Link(s) mit "' + suche + '" aus Telegram + Web-Feed gelöscht.');
 });
 bot.command('testmissionauswertung', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;

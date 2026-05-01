@@ -2947,12 +2947,13 @@ app.post('/buy-item-api', (req, res) => {
     const ITEM_PRICES = { ring_flame:8, ring_ocean:8, ring_gold:10, ring_purple:12, ring_rainbow:15, ring_diamond:20 };
     const price = ITEM_PRICES[itemId];
     if (!price) return res.json({ok:false, error:'Unbekanntes Item'});
-    if ((u.diamonds||0) < price) return res.json({ok:false, error:`Nicht genug Diamanten (benötigt: ${price})`});
-    u.diamonds -= price;
+    const isAdmin = istAdminId(Number(uid));
+    if (!isAdmin && (u.diamonds||0) < price) return res.json({ok:false, error:`Nicht genug Diamanten (benötigt: ${price})`});
+    if (!isAdmin) u.diamonds -= price;
     u.inventory.push(itemId);
     speichern();
     const itemNames = { ring_flame:'🔥 Flame Ring', ring_ocean:'🌊 Ocean Ring', ring_gold:'✨ Gold Ring', ring_purple:'🔮 Cosmic Ring', ring_rainbow:'🌈 Rainbow Ring', ring_diamond:'💎 Diamond Ring' };
-    addNotification(String(uid), `🎁 ${itemNames[itemId]||itemId} gekauft! Wähle es in deinem Profil unter "Items" aus. 💎 -${price} Diamanten.`);
+    addNotification(String(uid), `🎁 ${itemNames[itemId]||itemId} gekauft! Wähle es in deinem Profil unter "Items" aus.${isAdmin ? ' (Admin – kostenlos)' : ` 💎 -${price} Diamanten.`}`);
     res.json({ ok: true, diamonds: u.diamonds, inventory: u.inventory });
 });
 
@@ -2974,12 +2975,13 @@ app.post('/buy-extralink-api', (req, res) => {
     if (!uid) return res.json({ok:false, error:'Fehlende UID'});
     const u = d.users[String(uid)];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
-    if ((u.diamonds||0) < 5) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 5)'});
-    u.diamonds -= 5;
+    const isAdminEl = istAdminId(Number(uid));
+    if (!isAdminEl && (u.diamonds||0) < 5) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 5)'});
+    if (!isAdminEl) u.diamonds -= 5;
     if (!d.bonusLinks) d.bonusLinks = {};
     d.bonusLinks[String(uid)] = (d.bonusLinks[String(uid)] || 0) + 1;
     speichern();
-    addNotification(String(uid), '🔗 Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten. 💎 -5 Diamanten.');
+    addNotification(String(uid), `🔗 Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten.${isAdminEl ? ' (Admin – kostenlos)' : ' 💎 -5 Diamanten.'}`);
     res.json({ ok: true, diamonds: u.diamonds, bonusLinks: d.bonusLinks[String(uid)] });
 });
 

@@ -1582,6 +1582,26 @@ bot.command('runengagementcheck', async (ctx) => {
     await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
 });
 
+bot.command('fethread', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    if (!GROUP_B_ID) return ctx.reply('❌ GROUP_B_ID nicht gesetzt!');
+    const oldId = d.fullEngagementThreadId;
+    await ctx.reply(`ℹ️ Alter Thread-ID: ${oldId || 'nicht gesetzt'}\n⏳ Erstelle neuen Thread...`);
+    d.fullEngagementThreadId = null;
+    const threadId = await ensureFullEngagementThread();
+    if (!threadId) return ctx.reply('❌ Thread-Erstellung fehlgeschlagen. Prüfe ob Gruppe B Forum-Modus aktiviert hat und Bot Admin ist.');
+    try {
+        await bot.telegram.sendMessage(GROUP_B_ID,
+            '⭐ *Full Engagement Thread geöffnet!*\n\n' +
+            'Hier könnt ihr eure Superlinks posten.\n\n' +
+            '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
+            '📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
+            { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
+        );
+    } catch(e) { await ctx.reply('⚠️ Thread erstellt aber Willkommensnachricht fehlgeschlagen: ' + e.message); }
+    await ctx.reply(`✅ Full Engagement Thread erstellt! ID: ${threadId}`);
+});
+
 bot.command('superlink', async (ctx) => {
     const uid = String(ctx.from.id);
     const u = user(ctx.from.id, ctx.from.first_name);

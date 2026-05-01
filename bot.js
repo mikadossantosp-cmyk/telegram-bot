@@ -2837,6 +2837,8 @@ app.get('/forum-debug', async (req, res) => {
 });
 
 app.get('/fethread-setup', (req, res) => {
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const baseUrl = proto + '://' + req.headers.host;
     const status = d.fullEngagementThreadId ? `✅ Thread-ID: ${d.fullEngagementThreadId}` : '❌ Kein Thread gesetzt';
     const groupStatus = GROUP_B_ID ? `✅ GROUP_B_ID: ${GROUP_B_ID}` : '❌ GROUP_B_ID nicht gesetzt!';
     res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2855,13 +2857,14 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <button id="btn" onclick="createThread()">🚀 Thread erstellen / zurücksetzen</button>
 <div class="result" id="result"></div>
 <script>
+const BASE='${baseUrl}';
 async function createThread(){
   const btn=document.getElementById('btn');
   const res=document.getElementById('result');
   btn.disabled=true;btn.textContent='⏳ Erstelle Thread...';
   res.style.display='none';
   try{
-    const r=await fetch('/fethread-setup',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const r=await fetch(BASE+'/fethread-setup',{method:'POST',headers:{'Content-Type':'application/json'}});
     const data=await r.json();
     res.style.display='block';
     if(data.ok){res.className='result ok';res.textContent='✅ Erfolgreich!\\nThread-ID: '+data.threadId;}

@@ -2836,6 +2836,29 @@ app.get('/forum-debug', async (req, res) => {
     res.json(info);
 });
 
+app.get('/admin/create-fethread', async (req, res) => {
+    const secret = req.query.secret || req.headers['x-bridge-secret'];
+    if (secret !== BRIDGE_SECRET) return res.status(403).send('Forbidden');
+    if (!GROUP_B_ID) return res.json({ ok: false, error: 'GROUP_B_ID nicht gesetzt in Railway Variables!' });
+    const oldId = d.fullEngagementThreadId;
+    d.fullEngagementThreadId = null;
+    let threadId = null, createError = null;
+    try {
+        const result = await bot.telegram.callApi('createForumTopic', { chat_id: GROUP_B_ID, name: 'Full Engagement' });
+        threadId = result.message_thread_id;
+        d.fullEngagementThreadId = threadId;
+        speichern();
+    } catch(e) { createError = e.message; d.fullEngagementThreadId = oldId; }
+    if (!threadId) return res.json({ ok: false, error: createError, hint: 'Forum-Modus in Gruppe B aktiviert? Bot hat "Manage Topics" Recht?' });
+    try {
+        await bot.telegram.sendMessage(GROUP_B_ID,
+            '⭐ *Full Engagement Thread geöffnet!*\n\nHier könnt ihr eure Superlinks posten.\n\n📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n📲 Einfach euren Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
+            { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
+        );
+    } catch(e) {}
+    res.json({ ok: true, threadId, message: 'Full Engagement Thread erfolgreich erstellt!' });
+});
+
 app.get('/thread-messages/:threadId', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({ messages: d.threadMessages[req.params.threadId] || [] });
@@ -3220,11 +3243,25 @@ app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); 
 
 bot.launch().then(() => {
     setTimeout(async () => {
+        if (!GROUP_B_ID) { console.log('⚠️ GROUP_B_ID nicht gesetzt – Full Engagement Thread übersprungen'); return; }
         try {
+            // Prüfe ob gespeicherter Thread noch existiert
+            if (d.fullEngagementThreadId) {
+                try {
+                    await bot.telegram.callApi('getForumTopicIconStickers', {});
+                    // Thread-ID validieren durch Senden einer test-Message versuchen wir nicht,
+                    // aber prüfen ob Forum-Modus aktiv ist
+                    const topics = await bot.telegram.callApi('getForumTopics', { chat_id: GROUP_B_ID, limit: 100 });
+                    const exists = topics.topics?.some(t => t.message_thread_id === Number(d.fullEngagementThreadId));
+                    if (!exists) {
+                        console.log('⚠️ Full Engagement Thread nicht mehr gefunden, erstelle neu...');
+                        d.fullEngagementThreadId = null;
+                    }
+                } catch(e) { console.log('Thread-Check Fehler:', e.message); }
+            }
             const wasNull = !d.fullEngagementThreadId;
             const threadId = await ensureFullEngagementThread();
-            if (wasNull && threadId && GROUP_B_ID) {
-                // Thread wurde gerade neu erstellt → Willkommensnachricht
+            if (wasNull && threadId) {
                 await bot.telegram.sendMessage(GROUP_B_ID,
                     '⭐ *Full Engagement Thread geöffnet!*\n\n' +
                     'Hier könnt ihr eure Superlinks posten.\n\n' +
@@ -3233,6 +3270,7 @@ bot.launch().then(() => {
                     { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
                 );
             }
+            if (threadId) console.log('✅ Full Engagement Thread bereit:', threadId);
         } catch(e) { console.log('Startup Engagement Fehler:', e.message); }
     }, 5000);
 });

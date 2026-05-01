@@ -2881,6 +2881,22 @@ app.post('/fethread-setup-api', async (req, res) => {
     return fethreadCreate(res);
 });
 
+app.post('/fethread-announce-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    if (!d.fullEngagementThreadId) return res.json({ ok: false, error: 'Kein Full Engagement Thread gesetzt. Zuerst erstellen.' });
+    if (!GROUP_B_ID) return res.json({ ok: false, error: 'GROUP_B_ID nicht gesetzt.' });
+    try {
+        await bot.telegram.sendMessage(GROUP_B_ID,
+            '⭐ *Full Engagement Thread!*\n\n' +
+            'Hier postet ihr eure Superlinks für diese Woche.\n\n' +
+            '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche (Mo–Sa)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n' +
+            '📲 Instagram-Link hier reinposten oder /superlink im Bot nutzen!',
+            { parse_mode: 'Markdown', message_thread_id: Number(d.fullEngagementThreadId) }
+        );
+        res.json({ ok: true });
+    } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
 app.post('/fethread-setup', async (req, res) => {
     return fethreadCreate(res);
 });

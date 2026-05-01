@@ -455,7 +455,7 @@ function updateMissionProgress(uid) {
     const heute = new Date().toDateString();
     const mission = getMission(uid);
     const heuteLinks = Object.values(d.links).filter(l =>
-        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && l.user_id !== Number(uid)
+        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(l.user_id) !== String(uid)
     );
     heuteLinks.forEach(l => { if (!l.likes) l.likes = new Set(); });
     const gesamt = heuteLinks.length;
@@ -498,7 +498,7 @@ async function missionenAuswerten() {
         let meldungen = [];
 
         const gestrigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === gestern);
-        const gestrigeInstaLinks = gestrigeLinks.filter(l => istInstagramLink(l.text) && l.user_id !== Number(uid));
+        const gestrigeInstaLinks = gestrigeLinks.filter(l => istInstagramLink(l.text) && String(l.user_id) !== String(uid));
         const gesamtGestern = gestrigeInstaLinks.length;
         const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(Number(uid))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
@@ -549,7 +549,7 @@ async function missionenAuswerten() {
 
         wMission.letzterTag = gestern;
 
-        const hatGesternLink = Object.values(d.links).some(l => l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === gestern);
+        const hatGesternLink = Object.values(d.links).some(l => String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
 
         if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
         if (queue.m1Pending) {
@@ -656,7 +656,7 @@ bot.command('missionen', async (ctx) => {
     // Gestrige Links für M2/M3 (bis 12:00 heute Zeit sie zu liken)
     const gestrigeLinks = Object.values(d.links).filter(l => 
         new Date(l.timestamp).toDateString() === gestern &&
-        l.user_id !== Number(uid) &&
+        String(l.user_id) !== String(uid) &&
         istInstagramLink(l.text)
     );
     const gesamtGestern = gestrigeLinks.length;
@@ -1428,7 +1428,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
     setTimeout(() => likeInProgress.delete(likeKey), 5000);
 
     try {
-        if (uid === lnk.user_id) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
+        if (String(uid) === String(lnk.user_id)) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
         if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('✅ Bereits geliked! (auch via App möglich)'); } catch (e) {} return; }
 
         lnk.likes.add(uid);
@@ -1811,7 +1811,7 @@ async function likeErinnerung() {
         if (!u.started || istAdminId(uid)) continue;
 
         const nichtGeliked = heutigeLinks.filter(([, l]) =>
-            l.user_id !== Number(uid) && !l.likes.has(Number(uid))
+            String(l.user_id) !== String(uid) && !l.likes.has(Number(uid))
         );
         if (!nichtGeliked.length) continue;
 
@@ -1846,9 +1846,9 @@ async function abendM1Warnung() {
     const heute = new Date().toDateString();
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || istAdminId(uid)) continue;
-        const hatLinkHeute = Object.values(d.links).some(l => l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute);
+        const hatLinkHeute = Object.values(d.links).some(l => String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute);
         if (!hatLinkHeute) continue;
-        const fremde = Object.values(d.links).filter(l => istInstagramLink(l.text) && l.user_id !== Number(uid) && new Date(l.timestamp).toDateString() === heute);
+        const fremde = Object.values(d.links).filter(l => istInstagramLink(l.text) && String(l.user_id) !== String(uid) && new Date(l.timestamp).toDateString() === heute);
         if (fremde.length < 5) continue;
         const m = d.missionen[uid];
         if (m?.date === heute && m.m1) continue;
@@ -2492,7 +2492,7 @@ app.get('/like-from-app', async (req, res) => {
         return res.json({ok:true, liked:true, likes: lnk.likes.size});
     } else {
         // Like
-        if (uidNum === lnk.user_id) return res.json({ok:false, error:'Kein Self-Like'});
+        if (String(uidNum) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
         lnk.likes.add(uidNum);
         const u = d.users[uid];
         if (!lnk.likerNames) lnk.likerNames = {};
@@ -2633,7 +2633,7 @@ app.post('/post-link-from-app', async (req, res) => {
     let usedBonusLink = false;
     if (!istAdminId(uid)) {
         const todayLinks = Object.values(d.links).filter(l =>
-            l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
+            String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute
         ).length;
         const bonusAvail = d.bonusLinks?.[uid] || 0;
         const maxLinks = 1 + bonusAvail;
@@ -3129,7 +3129,7 @@ app.get('/link-status-api', (req, res) => {
     if (!uid) return res.json({ok:false});
     const heute = new Date().toDateString();
     const todayCount = Object.values(d.links).filter(l =>
-        l.user_id === Number(uid) && new Date(l.timestamp).toDateString() === heute
+        String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute
     ).length;
     const bonusLinks = d.bonusLinks?.[uid] || 0;
     const isAdmin = istAdminId(Number(uid));
@@ -3146,7 +3146,7 @@ app.get('/mission-status-api', (req, res) => {
     const mission = getMission(uid);
     const wMission = getWochenMission(uid);
     const heuteLinks = Object.values(d.links).filter(l =>
-        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && l.user_id !== Number(uid)
+        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(l.user_id) !== String(uid)
     );
     const gesamt = heuteLinks.length;
     const geliked = heuteLinks.filter(l => l.likes && l.likes.has(Number(uid))).length;

@@ -520,17 +520,30 @@ async function missionenAuswerten() {
             meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
             if (wMission.letzterTag !== gestern) {
                 wMission.m2Tage++;
-                if (wMission.m2Tage >= 7) { xpAdd(uid, 15, name); meldungen.push('🏆 *Wochen-M2!* +15 XP'); wMission.m2Tage = 0; }
+                if (wMission.m2Tage >= 7) {
+                    xpAdd(uid, 15, name);
+                    addDiamond(uid, 1);
+                    speichern();
+                    meldungen.push('🏆 *Wochen-M2!* +15 XP + 💎 1 Diamant');
+                    wMission.m2Tage = 0;
+                }
             }
         }
         // FIX 5: gesamtGestern > 0 statt minLinksVorhanden
         if (gesamtGestern > 0 && gelikedGestern === gesamtGestern) {
             mission.m3 = true;
             xpAdd(uid, 5, name);
-            meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP');
+            addDiamond(uid, 1);
+            meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP + 💎 1 Diamant');
             if (wMission.letzterTag !== gestern) {
                 wMission.m3Tage++;
-                if (wMission.m3Tage >= 7) { xpAdd(uid, 20, name); meldungen.push('🏆 *Wochen-M3!* +20 XP'); wMission.m3Tage = 0; }
+                if (wMission.m3Tage >= 7) {
+                    xpAdd(uid, 20, name);
+                    addDiamond(uid, 2);
+                    speichern();
+                    meldungen.push('🏆 *Wochen-M3!* +20 XP + 💎 2 Diamanten');
+                    wMission.m3Tage = 0;
+                }
             }
         }
 
@@ -3122,6 +3135,38 @@ app.get('/link-status-api', (req, res) => {
     const maxLinks = isAdmin ? 999 : 1 + bonusLinks;
     const canPost = isAdmin || todayCount < maxLinks;
     res.json({ ok: true, todayCount, bonusLinks, maxLinks, canPost, isAdmin });
+});
+
+app.get('/mission-status-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String(req.query.uid || '');
+    if (!uid) return res.json({ok:false});
+    const heute = new Date().toDateString();
+    const mission = getMission(uid);
+    const wMission = getWochenMission(uid);
+    const heuteLinks = Object.values(d.links).filter(l =>
+        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && l.user_id !== Number(uid)
+    );
+    const gesamt = heuteLinks.length;
+    const geliked = heuteLinks.filter(l => l.likes && l.likes.has(Number(uid))).length;
+    const prozent = gesamt > 0 ? Math.round((geliked / gesamt) * 100) : 0;
+    res.json({
+        ok: true,
+        daily: {
+            likesGegeben: mission.likesGegeben || 0,
+            m1: mission.m1 || false,
+            m2: mission.m2 || false,
+            m3: mission.m3 || false,
+            gesamtLinks: gesamt,
+            gelikedLinks: geliked,
+            prozent
+        },
+        weekly: {
+            m1Tage: wMission.m1Tage || 0,
+            m2Tage: wMission.m2Tage || 0,
+            m3Tage: wMission.m3Tage || 0
+        }
+    });
 });
 
 app.get('/tg-file/:fileId', async (req, res) => {

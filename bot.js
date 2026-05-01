@@ -3030,6 +3030,12 @@ app.post('/delete-thread-msg-api', async (req, res) => {
     if (msg.uid && msg.uid !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff'});
     d.threadMessages[threadId] = msgs.filter(m => m.timestamp !== Number(timestamp));
     if (d.communityFeed) d.communityFeed = d.communityFeed.filter(m => m.timestamp !== Number(timestamp));
+    // Aktualisiere d.threads last_msg + msg_count
+    const thr = (d.threads||[]).find(t => String(t.id) === threadId);
+    if (thr) {
+        thr.last_msg = d.threadMessages[threadId]?.[0] || null;
+        thr.msg_count = d.threadMessages[threadId]?.length || 0;
+    }
     speichern();
     if (msgId && GROUP_B_ID) {
         try { await bot.telegram.deleteMessage(GROUP_B_ID, Number(msgId)); } catch(e) {}

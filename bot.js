@@ -1512,6 +1512,29 @@ bot.command('runengagementcheck', async (ctx) => {
     await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
 });
 
+bot.command('restoredata', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    await ctx.reply('📂 Schicke mir jetzt die daten.json Datei als Dokument in diese Unterhaltung.');
+    const waitForDoc = async (docCtx) => {
+        const doc = docCtx.message?.document;
+        if (!doc || !doc.file_name?.endsWith('.json')) return;
+        try {
+            const fileLink = await bot.telegram.getFileLink(doc.file_id);
+            const resp = await fetch(fileLink.href);
+            const text = await resp.text();
+            const parsed = JSON.parse(text);
+            // Merge: keep runtime structure, overlay saved data
+            Object.assign(d, parsed);
+            saveData();
+            await docCtx.reply(`✅ Daten wiederhergestellt! ${Object.keys(parsed.users||{}).length} User geladen.`);
+            bot.off('message', waitForDoc);
+        } catch (e) {
+            await docCtx.reply('❌ Fehler: ' + e.message);
+        }
+    };
+    bot.on('message', waitForDoc);
+});
+
 bot.action(/^slreport_(.+)$/, async (ctx) => {
     const parts = ctx.match[1].split('_');
     const slId = parts[0];

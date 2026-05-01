@@ -569,7 +569,7 @@ async function missionenAuswerten() {
 
         wMission.letzterTag = gestern;
 
-        const hatGesternLink = Object.values(d.links).some(l => String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
+        const hatGesternLink = Object.values(d.links).some(l => istInstagramLink(l.text) && String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
 
         if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
         if (queue.m1Pending) {
@@ -874,6 +874,24 @@ bot.command('testxp', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) re
 bot.command('testwarn', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; const u = user(ctx.from.id, ctx.from.first_name); u.warnings++; speichern(); await ctx.reply('✅ Warn: ' + u.warnings + '/5'); });
 bot.command('testdaily', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; user(ctx.from.id, ctx.from.first_name).lastDaily = null; speichern(); await ctx.reply('✅ Daily reset!'); });
 bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });
+
+bot.command('dellink', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const suche = ctx.message.text.replace('/dellink', '').trim().toLowerCase();
+    if (!suche) return ctx.reply('❌ Nutze: /dellink <suchwort>');
+    const treffer = Object.entries(d.links).filter(([, l]) => (l.text || '').toLowerCase().includes(suche));
+    if (!treffer.length) return ctx.reply('❌ Keine Links mit "' + suche + '" gefunden.');
+    let geloescht = 0;
+    for (const [key, l] of treffer) {
+        if (l.counter_msg_id && l.chat_id) {
+            try { await bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id); } catch(e) {}
+        }
+        delete d.links[key];
+        geloescht++;
+    }
+    speichern();
+    await ctx.reply('✅ ' + geloescht + ' Link(s) mit "' + suche + '" gelöscht.');
+});
 bot.command('testmissionauswertung', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return;
     const gestern = new Date(Date.now() - 86400000).toDateString();
@@ -1492,7 +1510,7 @@ bot.on('message', async (ctx) => {
                     console.log('Bridge Meldung: msgId=' + msgId + ' botMsgId=' + botMsg.message_id);
                 } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
             }
-        } else {
+        } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
             d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), counter_msg_id: msgId, timestamp: Date.now() };
         }

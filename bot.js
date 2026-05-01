@@ -2904,7 +2904,7 @@ async function fethreadCreate(res) {
         );
     } catch(e) {}
     res.json({ ok: true, threadId });
-});
+}
 
 app.get('/thread-messages/:threadId', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');

@@ -235,14 +235,34 @@ async function runEngagementCheck(isReminder = false) {
 const _seenEngagementJobs = {};
 setInterval(async () => {
     const now = new Date();
-    if (now.getDay() !== 0) return;
+    const day = now.getDay(); // 0=So, 1=Mo, ..., 6=Sa
     const wk = getBerlinWeekKey();
     const h = now.getHours(), m = now.getMinutes();
-    if (h === 21 && m === 0 && !_seenEngagementJobs[wk+'_r']) {
+
+    // Montag 08:00 → Neue Engagement-Woche ankündigen
+    if (day === 1 && h === 8 && m === 0 && !_seenEngagementJobs[wk+'_open']) {
+        _seenEngagementJobs[wk+'_open'] = true;
+        try {
+            const threadId = await ensureFullEngagementThread();
+            if (threadId && GROUP_B_ID) {
+                await bot.telegram.sendMessage(GROUP_B_ID,
+                    '⭐ *Neue Full Engagement Woche gestartet!*\n\n' +
+                    'Ihr könnt jetzt eure Superlinks posten\\.\n\n' +
+                    '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche\n• Wer postet, muss ALLE anderen Superlinks liken, kommentieren, teilen & speichern\n• Sonst: \\-50 XP am Sonntag\n\n' +
+                    '📲 Link hier in diesen Thread posten oder per /superlink im Bot\\.',
+                    { parse_mode: 'MarkdownV2', message_thread_id: Number(threadId) }
+                );
+            }
+        } catch(e) { console.log('Engagement Ankündigung Fehler:', e.message); }
+    }
+
+    // Sonntag 21:00 → Erinnerung
+    if (day === 0 && h === 21 && m === 0 && !_seenEngagementJobs[wk+'_r']) {
         _seenEngagementJobs[wk+'_r'] = true;
         await runEngagementCheck(true).catch(()=>{});
     }
-    if (h === 23 && m === 59 && !_seenEngagementJobs[wk+'_p']) {
+    // Sonntag 23:59 → Finale Auswertung
+    if (day === 0 && h === 23 && m === 59 && !_seenEngagementJobs[wk+'_p']) {
         _seenEngagementJobs[wk+'_p'] = true;
         await runEngagementCheck(false).catch(()=>{});
     }
@@ -3171,7 +3191,22 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch().then(() => {
-    setTimeout(() => ensureFullEngagementThread().catch(()=>{}), 5000);
+    setTimeout(async () => {
+        try {
+            const wasNull = !d.fullEngagementThreadId;
+            const threadId = await ensureFullEngagementThread();
+            if (wasNull && threadId && GROUP_B_ID) {
+                // Thread wurde gerade neu erstellt → Willkommensnachricht
+                await bot.telegram.sendMessage(GROUP_B_ID,
+                    '⭐ *Full Engagement Thread geöffnet\\!*\n\n' +
+                    'Hier könnt ihr eure Superlinks posten\\.\n\n' +
+                    '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche \\(Mo–Sa\\)\n• Wer postet, muss ALLE anderen liken, kommentieren, teilen & speichern\n• Verstoß: \\-50 XP\n\n' +
+                    '📲 Einfach euren Instagram\\-Link hier reinposten oder /superlink im Bot nutzen\\!',
+                    { parse_mode: 'MarkdownV2', message_thread_id: Number(threadId) }
+                );
+            }
+        } catch(e) { console.log('Startup Engagement Fehler:', e.message); }
+    }, 5000);
 });
 console.log('🤖 Bot läuft!');
 

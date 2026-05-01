@@ -199,11 +199,22 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
     speichern();
+    // DM an Poster
     try {
         await bot.telegram.sendMessage(Number(senderUid),
-            '⭐ *Dein Superlink wurde gepostet\\!*\n\nSuperlinks können 1× pro Woche gepostet werden\\. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* \\(Liken, Kommentieren, Teilen, Speichern\\)\\.',
-            { parse_mode: 'MarkdownV2' });
+            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können 1× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
+            { parse_mode: 'Markdown' });
     } catch(e) {}
+    // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
+    const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
+    for (const other of otherPosters) {
+        try {
+            await bot.telegram.sendMessage(Number(other.uid),
+                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❤️ Jetzt liken', callback_data: 'sllike_' + slId }]] } }
+            );
+        } catch(e) {}
+    }
 }
 
 async function runEngagementCheck(isReminder = false) {
@@ -1137,13 +1148,13 @@ bot.on('message', async (ctx) => {
         }
 
         // Superlink-Wartestand: User antwortet mit Instagram-Link nach /superlink
-        if (istPrivat(ctx.chat.type) && d._slWaiting?.[String(ctx.from.id)]) {
+        if (istPrivat(ctx.chat.type) && _slWaiting?.[String(ctx.from.id)]) {
             const uid = String(ctx.from.id);
-            const waitedAt = d._slWaiting[uid];
+            const waitedAt = _slWaiting[uid];
             if (Date.now() - waitedAt < 5 * 60 * 1000) { // 5 Minuten Fenster
                 const text = ctx.message.text || '';
                 if (text.includes('instagram.com')) {
-                    delete d._slWaiting[uid];
+                    delete _slWaiting[uid];
                     await handleSuperlink(ctx, uid, d.users[uid], text).catch(e => ctx.reply('❌ Fehler: ' + e.message));
                     return;
                 } else if (text && !text.startsWith('/')) {
@@ -1151,7 +1162,7 @@ bot.on('message', async (ctx) => {
                     return;
                 }
             } else {
-                delete d._slWaiting[uid];
+                delete _slWaiting[uid];
             }
         }
 
@@ -1507,6 +1518,7 @@ bot.action('set_insta', async (ctx) => {
 
 // ── SUPERLINK ACTIONS ──
 const slLikeInProgress = new Set();
+const _slWaiting = {};
 bot.action(/^sllike_(.+)$/, async (ctx) => {
     const slId = ctx.match[1];
     const uid = String(ctx.from.id);
@@ -1582,51 +1594,38 @@ bot.command('superlink', async (ctx) => {
     const canPost = !mySlThisWeek && isSuperLinkPostingAllowed();
 
     let text = '⭐ *Full Engagement – Superlinks*\n\n';
-    text += '📌 *Regeln:*\n• 1 Superlink pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen Superlinks liken, kommentieren, teilen & speichern\n• Verstoß → \\-50 XP\n\n';
+    text += '📌 *Regeln:*\n• 1 Superlink pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n';
 
     if (weekSuperlinks.length === 0) {
-        text += '📭 Noch keine Superlinks diese Woche\\.\n\n';
+        text += '📭 Noch keine Superlinks diese Woche.\n\n';
     } else {
         text += `📊 *Diese Woche: ${weekSuperlinks.length} Superlink${weekSuperlinks.length !== 1 ? 's' : ''}*\n`;
         for (const sl of weekSuperlinks) {
             const poster = d.users[sl.uid];
-            const name = poster?.spitzname || poster?.name || 'User';
+            const name = (poster?.spitzname || poster?.name || 'User').replace(/[*_`]/g, '');
             const liked = (sl.likes||[]).includes(uid);
             const isOwn = sl.uid === uid;
-            text += `\n• [${name}](${sl.url})${isOwn ? ' \\(dein\\)' : liked ? ' ✅' : ' ❌ noch nicht geliked'}`;
+            const status = isOwn ? '(dein)' : liked ? '✅' : '❌ noch nicht geliked';
+            text += `\n• *${name}* ${status}\n  ${sl.url}`;
         }
         text += '\n\n';
     }
 
     if (mySlThisWeek) {
-        text += `✅ *Du hast diese Woche bereits gepostet\\.*\nDein Link: ${mySlThisWeek.url.replace(/[_.~]/g, '\\$&')}`;
+        text += `✅ *Du hast diese Woche bereits gepostet.*`;
     } else if (!isSuperLinkPostingAllowed()) {
-        text += '⏰ Superlinks können nur Mo–Sa gepostet werden\\.';
+        text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
+    } else if (!u.instagram) {
+        text += '⚠️ Bitte zuerst /setinsta verwenden.';
     } else {
-        if (!u.instagram) {
-            text += '⚠️ Bitte zuerst /setinsta verwenden um deinen Instagram Namen einzutragen\\.';
-        } else {
-            text += '📲 *Superlink posten:*\nSchicke mir deinen Instagram Link als Antwort auf diese Nachricht\\.';
-        }
+        text += '📲 *Superlink posten:*\nSchicke mir deinen Instagram-Link als nächste Nachricht.';
+        _slWaiting[uid] = Date.now();
     }
 
     const buttons = [];
-    if (canPost && u.instagram) buttons.push([{ text: '📲 Superlink per App posten', url: APP_URL || 'https://creatorx.app' }]);
-    if (weekSuperlinks.length > 0 && d.fullEngagementThreadId && GROUP_B_ID) {
-        try {
-            const chatInfo = await bot.telegram.getChat(GROUP_B_ID);
-            if (chatInfo.username) buttons.push([{ text: '📂 Zum Engagement Thread', url: `https://t.me/${chatInfo.username}/${d.fullEngagementThreadId}` }]);
-        } catch(e) {}
-    }
+    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://creatorx.app' }]);
 
-    await ctx.reply(text, { parse_mode: 'MarkdownV2', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
-
-    // If user replies with a link, handle as superlink
-    if (canPost && u.instagram) {
-        // Mark that we're waiting for a superlink from this user
-        if (!d._slWaiting) d._slWaiting = {};
-        d._slWaiting[uid] = Date.now();
-    }
+    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
 });
 
 bot.command('restoredata', async (ctx) => {
@@ -3165,9 +3164,22 @@ app.post('/post-superlink-api', async (req, res) => {
             reply_markup: buildSuperLinkButtons(slId, 0)
         });
         d.superlinks = d.superlinks || {};
-        d.superlinks[slId] = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+        const newSL = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+        d.superlinks[slId] = newSL;
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '⭐ Dein Superlink wurde gepostet!'); } catch(e) {}
+        // DM an Poster
+        try { await bot.telegram.sendMessage(Number(uid), '⭐ *Dein Superlink wurde gepostet!*\n\nVergiss nicht: Du bist verpflichtet, *alle anderen Superlinks diese Woche* zu liken, kommentieren, teilen & speichern.', { parse_mode: 'Markdown' }); } catch(e) {}
+        // DM an alle anderen Poster dieser Woche
+        const posterUser = d.users[String(uid)];
+        const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));
+        for (const other of otherPosters2) {
+            try {
+                await bot.telegram.sendMessage(Number(other.uid),
+                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❤️ Jetzt liken', callback_data: 'sllike_' + slId }]] } }
+                );
+            } catch(e) {}
+        }
         res.json({ok:true, slId});
     } catch(e) { res.json({ok:false, error:'Telegram Fehler: '+e.message}); }
 });

@@ -149,7 +149,8 @@ function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerName
 function buildSuperLinkButtons(slId, likeCount) {
     return { inline_keyboard: [[
         Markup.button.callback('❤️ Like · ' + likeCount, 'sllike_' + slId),
-        Markup.button.callback('👁 Liker', 'slliker_' + slId)
+        Markup.button.callback('👁 Liker', 'slliker_' + slId),
+        Markup.button.callback('🚩 Melden', 'slrep_' + slId),
     ]] };
 }
 
@@ -638,6 +639,9 @@ bot.start(async (ctx) => {
     }
     speichern();
     if (istPrivat(ctx.chat.type)) {
+        const payload = ctx.startPayload;
+        if (payload === 'melden') return startMeldenFlow(ctx, uid);
+        if (payload === 'shop') return sendShopNachricht(ctx, uid);
         if (!u.instagram) { d.instaWarte[uid] = true; speichern(); return ctx.reply('📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'); }
         return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
     }
@@ -1027,6 +1031,21 @@ bot.command('checkmembers', async (ctx) => {
 const meldenWarte = new Map();
 const restoreWaiting = new Set();
 
+async function startMeldenFlow(ctx, uid) {
+    try {
+        const userList = Object.entries(d.users)
+            .filter(([id, u]) => !istAdminId(id) && u.started && Number(id) !== uid)
+            .sort((a, b) => (a[1].name||'').localeCompare(b[1].name||''));
+        if (!userList.length) return ctx.reply('❌ Keine User verfügbar.');
+        const buttons = userList.map(([id, u]) => [Markup.button.callback(u.name || 'User', 'mld_' + id)]);
+        meldenWarte.set(uid, { step: 'warte' });
+        await ctx.reply('📋 *Meldung einreichen*\n\n👤 Wen möchtest du melden?', {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+        });
+    } catch(e) { console.log('melden Fehler:', e.message); }
+}
+
 bot.command('melden', async (ctx) => {
     const uid = ctx.from.id;
     if (istAdminId(uid)) return;
@@ -1034,21 +1053,10 @@ bot.command('melden', async (ctx) => {
         if (!istPrivat(ctx.chat.type)) {
             const info = await ctx.telegram.getMe();
             return ctx.reply('📩 Bitte melde im privaten Chat!', {
-                reply_markup: Markup.inlineKeyboard([[Markup.button.url('📩 Hier melden', 'https://t.me/' + info.username + '?start=start')]]).reply_markup
+                reply_markup: Markup.inlineKeyboard([[Markup.button.url('📩 Hier melden', 'https://t.me/' + info.username + '?start=melden')]]).reply_markup
             });
         }
-        const userList = Object.entries(d.users)
-            .filter(([id, u]) => !istAdminId(id) && u.started && Number(id) !== uid)
-            .sort((a, b) => (a[1].name||'').localeCompare(b[1].name||''));
-
-        if (!userList.length) return ctx.reply('❌ Keine User verfügbar.');
-
-        const buttons = userList.map(([id, u]) => [Markup.button.callback(u.name || 'User', 'mld_' + id)]);
-        meldenWarte.set(uid, { step: 'warte' });
-        await ctx.reply('📋 *Meldung einreichen*\n\n👤 Wen möchtest du melden?', {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-        });
+        await startMeldenFlow(ctx, uid);
     } catch(e) { console.log('melden Fehler:', e.message); }
 });
 
@@ -1067,6 +1075,77 @@ bot.action(/^mld_(.+)$/, async (ctx) => {
     } catch(e) { console.log('mld action Fehler:', e.message); }
 });
 
+
+// ================================
+// TELEGRAM SHOP
+// ================================
+async function sendShopNachricht(ctx, uid) {
+    const u = d.users[String(uid)];
+    if (!u) return ctx.reply('❌ Bitte zuerst der Gruppe beitreten.');
+    const diamonds = u.diamonds || 0;
+    const bonusLinks = d.bonusLinks?.[String(uid)] || 0;
+    const week = getBerlinWeekKey();
+    const hasSLThisWeek = Object.values(d.superlinks||{}).some(s => s.uid === String(uid) && s.week === week);
+    const canBuyEl = diamonds >= 5;
+    const canBuySL = diamonds >= 10 && !hasSLThisWeek;
+    await ctx.reply(
+        '🛒 *Telegram Shop*\n━━━━━━━━━━━━━━\n\n' +
+        '💎 Dein Guthaben: *' + diamonds + ' Diamanten*\n\n' +
+        '🔗 *Extra-Link — 5 💎*\nErlaubt dir heute einen zusätzlichen Link zu posten.\nVorhanden: ' + bonusLinks + '\n\n' +
+        '⭐ *Superlink — 10 💎*\n1× pro Woche im Full Engagement Thread.\nWird beim Posten via /superlink abgezogen.' +
+        (hasSLThisWeek ? '\n✅ _Diese Woche bereits gepostet_' : ''),
+        {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('🔗 Extra-Link kaufen — 5 💎' + (canBuyEl ? '' : ' (zu wenig 💎)'), 'shopbuy_el')],
+                [Markup.button.callback('⭐ Superlink posten → /superlink', 'shopinfo_sl')],
+                [Markup.button.callback('🔄 Aktualisieren', 'shop_refresh')],
+            ]).reply_markup
+        }
+    );
+}
+
+bot.command('shop', async (ctx) => {
+    const uid = ctx.from.id;
+    if (istAdminId(uid)) return;
+    if (!istPrivat(ctx.chat.type)) {
+        const info = await ctx.telegram.getMe();
+        return ctx.reply('🛒 Shop im privaten Chat öffnen:', {
+            reply_markup: Markup.inlineKeyboard([[Markup.button.url('🛒 Shop öffnen', 'https://t.me/' + info.username + '?start=shop')]]).reply_markup
+        });
+    }
+    await sendShopNachricht(ctx, uid);
+});
+
+bot.action('shopbuy_el', async (ctx) => {
+    try {
+        await ctx.answerCbQuery();
+        const uid = String(ctx.from.id);
+        const u = d.users[uid];
+        if (!u) return;
+        if ((u.diamonds||0) < 5) return ctx.reply('❌ Nicht genug Diamanten (benötigt: 5, vorhanden: ' + (u.diamonds||0) + ')');
+        u.diamonds -= 5;
+        if (!d.bonusLinks) d.bonusLinks = {};
+        d.bonusLinks[uid] = (d.bonusLinks[uid] || 0) + 1;
+        speichern();
+        addNotification(uid, '🔗', 'Extra-Link gekauft! Du kannst heute einen zusätzlichen Link posten. 💎 -5 Diamanten.');
+        await ctx.reply('✅ *Extra-Link gekauft!*\n\n💎 Verbleibend: ' + u.diamonds + ' Diamanten\n🔗 Bonus-Links: ' + d.bonusLinks[uid], { parse_mode: 'Markdown' });
+    } catch(e) { console.log('shopbuy_el Fehler:', e.message); }
+});
+
+bot.action('shopinfo_sl', async (ctx) => {
+    try {
+        await ctx.answerCbQuery('Nutze /superlink um deinen Superlink zu posten (10 💎).');
+    } catch(e) {}
+});
+
+bot.action('shop_refresh', async (ctx) => {
+    try {
+        await ctx.answerCbQuery('🔄 Aktualisiert!');
+        await ctx.deleteMessage().catch(()=>{});
+        await sendShopNachricht(ctx, ctx.from.id);
+    } catch(e) {}
+});
 
 // ================================
 // APP LOGIN CODE SYSTEM
@@ -1598,6 +1677,28 @@ bot.action(/^slliker_(.+)$/, async (ctx) => {
     if (!likes.length) return ctx.answerCbQuery('Noch niemand geliked');
     const names = Object.values(sl.likerNames||{}).slice(0,10).join(', ') || likes.map(id=>{const u=d.users[id];return u?.spitzname||u?.name||'User';}).join(', ');
     await ctx.answerCbQuery('❤️ ' + likes.length + ' Likes: ' + names.slice(0,190), { show_alert: true });
+});
+
+bot.action(/^slrep_(.+)$/, async (ctx) => {
+    try {
+        const slId = ctx.match[1];
+        const reporterUid = String(ctx.from.id);
+        const sl = d.superlinks?.[slId];
+        if (!sl) return ctx.answerCbQuery('❌ Superlink nicht gefunden.');
+        if (sl.uid === reporterUid) return ctx.answerCbQuery('❌ Du kannst deinen eigenen Superlink nicht melden.');
+        const reporter = d.users[reporterUid];
+        const poster = d.users[sl.uid];
+        const adminMsg = '🚩 *Superlink Meldung*\n\n' +
+            '📌 *Gemeldeter Superlink:*\n' +
+            '👤 Poster: ' + (poster?.spitzname||poster?.name||sl.uid) + '\n' +
+            '🔗 ' + sl.url + (sl.caption ? '\n💬 ' + sl.caption : '') + '\n\n' +
+            '👤 *Gemeldet von:* ' + (reporter?.spitzname||reporter?.name||ctx.from.first_name) + (ctx.from.username ? ' @' + ctx.from.username : '') + '\n' +
+            '📅 Woche: ' + sl.week;
+        for (const adminId of ADMIN_IDS) {
+            try { await bot.telegram.sendMessage(Number(adminId), adminMsg, { parse_mode: 'Markdown' }); } catch(e){}
+        }
+        await ctx.answerCbQuery('✅ Superlink wurde gemeldet! Admins wurden informiert.', { show_alert: true });
+    } catch(e) { console.log('slrep Fehler:', e.message); await ctx.answerCbQuery('❌ Fehler'); }
 });
 
 bot.command('checkengagement', async (ctx) => {

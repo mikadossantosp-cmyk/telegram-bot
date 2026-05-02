@@ -5,7 +5,7 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "postinstall": "node patch-bot.cjs"
+    "postinstall": "node -e \"try{if(require('fs').existsSync('./patch-bot.cjs') && require('fs').existsSync('./bot.js')){require('child_process').execSync('node patch-bot.cjs',{stdio:'inherit'})}}catch(e){console.error('postinstall patch err:',e.message)}\""
   },
   "dependencies": {
     "telegraf": "^4.16.3",

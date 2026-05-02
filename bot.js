@@ -1154,10 +1154,13 @@ bot.command('shop', async (ctx) => {
     const uid = ctx.from.id;
     if (istAdminId(uid)) return;
     if (!istPrivat(ctx.chat.type)) {
-        const info = await ctx.telegram.getMe();
-        return ctx.reply('🛒 Shop im privaten Chat öffnen:', {
-            reply_markup: Markup.inlineKeyboard([[Markup.button.url('🛒 Shop öffnen', 'https://t.me/' + info.username + '?start=shop')]]).reply_markup
-        });
+        try {
+            await sendShopNachricht({ reply: (text, opts) => bot.telegram.sendMessage(uid, text, opts) }, uid);
+            await ctx.reply('🛒 Shop wurde dir per DM gesendet!');
+        } catch(e) {
+            await ctx.reply('❌ Bitte starte zuerst den Bot: @' + (await ctx.telegram.getMe()).username);
+        }
+        return;
     }
     await sendShopNachricht(ctx, uid);
 });

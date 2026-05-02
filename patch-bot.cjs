@@ -1,19 +1,16 @@
-// patch-bot.cjs - Build-time Patch fuer bot.js
-// Wird via npm postinstall + Dockerfile RUN aufgerufen.
-// Schreibt /addxp (+ alias /xpadd) Command direkt in bot.js auf der Disk.
+// patch-bot.cjs - Build-time Patch fuer bot.js (mit Startup-Marker)
 const fs = require('fs');
 const path = require('path');
 
 const BOT = path.resolve(__dirname, 'bot.js');
 
 if (!fs.existsSync(BOT)) {
-    console.log('[patch-bot] bot.js noch nicht da - skip (wird beim naechsten Step gemacht)');
+    console.log('[patch-bot] bot.js noch nicht da - skip');
     process.exit(0);
 }
 
 const ANCHOR = "bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });";
 
-// Beide Schreibweisen registrieren: /addxp UND /xpadd
 const ADDXP = `
 
 
@@ -48,17 +45,16 @@ async function _adminAddXp(ctx) {
 bot.command('addxp', _adminAddXp);
 bot.command('xpadd', _adminAddXp);
 bot.command('givexp', _adminAddXp);
-console.log('[patched] /addxp + /xpadd + /givexp registriert');`;
+bot.command('version', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await ctx.reply('🔨 Patch-Build: ' + (process.env.PATCH_TIME || 'PATCH_TIME_PLACEHOLDER') + '\\n✅ /addxp + /xpadd + /givexp registriert'); });
+console.log('\\n🔨 [PATCHED-BUILD] /addxp + /xpadd + /givexp + /version registriert  (Build: ' + (process.env.PATCH_TIME || 'PATCH_TIME_PLACEHOLDER') + ')\\n');`;
 
 let src = fs.readFileSync(BOT, 'utf8');
 
-// Idempotenz: wenn schon da, skip
 if (src.includes('_adminAddXp')) {
     console.log('[patch-bot] /addxp bereits vorhanden, skip');
     process.exit(0);
 }
 
-// Alte Version ohne Alias entfernen, falls vorhanden
 if (src.includes("bot.command('addxp', async (ctx) =>")) {
     const oldStart = src.indexOf("bot.command('addxp', async (ctx) =>");
     const oldEnd = src.indexOf('});', oldStart) + 3;
@@ -69,10 +65,12 @@ if (src.includes("bot.command('addxp', async (ctx) =>")) {
 }
 
 if (!src.includes(ANCHOR)) {
-    console.error('[patch-bot] FEHLER: Anchor (testreset) nicht gefunden!');
+    console.error('[patch-bot] FEHLER: Anchor nicht gefunden!');
     process.exit(1);
 }
 
-src = src.replace(ANCHOR, ANCHOR + ADDXP);
+const buildTime = new Date().toISOString();
+const payload = ADDXP.replaceAll('PATCH_TIME_PLACEHOLDER', buildTime);
+src = src.replace(ANCHOR, ANCHOR + payload);
 fs.writeFileSync(BOT, src);
-console.log('[patch-bot] /addxp + /xpadd + /givexp eingefuegt (' + src.length + ' bytes)');
+console.log('[patch-bot] /addxp + Aliases + /version eingefuegt (' + src.length + ' bytes, build=' + buildTime + ')');

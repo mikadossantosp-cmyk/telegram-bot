@@ -1533,7 +1533,7 @@ bot.on('message', async (ctx) => {
             }
         } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
-            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), counter_msg_id: msgId, timestamp: Date.now() };
+            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now() };
         }
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }

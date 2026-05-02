@@ -2865,17 +2865,6 @@ app.post('/post-link-from-app', async (req, res) => {
     console.log('[APP-LINK] Checks OK - sende Link...');
 
     try {
-        console.log('[APP-LINK] Sende Warnung an GROUP_A_ID:', GROUP_A_ID);
-        // Warnung in Gruppe senden - nur wenn nicht Admin
-        if (!istAdminId(uid)) {
-            try {
-                const warnMsg = await bot.telegram.sendMessage(GROUP_A_ID,
-                    '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!', {}
-                );
-                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_A_ID, warnMsg.message_id); } catch(e) {} }, 10000);
-            } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
-        }
-
         // Link in Gruppe senden (gleiche Formatierung wie Telegram-Post)
         console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
         const isAdmin = istAdminId(uid);
@@ -2891,6 +2880,17 @@ app.post('/post-link-from-app', async (req, res) => {
         await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
             buildLinkButtons(botMsg.message_id, 0)
         );
+
+        // Warnung als Reply auf Link senden - nur wenn nicht Admin
+        if (!istAdminId(uid)) {
+            try {
+                const warnMsg = await bot.telegram.sendMessage(GROUP_A_ID,
+                    '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
+                    { reply_to_message_id: botMsg.message_id }
+                );
+                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_A_ID, warnMsg.message_id); } catch(e) {} }, 10000);
+            } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
+        }
 
         // Link speichern
         const linkData = {

@@ -3598,7 +3598,9 @@ app.post('/post-superlink-api', async (req, res) => {
     const slThisWeekCount = Object.values(d.superlinks||{}).filter(s=>s.uid===String(uid)&&s.week===week).length;
     if (slThisWeekCount >= maxSL) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
     const isAdminSL = istAdminId(Number(uid));
-    if (!isAdminSL && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Superlink)'});
+    // First superlink each week is free; extra slots (Elite+) cost 10 diamonds
+    const isExtraSlot = slThisWeekCount > 0;
+    if (!isAdminSL && isExtraSlot && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Extra-Superlink)'});
     if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});
     let feThreadId;
     try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
@@ -3614,7 +3616,7 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks = d.superlinks || {};
         const newSL = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
         d.superlinks[slId] = newSL;
-        if (!isAdminSL) u.diamonds = (u.diamonds||0) - 10;
+        if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
         speichern();
         // DM an Poster
         try { await bot.telegram.sendMessage(Number(uid), '⭐ *Dein Superlink wurde gepostet!*\n\nVergiss nicht: Du bist verpflichtet, *alle anderen Superlinks diese Woche* zu liken, kommentieren, teilen & speichern.', { parse_mode: 'Markdown' }); } catch(e) {}

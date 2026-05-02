@@ -2847,14 +2847,19 @@ app.post('/post-link-from-app', async (req, res) => {
 
     // Daily Limit Check - Admins haben kein Limit
     let usedBonusLink = false;
+    let usedBadgeBonus = false;
     if (!istAdminId(uid)) {
         const todayLinks = Object.values(d.links).filter(l =>
             String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute
         ).length;
         const bonusAvail = d.bonusLinks?.[uid] || 0;
-        const maxLinks = 1 + bonusAvail;
+        const badgeBonus = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
+        const maxLinks = 1 + bonusAvail + badgeBonus;
         if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
-        if (todayLinks >= 1) usedBonusLink = true;
+        if (todayLinks >= 1) {
+            if (bonusAvail > 0) usedBonusLink = true;
+            else usedBadgeBonus = true;
+        }
     }
     console.log('[APP-LINK] Checks OK - sende Link...');
 
@@ -2906,6 +2911,11 @@ app.post('/post-link-from-app', async (req, res) => {
             d.bonusLinks[uid]--;
             if (d.bonusLinks[uid] <= 0) delete d.bonusLinks[uid];
             console.log('[APP-LINK] Bonus-Link verbraucht, verbleibend:', d.bonusLinks[uid] || 0);
+        }
+        if (usedBadgeBonus) {
+            if (!d.badgeTracker) d.badgeTracker = {};
+            d.badgeTracker[uid] = heute;
+            console.log('[APP-LINK] Badge-Bonus-Link (Erfahrener) verbraucht für uid:', uid);
         }
 
         // XP vergeben

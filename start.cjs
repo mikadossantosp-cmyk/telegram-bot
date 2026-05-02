@@ -1,10 +1,12 @@
-// start.cjs - forced CommonJS, patches bot.js with /addxp command then runs it
+// start.cjs v2 - patches bot.js with /addxp, then dynamic-imports the patched ESM
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const os = require('os');
 
 const BOT_SRC = path.join(__dirname, 'bot.js');
-const RUNTIME = path.join(__dirname, 'bot-runtime.mjs');
+
+// Schreibe nach /tmp - immer beschreibbar in Containern
+const RUNTIME = path.join(os.tmpdir(), 'bot-runtime-' + Date.now() + '.mjs');
 
 const ANCHOR = "bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });";
 
@@ -40,13 +42,15 @@ bot.command('addxp', async (ctx) => {
     } catch (e) {}
 });`;
 
+console.log('[start] Lese bot.js ...');
 let src;
 try {
     src = fs.readFileSync(BOT_SRC, 'utf8');
 } catch (e) {
-    console.error('[start] bot.js nicht lesbar:', e.message);
+    console.error('[start] FEHLER bot.js:', e.message);
     process.exit(1);
 }
+console.log('[start] bot.js ' + src.length + ' bytes');
 
 if (src.includes("bot.command('addxp'")) {
     console.log('[start] /addxp bereits vorhanden');
@@ -54,19 +58,21 @@ if (src.includes("bot.command('addxp'")) {
     src = src.replace(ANCHOR, ANCHOR + ADDXP);
     console.log('[start] /addxp Command eingefuegt');
 } else {
-    console.log('[start] WARNUNG: Anchor (testreset) nicht gefunden, /addxp NICHT eingefuegt');
+    console.log('[start] WARNUNG: Anchor (testreset) nicht gefunden');
 }
 
-fs.writeFileSync(RUNTIME, src);
-console.log('[start] bot-runtime.mjs geschrieben, starte ...');
+try {
+    fs.writeFileSync(RUNTIME, src);
+    console.log('[start] Geschrieben: ' + RUNTIME);
+} catch (e) {
+    console.error('[start] FEHLER beim Schreiben:', e.message);
+    process.exit(1);
+}
 
-const child = spawn(process.execPath, [RUNTIME], { stdio: 'inherit' });
-
-['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGUSR2'].forEach(sig => {
-    process.on(sig, () => { try { child.kill(sig); } catch (e) {} });
-});
-
-child.on('exit', (code, signal) => {
-    if (signal) { process.kill(process.pid, signal); }
-    else { process.exit(code === null ? 1 : code); }
+console.log('[start] Importiere bot-runtime ...');
+import(RUNTIME).then(() => {
+    console.log('[start] bot-runtime gestartet');
+}).catch(e => {
+    console.error('[start] FEHLER beim Import:', e);
+    process.exit(1);
 });

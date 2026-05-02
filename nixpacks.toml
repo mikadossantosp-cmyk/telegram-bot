@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ['nodejs_18']
+
+[phases.install]
+cmds = ['npm ci || npm install']
+
+[phases.build]
+cmds = ['node patch-bot.cjs']
+
+[start]
+cmd = 'node bot.js'

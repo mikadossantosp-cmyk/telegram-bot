@@ -1,1 +1,1 @@
-worker: node start.cjs
+worker: node bot.js

@@ -1704,18 +1704,15 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         if (!sl.likerNames) sl.likerNames = {};
         const idx = sl.likes.indexOf(uid);
         if (idx >= 0) {
-            sl.likes.splice(idx, 1);
-            delete sl.likerNames[uid];
-            await ctx.answerCbQuery('💔 Like entfernt');
-        } else {
-            sl.likes.push(uid);
-            const u = d.users[uid];
-            sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
-            addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
-            await ctx.answerCbQuery('❤️ Geliked!');
-            if (ctx.callbackQuery?.message?.chat?.type === 'private') {
-                try { await ctx.deleteMessage(); } catch(e) {}
-            }
+            return ctx.answerCbQuery('✅ Bereits geliked!');
+        }
+        sl.likes.push(uid);
+        const u = d.users[uid];
+        sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
+        addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
+        await ctx.answerCbQuery('❤️ Geliked!');
+        if (ctx.callbackQuery?.message?.chat?.type === 'private') {
+            try { await ctx.deleteMessage(); } catch(e) {}
         }
         speichern();
         await updateSuperLinkCard(slId);

@@ -1720,34 +1720,24 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
 
 bot.action(/^slliker_(.+)$/, async (ctx) => {
     const slId = ctx.match[1];
-    const uid = String(ctx.from.id);
     const sl = d.superlinks?.[slId];
     if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
-    await ctx.answerCbQuery();
     const likes = Array.isArray(sl.likes) ? sl.likes : [];
-    const isPoster = sl.uid === uid;
-    const poster = d.users[sl.uid];
-    const posterName = poster?.spitzname||poster?.name||'User';
-    if (!likes.length) {
-        return bot.telegram.sendMessage(ctx.chat.id,
-            '👁 *Superlink von ' + posterName + '*\n\nNoch keine Likes.',
-            { parse_mode:'Markdown', message_thread_id: ctx.callbackQuery?.message?.message_thread_id||undefined }
-        );
-    }
-    let text = '👁 *Likes für Superlink von ' + posterName + ':*\n' + sl.url.slice(0,50) + '\n\n';
-    const buttons = [];
-    likes.forEach((likerUid, i) => {
+    if (!likes.length) return ctx.answerCbQuery('Noch keine Likes 👀', { show_alert: true });
+    const names = likes.map(likerUid => {
         const liker = d.users[String(likerUid)];
-        const name = liker?.spitzname||liker?.name||'User';
-        text += (i + 1) + '. ' + name + '\n';
-        if (isPoster) buttons.push([Markup.button.callback('🚩 ' + name + ' melden', 'slrepuser_' + slId + '_' + likerUid)]);
+        return liker?.spitzname||liker?.name||'User';
     });
-    if (!isPoster) text += '\n_Nur der Poster kann Engager melden._';
-    await bot.telegram.sendMessage(ctx.chat.id, text, {
-        parse_mode: 'Markdown',
-        message_thread_id: ctx.callbackQuery?.message?.message_thread_id||undefined,
-        reply_markup: buttons.length ? Markup.inlineKeyboard(buttons).reply_markup : undefined,
-    });
+    let text = '❤️ ' + names.join(', ');
+    if (text.length > 195) {
+        let shown = 0, built = '❤️ ';
+        for (const n of names) {
+            if ((built + n).length > 185) { built += `+${names.length - shown} weitere`; break; }
+            built += (shown > 0 ? ', ' : '') + n; shown++;
+        }
+        text = built;
+    }
+    try { await ctx.answerCbQuery(text, { show_alert: true }); } catch(e) {}
 });
 
 bot.action(/^slrepuser_(\w+)_(\d+)$/, async (ctx) => {

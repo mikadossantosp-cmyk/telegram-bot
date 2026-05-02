@@ -3030,10 +3030,15 @@ app.post('/delete-thread-msg-api', async (req, res) => {
     if (!threadId || !timestamp) return res.json({ok:false});
     const isAdmin = d.users?.[String(uid)]?.role?.includes('Admin');
     const msgs = d.threadMessages?.[threadId] || [];
-    const msg = msgs.find(m => m.timestamp === Number(timestamp));
+    let msg = msgs.find(m => m.timestamp === Number(timestamp));
+    let isCFOnly = false;
+    if (!msg && threadId === 'general' && d.communityFeed?.length) {
+        msg = d.communityFeed.find(m => m.timestamp === Number(timestamp));
+        if (msg) isCFOnly = true;
+    }
     if (!msg) return res.json({ok:false});
     if (msg.uid && msg.uid !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff'});
-    d.threadMessages[threadId] = msgs.filter(m => m.timestamp !== Number(timestamp));
+    if (!isCFOnly) d.threadMessages[threadId] = msgs.filter(m => m.timestamp !== Number(timestamp));
     if (d.communityFeed) d.communityFeed = d.communityFeed.filter(m => m.timestamp !== Number(timestamp));
     // Aktualisiere d.threads last_msg + msg_count
     const thr = (d.threads||[]).find(t => String(t.id) === threadId);

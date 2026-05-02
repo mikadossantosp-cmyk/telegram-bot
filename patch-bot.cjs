@@ -1,6 +1,6 @@
 // patch-bot.cjs - Build-time Patch fuer bot.js
 // Wird via npm postinstall + Dockerfile RUN aufgerufen.
-// Schreibt /addxp Command direkt in bot.js auf der Disk.
+// Schreibt /addxp (+ alias /xpadd) Command direkt in bot.js auf der Disk.
 const fs = require('fs');
 const path = require('path');
 
@@ -13,10 +13,11 @@ if (!fs.existsSync(BOT)) {
 
 const ANCHOR = "bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });";
 
+// Beide Schreibweisen registrieren: /addxp UND /xpadd
 const ADDXP = `
 
 
-bot.command('addxp', async (ctx) => {
+async function _adminAddXp(ctx) {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const args = (ctx.message.text || '').split(/\\s+/).slice(1);
     const menge = parseInt(args[0], 10);
@@ -43,13 +44,28 @@ bot.command('addxp', async (ctx) => {
             : '⚠️ *XP angepasst*\\n\\n' + finalXP + ' XP\\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role;
         await bot.telegram.sendMessage(targetId, dmText, { parse_mode: 'Markdown' });
     } catch (e) {}
-});`;
+}
+bot.command('addxp', _adminAddXp);
+bot.command('xpadd', _adminAddXp);
+bot.command('givexp', _adminAddXp);
+console.log('[patched] /addxp + /xpadd + /givexp registriert');`;
 
 let src = fs.readFileSync(BOT, 'utf8');
 
-if (src.includes("bot.command('addxp'")) {
+// Idempotenz: wenn schon da, skip
+if (src.includes('_adminAddXp')) {
     console.log('[patch-bot] /addxp bereits vorhanden, skip');
     process.exit(0);
+}
+
+// Alte Version ohne Alias entfernen, falls vorhanden
+if (src.includes("bot.command('addxp', async (ctx) =>")) {
+    const oldStart = src.indexOf("bot.command('addxp', async (ctx) =>");
+    const oldEnd = src.indexOf('});', oldStart) + 3;
+    if (oldEnd > oldStart) {
+        src = src.slice(0, oldStart) + src.slice(oldEnd);
+        console.log('[patch-bot] Alte /addxp Version entfernt');
+    }
 }
 
 if (!src.includes(ANCHOR)) {
@@ -59,4 +75,4 @@ if (!src.includes(ANCHOR)) {
 
 src = src.replace(ANCHOR, ANCHOR + ADDXP);
 fs.writeFileSync(BOT, src);
-console.log('[patch-bot] /addxp Command in bot.js eingefuegt (' + src.length + ' bytes)');
+console.log('[patch-bot] /addxp + /xpadd + /givexp eingefuegt (' + src.length + ' bytes)');

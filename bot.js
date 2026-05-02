@@ -189,9 +189,10 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
         return;
     }
     const uCheck = d.users[uidStr];
-    if (!istAdminId(Number(senderUid)) && (uCheck?.diamonds||0) < 10) {
+    const isExtraSlotTG = slThisWeek.length > 0;
+    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && (uCheck?.diamonds||0) < 10) {
         try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Superlink benötigst du 💎 10 Diamanten. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
         return;
     }
     const urlMatch = text.match(/https?:\/\/(www\.)?instagram\.com\/[^\s]+/i);
@@ -208,7 +209,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
-    if (!istAdminId(Number(senderUid)) && d.users[uidStr]) d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
+    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
     // Superlink-Karte im Web-Thread speichern
     const feThreadKey = String(d.fullEngagementThreadId);
     if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];

@@ -1,12 +1,10 @@
-// start.cjs v2 - patches bot.js with /addxp, then dynamic-imports the patched ESM
+// start.cjs v3 - patches bot.js with /addxp, dynamic-import the patched ESM
+// RUNTIME muss neben bot.js liegen damit Node node_modules findet (telegraf etc.)
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 const BOT_SRC = path.join(__dirname, 'bot.js');
-
-// Schreibe nach /tmp - immer beschreibbar in Containern
-const RUNTIME = path.join(os.tmpdir(), 'bot-runtime-' + Date.now() + '.mjs');
+const RUNTIME = path.join(__dirname, 'bot-runtime.mjs');
 
 const ANCHOR = "bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });";
 
@@ -73,6 +71,7 @@ console.log('[start] Importiere bot-runtime ...');
 import(RUNTIME).then(() => {
     console.log('[start] bot-runtime gestartet');
 }).catch(e => {
-    console.error('[start] FEHLER beim Import:', e);
+    console.error('[start] FEHLER beim Import:');
+    console.error(e && e.stack || e);
     process.exit(1);
 });

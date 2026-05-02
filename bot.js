@@ -1713,6 +1713,9 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
             sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
             addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
             await ctx.answerCbQuery('❤️ Geliked!');
+            if (ctx.callbackQuery?.message?.chat?.type === 'private') {
+                try { await ctx.deleteMessage(); } catch(e) {}
+            }
         }
         speichern();
         await updateSuperLinkCard(slId);

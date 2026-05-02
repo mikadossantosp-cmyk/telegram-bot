@@ -226,8 +226,9 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     speichern();
     // DM an Poster
     try {
+        const maxMsg = isElitePlus ? 2 : 1;
         await bot.telegram.sendMessage(Number(senderUid),
-            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können 1× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
+            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können ' + maxMsg + '× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
             { parse_mode: 'Markdown' });
     } catch(e) {}
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
@@ -285,7 +286,7 @@ setInterval(async () => {
                 await bot.telegram.sendMessage(GROUP_B_ID,
                     '⭐ *Neue Full Engagement Woche gestartet!*\n\n' +
                     'Ihr könnt jetzt eure Superlinks posten.\n\n' +
-                    '📌 *Regeln:*\n• 1 Superlink pro Person pro Woche\n• Wer postet, muss ALLE anderen Superlinks liken, kommentieren, teilen & speichern\n• Sonst: -50 XP am Sonntag\n\n' +
+                    '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Elite+ = 2)\n• Wer postet, muss ALLE anderen Superlinks liken, kommentieren, teilen & speichern\n• Sonst: -50 XP am Sonntag\n\n' +
                     '📲 Link hier in diesen Thread posten oder per /superlink im Bot.',
                     { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
                 );
@@ -1871,13 +1872,14 @@ bot.command('superlink', async (ctx) => {
         text += '\n\n';
     }
 
-    if (mySlThisWeek && !canPost) {
-        text += `✅ *Du hast diese Woche bereits ${mySlCountThisWeek}/${maxSLCmd} Superlink(s) gepostet.*`;
+    if (mySlCountThisWeek >= maxSLCmd) {
+        text += `✅ *Du hast diese Woche bereits ${maxSLCmd}/${maxSLCmd} Superlink(s) gepostet.*`;
+    } else if (!isSuperLinkPostingAllowed()) {
+        text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
+        if (mySlThisWeek) text += ` (${mySlCountThisWeek}/${maxSLCmd} diese Woche gepostet)`;
     } else if (mySlThisWeek && canPost) {
         text += `⭐ *${mySlCountThisWeek}/${maxSLCmd} Superlinks gepostet — noch 1 übrig!*\n📲 Schicke mir deinen Instagram-Link als nächste Nachricht.`;
         _slWaiting[uid] = Date.now();
-    } else if (!isSuperLinkPostingAllowed()) {
-        text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
     } else if (!u.instagram) {
         text += '⚠️ Bitte zuerst /setinsta verwenden.';
     } else {

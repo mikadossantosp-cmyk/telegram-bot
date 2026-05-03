@@ -197,21 +197,32 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     }
     const urlMatch = text.match(/https?:\/\/(www\.)?instagram\.com\/[^\s]+/i);
     const url = urlMatch ? urlMatch[0].replace(/[.,;!?]+$/, '') : text.trim();
+    if (!url.includes('instagram.com')) {
+        try { await ctx.deleteMessage(); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Bitte sende einen gültigen Instagram-Link (instagram.com/...)'); } catch(e) {}
+        return;
+    }
     const caption = text.replace(url, '').trim();
+    let feThreadId;
+    try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
+    if (!feThreadId) {
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Full Engagement Thread nicht verfügbar. Bitte Admin kontaktieren.'); } catch(e) {}
+        return;
+    }
     try { await ctx.deleteMessage(); } catch(e) {}
     const slId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
     const u = d.users[uidStr];
     const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||ctx.from.first_name||'User', u?.instagram, url, caption, 0, {});
     const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
         parse_mode: 'Markdown',
-        message_thread_id: Number(d.fullEngagementThreadId),
+        message_thread_id: Number(feThreadId),
         reply_markup: buildSuperLinkButtons(slId, 0)
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
     if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
     // Superlink-Karte im Web-Thread speichern
-    const feThreadKey = String(d.fullEngagementThreadId);
+    const feThreadKey = String(feThreadId);
     if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
     const u2 = d.users[uidStr];
     d.threadMessages[feThreadKey].unshift({

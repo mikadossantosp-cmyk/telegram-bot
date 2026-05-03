@@ -136,7 +136,8 @@ function getBerlinWeekKey() {
 }
 
 function isSuperLinkPostingAllowed() {
-    return true;
+    const day = new Date().getDay();
+    return day >= 1 && day <= 6; // Mon–Sat
 }
 
 function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerNames) {
@@ -470,9 +471,7 @@ function normalisiereUrl(url) {
     catch (e) { return url; }
 }
 function istSperrzeit() {
-    const jetzt = new Date();
-    const tag = jetzt.getDay(), h = jetzt.getHours();
-    return (tag === 0 && h >= 20) || (tag === 1 && h < 6);
+    return false;
 }
 function hatBonusLink(uid) { return d.bonusLinks[uid] && d.bonusLinks[uid] > 0; }
 function bonusLinkNutzen(uid) {
@@ -3646,6 +3645,7 @@ app.post('/post-superlink-api', async (req, res) => {
     const u = d.users[String(uid)];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     if (!u.instagram) return res.json({ok:false, error:'Bitte zuerst /setinsta im Bot setzen'});
+    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa gepostet werden'});
     const week = getBerlinWeekKey();
     const isElitePlusSL = u.role === '🌟 Elite+';
     const maxSL = isElitePlusSL ? 2 : 1;

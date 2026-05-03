@@ -2763,6 +2763,12 @@ app.get('/like-from-app', async (req, res) => {
         const u = d.users[uid];
         if (!lnk.likerNames) lnk.likerNames = {};
         lnk.likerNames[uidNum] = { name: u?.name||'User', insta: u?.instagram||null };
+        // DM-Benachrichtigung löschen
+        const dmKey = String(lnk.counter_msg_id);
+        if (d.dmNachrichten?.[dmKey]?.[uid]) {
+            bot.telegram.deleteMessage(Number(uid), d.dmNachrichten[dmKey][uid]).catch(()=>{});
+            delete d.dmNachrichten[dmKey][uid];
+        }
         // XP vergeben
         if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
         // Mission aktualisieren

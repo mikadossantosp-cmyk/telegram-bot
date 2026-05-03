@@ -3436,9 +3436,11 @@ app.get('/link-status-api', (req, res) => {
     ).length;
     const bonusLinks = d.bonusLinks?.[uid] || 0;
     const isAdmin = istAdminId(Number(uid));
-    const maxLinks = isAdmin ? 999 : 1 + bonusLinks;
+    const u = d.users[uid];
+    const badgeBonus = !isAdmin && badgeBonusLinks(u?.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
+    const maxLinks = isAdmin ? 999 : 1 + bonusLinks + badgeBonus;
     const canPost = isAdmin || todayCount < maxLinks;
-    res.json({ ok: true, todayCount, bonusLinks, maxLinks, canPost, isAdmin });
+    res.json({ ok: true, todayCount, bonusLinks, badgeBonus, maxLinks, canPost, isAdmin });
 });
 
 app.get('/mission-status-api', (req, res) => {

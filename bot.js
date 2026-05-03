@@ -1848,6 +1848,44 @@ bot.command('fethread', async (ctx) => {
     await ctx.reply(`✅ Full Engagement Thread erstellt! ID: ${threadId}`);
 });
 
+bot.command('fixsuperlink', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args[0]) {
+        // List this week's superlinks with their IDs
+        const week = getBerlinWeekKey();
+        const sls = Object.values(d.superlinks||{}).filter(s => s.week === week).sort((a,b) => b.timestamp-a.timestamp);
+        if (!sls.length) return ctx.reply('❌ Keine Superlinks diese Woche.');
+        const list = sls.map(s => {
+            const u = d.users[s.uid];
+            return `• ${u?.spitzname||u?.name||'User'}\n  ID: \`${s.id}\`\n  URL: ${s.url||'⚠️ leer'}`;
+        }).join('\n\n');
+        return ctx.reply('⭐ *Superlinks diese Woche:*\n\n' + list + '\n\n📌 Nutze `/fixsuperlink <ID>` um einen neu zu posten.', { parse_mode: 'Markdown' });
+    }
+    const slId = args[0].trim();
+    const sl = d.superlinks?.[slId];
+    if (!sl) return ctx.reply('❌ Superlink nicht gefunden: ' + slId);
+    const u = d.users[sl.uid];
+    // Try to delete old message
+    if (sl.msg_id) {
+        try { await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id); } catch(e) {}
+    }
+    let feThreadId;
+    try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
+    if (!feThreadId) return ctx.reply('❌ Full Engagement Thread nicht verfügbar.');
+    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u?.instagram, sl.url, sl.caption, sl.likes.length, sl.likerNames||{});
+    try {
+        const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
+            parse_mode: 'Markdown',
+            message_thread_id: Number(feThreadId),
+            reply_markup: buildSuperLinkButtons(slId, sl.likes.length)
+        });
+        sl.msg_id = sent.message_id;
+        speichern();
+        await ctx.reply('✅ Superlink neu gepostet! msg_id: ' + sent.message_id);
+    } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
+});
+
 bot.command('superlink', async (ctx) => {
     const uid = String(ctx.from.id);
     const u = user(ctx.from.id, ctx.from.first_name);

@@ -956,8 +956,11 @@ bot.command('cleanlinks', async (ctx) => {
             const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
             const isNotModified = errText.includes('not modified');
             if (isGone && !isNotModified) {
-                console.log('[cleanlinks] Lösche key=' + key + ' err=' + (e?.response?.description || e?.message));
-                if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+                const dmKey = String(link.counter_msg_id);
+                if (d.dmNachrichten?.[dmKey]) {
+                    for (const [uid2, dmId] of Object.entries(d.dmNachrichten[dmKey])) bot.telegram.deleteMessage(Number(uid2), dmId).catch(()=>{});
+                    delete d.dmNachrichten[dmKey];
+                }
                 delete d.links[key]; removed++;
             }
         }
@@ -2240,7 +2243,11 @@ async function cleanupDeletedLinks() {
             const isGone = errText.includes('message to edit not found') || errText.includes('message not found') || errText.includes('message_id_invalid');
             const isNotModified = errText.includes('not modified');
             if (isGone && !isNotModified) {
-                if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+                const dmKey = String(link.counter_msg_id);
+                if (d.dmNachrichten?.[dmKey]) {
+                    for (const [uid2, dmId] of Object.entries(d.dmNachrichten[dmKey])) bot.telegram.deleteMessage(Number(uid2), dmId).catch(()=>{});
+                    delete d.dmNachrichten[dmKey];
+                }
                 delete d.links[key];
                 changed = true;
             }

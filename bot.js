@@ -969,6 +969,26 @@ bot.command('cleanlinks', async (ctx) => {
     if (removed) speichern();
     await ctx.reply('✅ ' + removed + ' gelöschte Links bereinigt. Vorher: ' + vorher + ' → Jetzt: ' + Object.keys(d.links).length);
 });
+bot.command('dmcleanup', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('🧹 Lösche DMs für bereits gelikte Links...');
+    let deleted = 0;
+    for (const [msgKey, uids] of Object.entries(d.dmNachrichten || {})) {
+        const lnk = Object.values(d.links).find(l => String(l.counter_msg_id) === msgKey);
+        for (const [uidStr, dmId] of Object.entries(uids)) {
+            const hasLiked = lnk && lnk.likes && (lnk.likes.has(Number(uidStr)) || lnk.likes.has(uidStr));
+            if (hasLiked) {
+                bot.telegram.deleteMessage(Number(uidStr), dmId).catch(()=>{});
+                delete d.dmNachrichten[msgKey][uidStr];
+                deleted++;
+            }
+        }
+        if (Object.keys(d.dmNachrichten[msgKey]).length === 0) delete d.dmNachrichten[msgKey];
+        await new Promise(r => setTimeout(r, 50));
+    }
+    speichern();
+    await ctx.reply('✅ ' + deleted + ' DMs gelöscht.');
+});
 bot.command('testweeklyranking', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await weeklyRankingDM(); await ctx.reply('✅ Weekly!'); });
 bot.command('time', (ctx) => { ctx.reply('🕒 ' + new Date().toString()); });
 
@@ -1605,8 +1625,10 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         }
 
         const msgKey = String(lnk.counter_msg_id);
-        if (d.dmNachrichten?.[msgKey]?.[uid]) {
-            try { await bot.telegram.deleteMessage(uid, d.dmNachrichten[msgKey][uid]); delete d.dmNachrichten[msgKey][uid]; } catch (e) {}
+        const dmUidKey = String(uid);
+        if (d.dmNachrichten?.[msgKey]?.[dmUidKey]) {
+            try { await bot.telegram.deleteMessage(uid, d.dmNachrichten[msgKey][dmUidKey]); } catch (e) {}
+            delete d.dmNachrichten[msgKey][dmUidKey];
         }
 
         if (!istAdminId(uid)) {
@@ -2765,9 +2787,10 @@ app.get('/like-from-app', async (req, res) => {
         lnk.likerNames[uidNum] = { name: u?.name||'User', insta: u?.instagram||null };
         // DM-Benachrichtigung löschen
         const dmKey = String(lnk.counter_msg_id);
-        if (d.dmNachrichten?.[dmKey]?.[uid]) {
-            bot.telegram.deleteMessage(Number(uid), d.dmNachrichten[dmKey][uid]).catch(()=>{});
-            delete d.dmNachrichten[dmKey][uid];
+        const dmUidStr = String(uid);
+        if (d.dmNachrichten?.[dmKey]?.[dmUidStr]) {
+            bot.telegram.deleteMessage(Number(uid), d.dmNachrichten[dmKey][dmUidStr]).catch(()=>{});
+            delete d.dmNachrichten[dmKey][dmUidStr];
         }
         // XP vergeben
         if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');

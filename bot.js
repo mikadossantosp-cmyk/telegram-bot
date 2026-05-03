@@ -1455,13 +1455,6 @@ bot.on('message', async (ctx) => {
             speichern(); return;
         }
 
-        if (istSperrzeit() && !admin) {
-            try { await ctx.deleteMessage(); } catch (e) {}
-            const msg = await ctx.reply('🚫 Keine Links von Sonntag 20:00 bis Montag 06:00!');
-            setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch (e) {} }, 15000);
-            return;
-        }
-
         const url = linkUrl(text);
         const urlNorm = normalisiereUrl(url);
         if (url && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {

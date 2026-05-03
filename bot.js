@@ -195,14 +195,20 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
         try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
         return;
     }
-    const urlMatch = text.match(/https?:\/\/(www\.)?instagram\.com\/[^\s]+/i);
-    const url = urlMatch ? urlMatch[0].replace(/[.,;!?]+$/, '') : text.trim();
-    if (!url.includes('instagram.com')) {
+    // Strip /superlink command prefix if user sent it together with the URL
+    const cleanText = text.replace(/^\/superlink\s*/i, '').trim();
+    const urlMatch = cleanText.match(/(?:https?:\/\/)?((?:www\.)?instagram\.com\/[^\s]+)/i);
+    let url = null;
+    if (urlMatch) {
+        url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
+        url = url.replace(/[.,;!?]+$/, '');
+    }
+    if (!url || !url.includes('instagram.com')) {
         try { await ctx.deleteMessage(); } catch(e) {}
         try { await bot.telegram.sendMessage(Number(senderUid), '❌ Bitte sende einen gültigen Instagram-Link (instagram.com/...)'); } catch(e) {}
         return;
     }
-    const caption = text.replace(url, '').trim();
+    const caption = cleanText.replace(urlMatch[0], '').trim();
     let feThreadId;
     try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
     if (!feThreadId) {

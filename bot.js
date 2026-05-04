@@ -283,6 +283,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
                 threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
             );
             if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
+            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
         } catch(e) {}
     }
 }
@@ -349,6 +350,44 @@ function getFullEngagementThreadUrl() {
     const idStr = String(GROUP_B_ID);
     if (idStr.startsWith('-100')) return `https://t.me/c/${idStr.slice(4)}/${d.fullEngagementThreadId}`;
     return null;
+}
+
+// Web-Push an die CreatorBoost-App schicken — komplett zusätzlich, kein Eingriff in bestehende Logik
+async function sendAppPush(targetUid, title, body, urlPath = '/feed') {
+    if (!APP_URL || !targetUid || !body) return;
+    try {
+        const fullUrl = APP_URL.replace(/\/$/, '') + '/api/push-notify';
+        const data = JSON.stringify({ uid: String(targetUid), title, body, url: urlPath });
+        const lib = fullUrl.startsWith('https') ? require('https') : require('http');
+        const u = new URL(fullUrl);
+        await new Promise(resolve => {
+            const req = lib.request({
+                hostname: u.hostname, port: u.port||(fullUrl.startsWith('https')?443:80), path: u.pathname,
+                method: 'POST', headers: { 'Content-Type':'application/json', 'x-bridge-secret': BRIDGE_SECRET, 'Content-Length': Buffer.byteLength(data) }
+            }, res => { res.on('data', () => {}); res.on('end', resolve); });
+            req.on('error', () => resolve());
+            req.setTimeout(4000, () => { req.destroy(); resolve(); });
+            req.write(data); req.end();
+        });
+    } catch(e) {}
+}
+async function broadcastAppPush(title, body, urlPath = '/feed', exceptUid = null) {
+    if (!APP_URL || !body) return;
+    try {
+        const fullUrl = APP_URL.replace(/\/$/, '') + '/api/push-broadcast';
+        const data = JSON.stringify({ title, body, url: urlPath, exceptUid: exceptUid ? String(exceptUid) : '' });
+        const lib = fullUrl.startsWith('https') ? require('https') : require('http');
+        const u = new URL(fullUrl);
+        await new Promise(resolve => {
+            const req = lib.request({
+                hostname: u.hostname, port: u.port||(fullUrl.startsWith('https')?443:80), path: u.pathname,
+                method: 'POST', headers: { 'Content-Type':'application/json', 'x-bridge-secret': BRIDGE_SECRET, 'Content-Length': Buffer.byteLength(data) }
+            }, res => { res.on('data', () => {}); res.on('end', resolve); });
+            req.on('error', () => resolve());
+            req.setTimeout(4000, () => { req.destroy(); resolve(); });
+            req.write(data); req.end();
+        });
+    } catch(e) {}
 }
 
 async function syncSuperlinkDMs() {
@@ -1732,6 +1771,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         if (!istAdminId(uid) && lnk.user_id !== uid) {
             const likerName = d.users[uid]?.spitzname || d.users[uid]?.name || 'Jemand';
             addNotification(String(lnk.user_id), '❤️', likerName + ' hat deinen Link geliked');
+            sendAppPush(String(lnk.user_id), '❤️ Neuer Like!', likerName + ' hat deinen Link geliked', '/feed').catch(()=>{});
         }
 
         const istHeutigerLink = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
@@ -1862,6 +1902,7 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         const u = d.users[uid];
         sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
         addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
+        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
         await ctx.answerCbQuery('❤️ Geliked!');
         if (ctx.callbackQuery?.message?.chat?.type === 'private') {
             try { await ctx.deleteMessage(); } catch(e) {}
@@ -2362,6 +2403,53 @@ async function abendM1Warnung() {
     }
 }
 
+// Smart-Reminders: berechnet pro User die typische Peak-Stunde aus Link/Like-Timestamps
+// und schickt eine Push-DM ~30 Min vor seiner Peak-Zeit, falls er heute noch nicht aktiv war.
+function _userPeakHour(uid) {
+    const counts = Array(24).fill(0);
+    for (const l of Object.values(d.links||{})) {
+        if (!l.timestamp) continue;
+        const dt = new Date(l.timestamp);
+        if (String(l.user_id) === String(uid)) counts[dt.getHours()]++;
+        const likes = Array.isArray(l.likes) ? l.likes : [];
+        if (likes.map(String).includes(String(uid))) counts[dt.getHours()]++;
+    }
+    const max = Math.max(...counts);
+    if (max < 3) return null; // zu wenig Daten für sinnvollen Peak
+    return counts.indexOf(max);
+}
+async function smartReminderCheck() {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMin = now.getMinutes();
+    if (currentMin < 25 || currentMin > 35) return; // läuft :30 herum
+    const heuteStr = now.toDateString();
+    if (!d._smartReminderSent) d._smartReminderSent = {};
+    let sent = 0;
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || !u.started || istAdminId(uid) || u.inGruppe === false) continue;
+        const peakHour = _userPeakHour(uid);
+        if (peakHour === null) continue;
+        // 30 min vor Peak — also wenn aktuelle Stunde+1 == peakHour
+        if ((currentHour + 1) % 24 !== peakHour) continue;
+        if (d._smartReminderSent[uid] === heuteStr) continue;
+        // Nur senden wenn er heute noch keine Aktivität hatte
+        const heuteAktiv = Object.values(d.links||{}).some(l => {
+            if (!l.timestamp || new Date(l.timestamp).toDateString() !== heuteStr) return false;
+            if (String(l.user_id) === String(uid)) return true;
+            return (Array.isArray(l.likes) ? l.likes : []).map(String).includes(String(uid));
+        });
+        if (heuteAktiv) continue;
+        const text = '⏰ *Deine Peak-Zeit*\n\nHey '+(u.spitzname||u.name||'')+', deine aktive Stunde ist gleich ('+peakHour.toString().padStart(2,'0')+':00). Heute noch nichts geliked oder gepostet — schau kurz vorbei!';
+        try { await bot.telegram.sendMessage(Number(uid), text, { parse_mode: 'Markdown' }); } catch(e) {}
+        sendAppPush(uid, '⏰ Deine Peak-Zeit', 'Deine aktive Stunde ist gleich — schau vorbei!', '/feed').catch(()=>{});
+        d._smartReminderSent[uid] = heuteStr;
+        sent++;
+        await new Promise(r => setTimeout(r, 80));
+    }
+    if (sent) { speichern(); console.log('⏰ Smart-Reminder: ' + sent + ' DMs gesendet'); }
+}
+
 async function welcomeFunnelCheck() {
     if (!d.users) return;
     const now = Date.now();
@@ -2508,10 +2596,15 @@ async function zeitCheck() {
         if (h === 22 && m === 0)  einmalig('reminder',     () => likeErinnerung());
         if (h === 19 && m === 0)  einmalig('bonusReminder',() => bonusLinkErinnerung());
         if (h === 11 && m === 0)  einmalig('welcomeFunnel',() => welcomeFunnelCheck());
+        if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();
-            if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) { d.xpEvent.aktiv = true; speichernDebounced(); }
+            if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
+                d.xpEvent.aktiv = true; speichernDebounced();
+                const pct = Math.round((d.xpEvent.multiplier-1)*100);
+                broadcastAppPush('🚀 XP Event läuft!', '+'+pct+'% XP auf alle Aktionen — jetzt aktiv sein!', '/feed').catch(()=>{});
+            }
             if (d.xpEvent.aktiv && now > d.xpEvent.end) { d.xpEvent.aktiv = false; speichernDebounced(); }
         }
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
@@ -3971,6 +4064,7 @@ app.post('/like-superlink-api', async (req, res) => {
         const u = d.users[String(uid)];
         sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';
         addNotification(String(sl.uid), '❤️', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked!');
+        sendAppPush(String(sl.uid), '⭐ Superlink geliked!', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
         // Reminder-DM in Liker-Chat löschen
         if (sl.dmNotifications && sl.dmNotifications[String(uid)]) {
             bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[String(uid)]).catch(()=>{});
@@ -4031,6 +4125,7 @@ app.post('/post-superlink-api', async (req, res) => {
                     threadUrl2 ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl2 }]] } } : { parse_mode: 'Markdown' }
                 );
                 if (slApi && dmMsg?.message_id) slApi.dmNotifications[String(other.uid)] = dmMsg.message_id;
+                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (posterUser?.spitzname||posterUser?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
             } catch(e) {}
         }
         res.json({ok:true, slId});

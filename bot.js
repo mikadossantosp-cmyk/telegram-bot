@@ -251,11 +251,12 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     } catch(e) {}
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
     const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
+    const threadUrl = getFullEngagementThreadUrl();
     for (const other of otherPosters) {
         try {
             await bot.telegram.sendMessage(Number(other.uid),
-                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❤️ Jetzt liken', callback_data: 'sllike_' + slId }]] } }
+                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
+                threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
             );
         } catch(e) {}
     }
@@ -1777,6 +1778,9 @@ const _slWaiting = {};
 bot.action(/^sllike_(.+)$/, async (ctx) => {
     const slId = ctx.match[1];
     const uid = String(ctx.from.id);
+    if (ctx.callbackQuery?.message?.chat?.type === 'private') {
+        return ctx.answerCbQuery('❌ Liken ist nur direkt im Full-Engagement-Thread möglich!', { show_alert: true });
+    }
     if (slLikeInProgress.has(uid + '_' + slId)) return ctx.answerCbQuery('⏳');
     slLikeInProgress.add(uid + '_' + slId);
     try {
@@ -3822,11 +3826,12 @@ app.post('/post-superlink-api', async (req, res) => {
         // DM an alle anderen Poster dieser Woche
         const posterUser = d.users[String(uid)];
         const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));
+        const threadUrl2 = getFullEngagementThreadUrl();
         for (const other of otherPosters2) {
             try {
                 await bot.telegram.sendMessage(Number(other.uid),
-                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
-                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❤️ Jetzt liken', callback_data: 'sllike_' + slId }]] } }
+                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
+                    threadUrl2 ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl2 }]] } } : { parse_mode: 'Markdown' }
                 );
             } catch(e) {}
         }

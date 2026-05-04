@@ -287,6 +287,25 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
+async function cleanupOldSuperlinks() {
+    const currentWeek = getBerlinWeekKey();
+    const all = d.superlinks || {};
+    const oldIds = Object.keys(all).filter(id => all[id]?.week !== currentWeek);
+    if (!oldIds.length) return { removed: 0 };
+    let removed = 0;
+    for (const id of oldIds) {
+        const sl = all[id];
+        if (sl?.msg_id && GROUP_B_ID) {
+            try { await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id); } catch(e) {}
+        }
+        delete d.superlinks[id];
+        removed++;
+    }
+    speichern();
+    console.log(`🧹 Alte Superlinks gelöscht: ${removed}`);
+    return { removed };
+}
+
 setInterval(async () => {
     const now = new Date();
     const day = now.getDay(); // 0=So, 1=Mo, ..., 6=Sa
@@ -324,7 +343,17 @@ setInterval(async () => {
         speichern();
         await runEngagementCheck(false).catch(()=>{});
     }
+
+    // Montag 00:05 → Alte Superlinks der Vorwoche löschen
+    if (day === 1 && h === 0 && m === 5 && !d._seenEngagementJobs[wk+'_clean']) {
+        d._seenEngagementJobs[wk+'_clean'] = true;
+        speichern();
+        await cleanupOldSuperlinks().catch(e => console.log('cleanupOldSuperlinks Fehler:', e.message));
+    }
 }, 60000);
+
+// Beim Start: zurückgebliebene Superlinks aus früheren Wochen aufräumen
+setTimeout(() => { cleanupOldSuperlinks().catch(e => console.log('cleanupOldSuperlinks Startup Fehler:', e.message)); }, 15000);
 
 async function ensureFullEngagementThread() {
     if (d.fullEngagementThreadId) return d.fullEngagementThreadId;
@@ -1817,6 +1846,15 @@ bot.action(/^slrep_(.+)$/, async (ctx) => {
         }
         await ctx.answerCbQuery('✅ Superlink wurde gemeldet! Admins wurden informiert.', { show_alert: true });
     } catch(e) { console.log('slrep Fehler:', e.message); await ctx.answerCbQuery('❌ Fehler'); }
+});
+
+bot.command('cleansuperlinks', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('🧹 Räume alte Superlinks auf...');
+    try {
+        const result = await cleanupOldSuperlinks();
+        await ctx.reply(`✅ ${result.removed} alte Superlink(s) gelöscht.`);
+    } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
 });
 
 bot.command('checkengagement', async (ctx) => {

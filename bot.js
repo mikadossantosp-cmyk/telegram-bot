@@ -161,9 +161,11 @@ function isSuperLinkPostingAllowed() {
 }
 
 function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerNames) {
-    const topLikers = Object.values(likerNames||{}).slice(0,5);
-    const likerLine = topLikers.length ? '\n👥 ' + topLikers.join(', ') + (Object.keys(likerNames||{}).length > 5 ? ` +${Object.keys(likerNames).length-5}` : '') : '';
-    return `⭐ *SUPERLINK*\n\n👤 ${userName}${insta ? ' (@' + insta + ')' : ''}\n🔗 ${url}${caption ? '\n💬 ' + caption : ''}\n\n🙏 *Bitte Liken, Kommentieren, Teilen und Speichern\\!*\n\n━━━━━━━━━━━━━━\n❤️ ${likeCount} Like${likeCount!==1?'s':''}${likerLine}\n━━━━━━━━━━━━━━`;
+    const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const topLikers = Object.values(likerNames||{}).slice(0,5).map(esc);
+    const more = Object.keys(likerNames||{}).length > 5 ? ` +${Object.keys(likerNames).length-5}` : '';
+    const likerLine = topLikers.length ? '\n👥 ' + topLikers.join(', ') + more : '';
+    return `⭐ <b>SUPERLINK</b>\n\n👤 ${esc(userName)}${insta ? ' (@' + esc(insta) + ')' : ''}\n🔗 ${esc(url)}${caption ? '\n💬 ' + esc(caption) : ''}\n\n🙏 <b>Bitte Liken, Kommentieren, Teilen und Speichern!</b>\n\n━━━━━━━━━━━━━━\n❤️ ${likeCount} Like${likeCount!==1?'s':''}${likerLine}\n━━━━━━━━━━━━━━`;
 }
 
 function buildSuperLinkButtons(slId, likeCount) {
@@ -181,10 +183,10 @@ async function updateSuperLinkCard(slId) {
     const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u?.instagram, sl.url, sl.caption, sl.likes.length, sl.likerNames);
     try {
         await bot.telegram.editMessageText(GROUP_B_ID, sl.msg_id, undefined, cardText, {
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             reply_markup: buildSuperLinkButtons(slId, sl.likes.length)
         });
-    } catch(e) {}
+    } catch(e) { console.log('updateSuperLinkCard Fehler:', e.message); }
 }
 
 async function handleSuperlink(ctx, senderUid, senderUser, text) {
@@ -240,7 +242,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     const u = d.users[uidStr];
     const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||ctx.from.first_name||'User', u?.instagram, url, caption, 0, {});
     const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         message_thread_id: Number(feThreadId),
         reply_markup: buildSuperLinkButtons(slId, 0)
     });
@@ -2115,7 +2117,7 @@ bot.command('fixsuperlink', async (ctx) => {
     const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u?.instagram, sl.url, sl.caption, sl.likes.length, sl.likerNames||{});
     try {
         const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             message_thread_id: Number(feThreadId),
             reply_markup: buildSuperLinkButtons(slId, sl.likes.length)
         });
@@ -3975,7 +3977,7 @@ app.post('/post-superlink-api', async (req, res) => {
     const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||'User', u.instagram, url, caption||'', 0, {});
     try {
         const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             message_thread_id: Number(feThreadId),
             reply_markup: buildSuperLinkButtons(slId, 0)
         });

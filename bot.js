@@ -859,6 +859,16 @@ bot.command('daily', async (ctx) => {
     await ctx.reply('🎁 *Daily Bonus!*\n\n+' + bonus + ' XP erhalten!\n\n━━━━━━━━━━━━━━\n⭐ ' + u.xp + ' XP  ·  ' + u.role + '\n━━━━━━━━━━━━━━', { parse_mode: 'Markdown' });
 });
 
+bot.command(['bonuslinks','bonus','bonuslink'], async (ctx) => {
+    const uid = ctx.from.id;
+    const u = user(uid, ctx.from.first_name);
+    const count = d.bonusLinks?.[String(uid)] || 0;
+    if (count <= 0) {
+        return ctx.reply('🎁 *Bonus Links*\n\nDu hast aktuell *0 Bonus Links*.\n\nBonus Links bekommst du:\n• 🛒 im Shop für 5 💎 (`/shop`)\n• 🏆 als Gewinnspiel-Preis\n• 🎯 als Mission-Belohnung\n\nMit einem Bonus Link darfst du an einem Tag *einen zusätzlichen Link* posten.', { parse_mode: 'Markdown' });
+    }
+    return ctx.reply('🎁 *Deine Bonus Links: ' + count + '*\n\nDu kannst heute *' + count + ' zusätzliche Link' + (count===1?'':'s') + '* posten — über das normale Tageslimit hinaus.\n\n📲 Einfach wie gewohnt einen Link in die Gruppe oder per `/post` schicken — der Bonus wird automatisch verwendet.', { parse_mode: 'Markdown' });
+});
+
 bot.command('stats', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const alleChats = Object.values(d.chats);
@@ -939,7 +949,7 @@ bot.command('fixlink', async (ctx) => {
         );
     } catch (e) { return ctx.reply('❌ Fehler: ' + e.message); }
     const mapKey = MEINE_GRUPPE + '_' + msgId;
-    d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now() };
+    d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
     if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; updateStreak(String(userId)); }
     speichern();
 });
@@ -1606,7 +1616,7 @@ bot.on('message', async (ctx, next) => {
             } catch (e) { console.log('Fehler beim Posten:', e.message); speichern(); return; }
 
             const mapKey = MEINE_GRUPPE + '_' + msgId;
-            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now() };
+            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
 
             if (!istAdminId(uid)) {
                 try {
@@ -1636,7 +1646,7 @@ bot.on('message', async (ctx, next) => {
             }
         } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
-            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now() };
+            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
         }
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }
@@ -1679,6 +1689,8 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
         lnk.likes.add(uid);
         lnk.likerNames[uid] = { name: ctx.from.first_name, insta: d.users[uid]?.instagram || null };
+        if (!lnk.likeSource) lnk.likeSource = { app: 0, telegram: 0 };
+        lnk.likeSource.telegram = (lnk.likeSource.telegram||0) + 1;
         const anz = lnk.likes.size;
         const poster = user(lnk.user_id, lnk.user_name);
         poster.totalLikes++;
@@ -2274,6 +2286,27 @@ async function abendM1Warnung() {
     }
 }
 
+async function bonusLinkErinnerung() {
+    const entries = Object.entries(d.bonusLinks||{}).filter(([uid,c]) => c > 0 && d.users[uid]?.started && d.users[uid]?.inGruppe !== false && !istAdminId(uid));
+    let sent = 0;
+    for (const [uid, count] of entries) {
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '🎁 *Bonus Links Erinnerung*\n\n' +
+                'Du hast noch *' + count + ' Bonus Link' + (count===1?'':'s') + '* übrig!\n\n' +
+                'Damit darfst du heute *' + count + ' zusätzliche' + (count===1?'n':'') + ' Link' + (count===1?'':'s') + '* posten — über das Tageslimit hinaus.\n\n' +
+                '📲 Einfach wie gewohnt einen Instagram-Link in die Gruppe schicken, der Bonus wird automatisch verwendet.\n\n' +
+                'ℹ️ Status jederzeit per /bonuslinks',
+                { parse_mode: 'Markdown' }
+            );
+            sent++;
+            await new Promise(r => setTimeout(r, 50));
+        } catch(e) {}
+    }
+    if (sent > 0) console.log('🎁 Bonus-Links Erinnerung an ' + sent + ' User gesendet');
+    return sent;
+}
+
 
 async function gruppenMitgliederPruefen() {
     console.log('🔍 Prüfe Gruppenmitglieder...');
@@ -2355,6 +2388,7 @@ async function zeitCheck() {
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
         if (h === 22 && m === 0)  einmalig('reminder',     () => likeErinnerung());
+        if (h === 19 && m === 0)  einmalig('bonusReminder',() => bonusLinkErinnerung());
         if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();
@@ -2517,7 +2551,7 @@ app.post('/bridge-event', async (req, res) => {
         if (event.type === 'post_forwarded') {
             if (event.meta?.groupBMsgId && event.meta?.groupBChatId) {
                 const msgId = event.meta.groupBMsgId;
-                const linkData = { chat_id: event.meta.groupBChatId, user_id: Number(event.userId), user_name: event.userName, text: event.meta.linkText || '', likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now() };
+                const linkData = { chat_id: event.meta.groupBChatId, user_id: Number(event.userId), user_name: event.userName, text: event.meta.linkText || '', likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
                 const mapKey = MEINE_GRUPPE + '_' + msgId;
                 d.links[mapKey] = linkData;
                 const url = event.meta.linkText || '';
@@ -2566,6 +2600,8 @@ app.post('/bridge-event', async (req, res) => {
                 link.likes.add(uidNum);
                 if (!link.likerNames) link.likerNames = {};
                 link.likerNames[uidNum] = { name: name, insta: d.users[uid]?.instagram || null };
+                if (!link.likeSource) link.likeSource = { app: 0, telegram: 0 };
+                link.likeSource.telegram = (link.likeSource.telegram||0) + 1;
             }
 
             // FIX 1: XP nur vergeben wenn fromBridge=true (Bridge Bot Like, nicht eigener Main Bot Like)
@@ -2922,6 +2958,8 @@ app.get('/like-from-app', async (req, res) => {
         const u = d.users[uid];
         if (!lnk.likerNames) lnk.likerNames = {};
         lnk.likerNames[uidNum] = { name: u?.name||'User', insta: u?.instagram||null };
+        if (!lnk.likeSource) lnk.likeSource = { app: 0, telegram: 0 };
+        lnk.likeSource.app = (lnk.likeSource.app||0) + 1;
         // DM-Benachrichtigung löschen
         const dmKey = String(lnk.counter_msg_id);
         const dmUidStr = String(uid);
@@ -3117,7 +3155,9 @@ app.post('/post-link-from-app', async (req, res) => {
             likes: new Set(),
             likerNames: {},
             counter_msg_id: botMsg.message_id,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            origin: 'app',
+            likeSource: { app: 0, telegram: 0 }
         };
         d.links[mapKey] = linkData;
         console.log('[APP-LINK] Link gespeichert als:', mapKey);

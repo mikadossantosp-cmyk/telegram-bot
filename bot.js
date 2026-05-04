@@ -291,27 +291,38 @@ async function cleanupOldSuperlinks() {
     const currentWeek = getBerlinWeekKey();
     const all = d.superlinks || {};
     const oldIds = Object.keys(all).filter(id => all[id]?.week !== currentWeek);
-    if (!oldIds.length) return { removed: 0, tgDeleted: 0, tgFailed: 0 };
+    if (!oldIds.length) return { totalOld: 0, removed: 0, tgDeleted: 0, tgFailed: 0, failures: [] };
     let removed = 0, tgDeleted = 0, tgFailed = 0;
     const failures = [];
     for (const id of oldIds) {
         const sl = all[id];
+        let tgOk = !sl?.msg_id; // ohne msg_id direkt aufräumen
         if (sl?.msg_id && GROUP_B_ID) {
             try {
                 await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id);
+                tgOk = true;
                 tgDeleted++;
             } catch(e) {
                 tgFailed++;
                 failures.push(`${id}: ${e.description || e.message}`);
             }
         }
-        delete d.superlinks[id];
-        removed++;
+        if (tgOk) {
+            delete d.superlinks[id];
+            removed++;
+        }
     }
     speichern();
-    console.log(`🧹 Alte Superlinks: ${removed} aus Daten entfernt, Telegram ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen`);
+    console.log(`🧹 Alte Superlinks: ${removed}/${oldIds.length} entfernt, Telegram ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen`);
     if (failures.length) console.log('Telegram-Löschfehler:', failures.slice(0,5).join(' | '));
-    return { removed, tgDeleted, tgFailed, failures };
+    return { totalOld: oldIds.length, removed, tgDeleted, tgFailed, failures };
+}
+
+function getFullEngagementThreadUrl() {
+    if (!d.fullEngagementThreadId || !GROUP_B_ID) return null;
+    const idStr = String(GROUP_B_ID);
+    if (idStr.startsWith('-100')) return `https://t.me/c/${idStr.slice(4)}/${d.fullEngagementThreadId}`;
+    return null;
 }
 
 setInterval(async () => {
@@ -1342,7 +1353,9 @@ bot.on('message', async (ctx, next) => {
     return next();
 });
 
-bot.on('message', async (ctx) => {
+bot.on('message', async (ctx, next) => {
+    // Befehle (/foo) durchreichen an die bot.command(...) Handler weiter unten
+    if (ctx.message?.text?.startsWith('/')) return next();
     try {
         const uid_msg = ctx.from.id;
 
@@ -1857,18 +1870,67 @@ bot.action(/^slrep_(.+)$/, async (ctx) => {
 });
 
 bot.command('cleansuperlinks', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return;
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     await ctx.reply('🧹 Räume alte Superlinks auf...');
     try {
         const r = await cleanupOldSuperlinks();
-        let msg = `✅ Daten: ${r.removed} entfernt\n` +
-                  `📨 Telegram: ${r.tgDeleted} gelöscht, ${r.tgFailed} fehlgeschlagen`;
+        let msg = `📊 Alte Superlinks gefunden: ${r.totalOld}\n` +
+                  `✅ Daten entfernt: ${r.removed}\n` +
+                  `📨 Telegram gelöscht: ${r.tgDeleted}\n` +
+                  `❌ Telegram fehlgeschlagen: ${r.tgFailed}`;
         if (r.tgFailed) {
-            msg += '\n\n⚠️ Telegram-Fehler (oft: Bot ist nicht Admin oder Nachricht zu alt):\n' +
+            msg += '\n\n⚠️ Fehler (Bot braucht Admin + "Nachrichten löschen"-Recht):\n' +
                    (r.failures||[]).slice(0,5).map(f => '• ' + f).join('\n');
         }
         await ctx.reply(msg);
     } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
+});
+
+bot.command('listsuperlinks', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const all = d.superlinks || {};
+    const ids = Object.keys(all);
+    if (!ids.length) return ctx.reply('📭 Keine Superlinks im Speicher.');
+    const currentWeek = getBerlinWeekKey();
+    const lines = ids.slice(0, 40).map(id => {
+        const s = all[id];
+        const u = d.users[s.uid];
+        const name = u?.spitzname || u?.name || s.uid;
+        const tag = s.week === currentWeek ? '✅' : '🗑';
+        return `${tag} \`${s.week}\` | ${name} | msg ${s.msg_id || '-'}`;
+    });
+    await ctx.reply(`📋 Superlinks im Speicher (${ids.length}):\n\n` + lines.join('\n'), { parse_mode: 'Markdown' });
+});
+
+bot.command('superlinkdm', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    if (!d.superlinkDmSent) d.superlinkDmSent = {};
+    const force = (ctx.message.text || '').includes('force');
+    const url = getFullEngagementThreadUrl();
+    const linkLine = url ? `\n\n📲 *Hier posten:* ${url}` : '';
+    const userIds = Object.keys(d.users || {});
+    let sent = 0, skipped = 0, failed = 0;
+    await ctx.reply(`📤 Sende Superlink-DM an ${userIds.length} User${force ? ' (force-Mode)' : ''}...`);
+    for (const uid of userIds) {
+        const u = d.users[uid];
+        if (!u || !u.started) { skipped++; continue; }
+        if (!force && d.superlinkDmSent[uid]) { skipped++; continue; }
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '⭐ *Hast du schon deinen Superlink gesendet?*\n\n' +
+                'Jede Woche darfst du *einen* Superlink im Full Engagement Thread posten ' +
+                '(Elite+ darf 2). Wer postet, muss auch die anderen Superlinks engagen ' +
+                '(Liken, Kommentieren, Teilen, Speichern) — sonst gibt es −50 XP am Sonntag.' +
+                linkLine + '\n\nOder direkt im Bot mit /superlink <Instagram-Link>.',
+                { parse_mode: 'Markdown', disable_web_page_preview: true }
+            );
+            d.superlinkDmSent[uid] = Date.now();
+            sent++;
+        } catch(e) { failed++; }
+        await new Promise(r => setTimeout(r, 50));
+    }
+    speichern();
+    await ctx.reply(`✅ Fertig\n\n📤 Gesendet: ${sent}\n⏭ Übersprungen: ${skipped}\n❌ Fehlgeschlagen: ${failed}`);
 });
 
 bot.command('checkengagement', async (ctx) => {

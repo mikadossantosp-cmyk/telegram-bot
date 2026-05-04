@@ -271,12 +271,15 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
     const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
     const threadUrl = getFullEngagementThreadUrl();
+    const sl = d.superlinks[slId];
+    if (sl) sl.dmNotifications = sl.dmNotifications || {};
     for (const other of otherPosters) {
         try {
-            await bot.telegram.sendMessage(Number(other.uid),
+            const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
                 `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
                 threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
             );
+            if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
         } catch(e) {}
     }
 }
@@ -1831,6 +1834,11 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         await ctx.answerCbQuery('❤️ Geliked!');
         if (ctx.callbackQuery?.message?.chat?.type === 'private') {
             try { await ctx.deleteMessage(); } catch(e) {}
+        }
+        // Reminder-DM für diesen Superlink im Chat des Likers löschen
+        if (sl.dmNotifications && sl.dmNotifications[uid]) {
+            try { await bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[uid]); } catch(e) {}
+            delete sl.dmNotifications[uid];
         }
         speichern();
         await updateSuperLinkCard(slId);
@@ -3840,6 +3848,11 @@ app.post('/like-superlink-api', async (req, res) => {
         const u = d.users[String(uid)];
         sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';
         addNotification(String(sl.uid), '❤️', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked!');
+        // Reminder-DM in Liker-Chat löschen
+        if (sl.dmNotifications && sl.dmNotifications[String(uid)]) {
+            bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[String(uid)]).catch(()=>{});
+            delete sl.dmNotifications[String(uid)];
+        }
     }
     speichern();
     updateSuperLinkCard(slId).catch(()=>{});
@@ -3886,12 +3899,15 @@ app.post('/post-superlink-api', async (req, res) => {
         const posterUser = d.users[String(uid)];
         const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));
         const threadUrl2 = getFullEngagementThreadUrl();
+        const slApi = d.superlinks[slId];
+        if (slApi) slApi.dmNotifications = slApi.dmNotifications || {};
         for (const other of otherPosters2) {
             try {
-                await bot.telegram.sendMessage(Number(other.uid),
+                const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
                     `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
                     threadUrl2 ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl2 }]] } } : { parse_mode: 'Markdown' }
                 );
+                if (slApi && dmMsg?.message_id) slApi.dmNotifications[String(other.uid)] = dmMsg.message_id;
             } catch(e) {}
         }
         res.json({ok:true, slId});

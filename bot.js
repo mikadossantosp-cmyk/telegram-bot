@@ -291,19 +291,27 @@ async function cleanupOldSuperlinks() {
     const currentWeek = getBerlinWeekKey();
     const all = d.superlinks || {};
     const oldIds = Object.keys(all).filter(id => all[id]?.week !== currentWeek);
-    if (!oldIds.length) return { removed: 0 };
-    let removed = 0;
+    if (!oldIds.length) return { removed: 0, tgDeleted: 0, tgFailed: 0 };
+    let removed = 0, tgDeleted = 0, tgFailed = 0;
+    const failures = [];
     for (const id of oldIds) {
         const sl = all[id];
         if (sl?.msg_id && GROUP_B_ID) {
-            try { await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id); } catch(e) {}
+            try {
+                await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id);
+                tgDeleted++;
+            } catch(e) {
+                tgFailed++;
+                failures.push(`${id}: ${e.description || e.message}`);
+            }
         }
         delete d.superlinks[id];
         removed++;
     }
     speichern();
-    console.log(`🧹 Alte Superlinks gelöscht: ${removed}`);
-    return { removed };
+    console.log(`🧹 Alte Superlinks: ${removed} aus Daten entfernt, Telegram ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen`);
+    if (failures.length) console.log('Telegram-Löschfehler:', failures.slice(0,5).join(' | '));
+    return { removed, tgDeleted, tgFailed, failures };
 }
 
 setInterval(async () => {
@@ -1852,8 +1860,14 @@ bot.command('cleansuperlinks', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     await ctx.reply('🧹 Räume alte Superlinks auf...');
     try {
-        const result = await cleanupOldSuperlinks();
-        await ctx.reply(`✅ ${result.removed} alte Superlink(s) gelöscht.`);
+        const r = await cleanupOldSuperlinks();
+        let msg = `✅ Daten: ${r.removed} entfernt\n` +
+                  `📨 Telegram: ${r.tgDeleted} gelöscht, ${r.tgFailed} fehlgeschlagen`;
+        if (r.tgFailed) {
+            msg += '\n\n⚠️ Telegram-Fehler (oft: Bot ist nicht Admin oder Nachricht zu alt):\n' +
+                   (r.failures||[]).slice(0,5).map(f => '• ' + f).join('\n');
+        }
+        await ctx.reply(msg);
     } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
 });
 

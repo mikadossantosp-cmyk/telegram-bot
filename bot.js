@@ -1857,7 +1857,7 @@ bot.action(/^slrep_(.+)$/, async (ctx) => {
 });
 
 bot.command('cleansuperlinks', async (ctx) => {
-    if (!istAdminId(ctx.from.id)) return;
+    if (!await istAdmin(ctx, ctx.from.id)) return;
     await ctx.reply('🧹 Räume alte Superlinks auf...');
     try {
         const r = await cleanupOldSuperlinks();

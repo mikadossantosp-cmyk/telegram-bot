@@ -97,6 +97,7 @@ function laden() {
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
             newsletter: [], pinnedEngages: {},
+            weeklyHistory: [],
         };
         for (const [key, val] of Object.entries(defaults)) { if (!d[key]) d[key] = val; }
         const linkKeys = Object.keys(d.links).sort((a, b) => d.links[a].timestamp - d.links[b].timestamp);
@@ -1940,6 +1941,34 @@ bot.action(/^slrep_(.+)$/, async (ctx) => {
     } catch(e) { console.log('slrep Fehler:', e.message); await ctx.answerCbQuery('❌ Fehler'); }
 });
 
+bot.command('weekhistory', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const hist = d.weeklyHistory || [];
+    if (!hist.length) return ctx.reply('📅 Noch keine Wochen-Historie gespeichert.\n\nWird ab nächstem Wochenreset gefüllt.');
+    const last = hist.slice(-6).reverse();
+    let text = '📅 *Wochen-Historie* (letzte ' + last.length + ')\n━━━━━━━━━━━━━━\n\n';
+    for (const w of last) {
+        const dt = new Date(w.endedAt).toLocaleDateString('de-DE');
+        text += `📆 *KW ab ${w.weekKey}* (Ende: ${dt})\n`;
+        text += `   Total: ${w.total} XP · ${Object.keys(w.snapshot).length} User · ${w.reason}\n`;
+        for (let i=0; i<Math.min(3, w.top.length); i++) {
+            const m = ['🥇','🥈','🥉'][i];
+            text += `   ${m} ${w.top[i].name} — ${w.top[i].xp} XP\n`;
+        }
+        text += '\n';
+    }
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
+bot.command('forceweeklyreset', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const archived = archiveWeeklyXP('manual');
+    d.weeklyXP = {};
+    d.weeklyReset = Date.now();
+    speichern();
+    await ctx.reply(archived ? '✅ Weekly archiviert & resettet' : '✅ Reset (nichts zu archivieren)');
+});
+
 bot.command('syncsldms', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     await ctx.reply('🧹 Synchronisiere Superlink-DMs...');
@@ -2428,7 +2457,20 @@ async function zeitCheck() {
         };
         if (h === 3  && m === 0)  einmalig('backup',       () => backup());
         if (h === 4  && m === 0)  einmalig('memberCheck', () => gruppenMitgliederPruefen());
-        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => { d.wochenMissionen = {}; console.log('✅ Wochenmissionen resettet'); speichern(); });
+        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
+            d.wochenMissionen = {};
+            // Fallback: falls /gewinnspiel-abschluss vom Announcer nicht durchlief, hier resetten
+            const lastReset = d.weeklyReset || 0;
+            const sechsTage = 6*24*3600*1000;
+            if (Date.now() - lastReset > sechsTage) {
+                if (archiveWeeklyXP('fallback-monday')) console.log('💾 weeklyXP archiviert (fallback)');
+                d.weeklyXP = {};
+                d.weeklyReset = Date.now();
+                console.log('✅ weeklyXP resettet (fallback)');
+            }
+            console.log('✅ Wochenmissionen resettet');
+            speichern();
+        });
         if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
         if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
@@ -2703,11 +2745,23 @@ app.post('/gewinnspiel-abschluss', async (req, res) => {
         d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid, datum: new Date().toLocaleDateString() });
         d.wochenGewinnspiel.letzteAuslosung = Date.now();
     }
+    archiveWeeklyXP('gewinnspiel');
     d.weeklyXP = {}; d.weeklyReset = Date.now();
     speichern();
     await weeklyRankingDM();
     res.json({ ok: true });
 });
+
+function archiveWeeklyXP(reason='auto') {
+    const snapshot = Object.assign({}, d.weeklyXP||{});
+    const total = Object.values(snapshot).reduce((s,x)=>s+x,0);
+    if (!Object.keys(snapshot).length) return false;
+    if (!d.weeklyHistory) d.weeklyHistory = [];
+    const sortedTop = Object.entries(snapshot).filter(([uid])=>d.users[uid] && !istAdminId(uid)).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([uid,xp])=>({uid, name:d.users[uid]?.name||'?', xp}));
+    d.weeklyHistory.push({ weekKey: getBerlinWeekKey(), endedAt: Date.now(), reason, total, top: sortedTop, snapshot });
+    while (d.weeklyHistory.length > 26) d.weeklyHistory.shift(); // 6 Monate aufheben
+    return true;
+}
 
 
 // ================================

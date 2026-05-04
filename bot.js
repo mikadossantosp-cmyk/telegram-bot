@@ -348,6 +348,28 @@ function getFullEngagementThreadUrl() {
     return null;
 }
 
+async function syncSuperlinkDMs() {
+    let deleted = 0, failed = 0;
+    for (const sl of Object.values(d.superlinks||{})) {
+        if (!sl?.dmNotifications) continue;
+        const likers = (Array.isArray(sl.likes) ? sl.likes : []).map(String);
+        for (const uid of Object.keys(sl.dmNotifications)) {
+            if (!likers.includes(String(uid))) continue;
+            const msgId = sl.dmNotifications[uid];
+            try {
+                await bot.telegram.deleteMessage(Number(uid), msgId);
+                deleted++;
+            } catch(e) { failed++; }
+            delete sl.dmNotifications[uid];
+        }
+    }
+    if (deleted || failed) {
+        speichern();
+        console.log(`🧹 syncSuperlinkDMs: ${deleted} DMs gelöscht, ${failed} fehlgeschlagen`);
+    }
+    return { deleted, failed };
+}
+
 setInterval(async () => {
     const now = new Date();
     const day = now.getDay(); // 0=So, 1=Mo, ..., 6=Sa
@@ -396,6 +418,12 @@ setInterval(async () => {
 
 // Beim Start: zurückgebliebene Superlinks aus früheren Wochen aufräumen
 setTimeout(() => { cleanupOldSuperlinks().catch(e => console.log('cleanupOldSuperlinks Startup Fehler:', e.message)); }, 15000);
+
+// Beim Start: Reminder-DMs für bereits gelikete Superlinks aufräumen
+setTimeout(() => { syncSuperlinkDMs().catch(e => console.log('syncSuperlinkDMs Startup Fehler:', e.message)); }, 25000);
+
+// Alle 3 Minuten: für jeden Liker dessen Reminder-DM noch hängt → löschen
+setInterval(() => { syncSuperlinkDMs().catch(()=>{}); }, 3*60*1000);
 
 async function ensureFullEngagementThread() {
     if (d.fullEngagementThreadId) return d.fullEngagementThreadId;
@@ -1910,6 +1938,15 @@ bot.action(/^slrep_(.+)$/, async (ctx) => {
         }
         await ctx.answerCbQuery('✅ Superlink wurde gemeldet! Admins wurden informiert.', { show_alert: true });
     } catch(e) { console.log('slrep Fehler:', e.message); await ctx.answerCbQuery('❌ Fehler'); }
+});
+
+bot.command('syncsldms', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    await ctx.reply('🧹 Synchronisiere Superlink-DMs...');
+    try {
+        const r = await syncSuperlinkDMs();
+        await ctx.reply('✅ Sync fertig\n\n📨 DMs gelöscht: ' + r.deleted + '\n❌ Fehlgeschlagen: ' + r.failed);
+    } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
 });
 
 bot.command('cleansuperlinks', async (ctx) => {

@@ -22,6 +22,25 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// App-Usage-Tracking: erfasst wer wann welche Endpoints in der CreatorBoost-App benutzt
+app.use((req, res, next) => {
+    try {
+        if (req.path === '/data' || req.path.startsWith('/bild/')) return next();
+        const uid = String(req.query?.uid || req.body?.uid || req.body?.user_id || req.query?.user_id || '');
+        if (!uid || !/^\d+$/.test(uid)) return next();
+        if (!d.appActivity) d.appActivity = {};
+        const e = d.appActivity[uid] || (d.appActivity[uid] = { firstSeen: Date.now(), lastSeen: 0, sessions: 0, totalCalls: 0, lastEndpoint: '', endpoints: {} });
+        const now = Date.now();
+        if (!e.lastSeen || (now - e.lastSeen) > 5*60*1000) e.sessions = (e.sessions||0) + 1; // 5-Min-Lücke = neue Session
+        e.lastSeen = now;
+        e.totalCalls = (e.totalCalls||0) + 1;
+        const ep = (req.path.replace(/^\/+/, '').split('/')[0] || 'root').slice(0,40);
+        e.lastEndpoint = ep;
+        e.endpoints[ep] = (e.endpoints[ep]||0) + 1;
+    } catch(_) {}
+    next();
+});
+
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
 let d = {

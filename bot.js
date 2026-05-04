@@ -2362,6 +2362,35 @@ async function abendM1Warnung() {
     }
 }
 
+async function welcomeFunnelCheck() {
+    if (!d.users) return;
+    const now = Date.now();
+    const stages = [
+        { day: 1, key: 'wf1', text: '👋 *Hi {name}!*\n\nDu bist jetzt 1 Tag dabei. Schon alles eingerichtet?\n\n✅ Bot gestartet — perfekt!\n📸 Instagram noch nicht verbunden? → /setinsta\n📋 Profil komplett? → /profil\n\nFragen? Antworte einfach hier oder schau /help.' },
+        { day: 3, key: 'wf3', text: '🚀 *3 Tage in der Community, {name}!*\n\nWie läufts?\n\n🔗 Schon deinen ersten Link gepostet? Du bekommst XP und Likes von allen!\n🎯 Schau dir die Missionen an: /missionen\n⭐ Highlight: 1× pro Woche darfst du einen *Superlink* posten den jeder engagen muss → /superlink' },
+        { day: 7, key: 'wf7', text: '🎉 *1 Woche dabei, {name}!*\n\nKlasse dass du am Ball bleibst! Hier dein Status:\n\n⭐ {xp} XP gesammelt\n🏅 Badge: {role}\n\n💎 Diamanten verdienen geht über Missionen. Damit kannst du im Shop (/shop) Extra-Links und Superlinks kaufen!\n\n🤝 Wenn du Fragen hast oder etwas brauchst — schreib einfach hier.' },
+    ];
+    let sent = 0;
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (!u || !u.joinDate || !u.started || istAdminId(uid) || u.inGruppe === false) continue;
+        if (!u.welcomeFunnel) u.welcomeFunnel = {};
+        const daysSince = Math.floor((now - u.joinDate) / 86400000);
+        for (const s of stages) {
+            if (daysSince >= s.day && !u.welcomeFunnel[s.key]) {
+                const txt = s.text.replace(/\{name\}/g, u.spitzname||u.name||'').replace(/\{xp\}/g, String(u.xp||0)).replace(/\{role\}/g, u.role||'🆕 New');
+                try {
+                    await bot.telegram.sendMessage(Number(uid), txt, { parse_mode: 'Markdown' });
+                    u.welcomeFunnel[s.key] = now;
+                    sent++;
+                    await new Promise(r => setTimeout(r, 80));
+                } catch(e) {}
+                break; // pro User max eine Stufe pro Lauf
+            }
+        }
+    }
+    if (sent) { speichern(); console.log('👋 Welcome-Funnel: ' + sent + ' DMs gesendet'); }
+}
+
 async function bonusLinkErinnerung() {
     const entries = Object.entries(d.bonusLinks||{}).filter(([uid,c]) => c > 0 && d.users[uid]?.started && d.users[uid]?.inGruppe !== false && !istAdminId(uid));
     let sent = 0;
@@ -2478,6 +2507,7 @@ async function zeitCheck() {
         if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
         if (h === 22 && m === 0)  einmalig('reminder',     () => likeErinnerung());
         if (h === 19 && m === 0)  einmalig('bonusReminder',() => bonusLinkErinnerung());
+        if (h === 11 && m === 0)  einmalig('welcomeFunnel',() => welcomeFunnelCheck());
         if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();

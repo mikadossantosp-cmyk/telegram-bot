@@ -3503,6 +3503,23 @@ app.post('/mark-messages-read', (req, res) => {
     res.json({ok:true});
 });
 
+app.post('/edit-message-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, chatKey, timestamp, newText } = req.body || {};
+    if (!uid || !chatKey || !timestamp || typeof newText !== 'string') return res.json({ok:false, error:'Fehlende Felder'});
+    const arr = d.messages?.[chatKey];
+    if (!arr) return res.json({ok:false, error:'Chat nicht gefunden'});
+    const msg = arr.find(m => Number(m.timestamp) === Number(timestamp) && String(m.from) === String(uid));
+    if (!msg) return res.json({ok:false, error:'Nachricht nicht gefunden oder nicht von dir'});
+    if (Date.now() - msg.timestamp > 5*60*1000) return res.json({ok:false, error:'Bearbeitungs-Limit (5 Min) überschritten'});
+    if (msg.image || msg.audio) return res.json({ok:false, error:'Nur Text-Nachrichten editierbar'});
+    msg.text = String(newText||'').slice(0, 500).trim();
+    msg.edited = true;
+    msg.editedAt = Date.now();
+    speichern();
+    res.json({ok:true});
+});
+
 app.post('/delete-dm-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { chatKey, timestamp, uid } = req.body || {};

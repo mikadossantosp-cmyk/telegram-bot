@@ -3433,8 +3433,9 @@ app.post('/follow-api', (req, res) => {
     const followerUid = req.body && req.body.followerUid ? String(req.body.followerUid) : '';
     const targetUid = req.body && req.body.targetUid ? String(req.body.targetUid) : '';
     if (!followerUid || !targetUid) return res.json({ok:false, error:'Fehlende UIDs'});
-    if (!d.users[followerUid]) return res.json({ok:false, error:'Follower nicht gefunden ('+followerUid+')'});
-    if (!d.users[targetUid]) return res.json({ok:false, error:'Target nicht gefunden ('+targetUid+')'});
+    // Auto-create Follower-Eintrag falls fehlt (App-Only User)
+    if (!d.users[followerUid]) user(followerUid, '');
+    if (!d.users[targetUid]) return res.json({ok:false, error:'Ziel-User nicht gefunden ('+targetUid+')'});
     if (!Array.isArray(d.users[followerUid].following)) d.users[followerUid].following = [];
     if (!Array.isArray(d.users[targetUid].followers)) d.users[targetUid].followers = [];
     // Konsistenz: alles als String speichern damit indexOf zuverlässig matcht

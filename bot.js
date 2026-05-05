@@ -3039,7 +3039,7 @@ app.post('/bridge-event', async (req, res) => {
                     Number(link.counter_msg_id),
                     null,
                     posterLabel + '\n🔗 ' + link.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-                    { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + link.counter_msg_id)]]).reply_markup }
+                    { reply_markup: buildLinkButtons(link.counter_msg_id, anz) }
                 );
                 console.log('[LIKE_GIVEN] ✅ Telegram Counter updated:', anz);
             } catch(e) { console.log('[LIKE_GIVEN] Telegram update Fehler:', e.message); }
@@ -3411,7 +3411,7 @@ app.get('/like-from-app', async (req, res) => {
     bot.telegram.editMessageText(
         lnk.chat_id, lnk.counter_msg_id, null,
         posterLabel + '\n🔗 ' + lnk.text + '\n\n👍 ' + anz + ' Likes' + posterStats,
-        { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  ' + anz, 'like_' + lnk.counter_msg_id)]]).reply_markup }
+        { reply_markup: buildLinkButtons(lnk.counter_msg_id, anz) }
     ).catch(e => console.log('Telegram Sync Fehler:', e.message));
 
     if (liked && !istAdminId(uid)) {
@@ -3552,7 +3552,7 @@ app.post('/post-link-from-app', async (req, res) => {
         const botMsg = await bot.telegram.sendMessage(
             GROUP_A_ID,
             buildLinkKarte(u.spitzname||u.name||name, u.role||'🆕 New', url, 0, u.xp||0, isAdmin) + (caption ? '\n💬 ' + caption : ''),
-            { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('👍 Like  |  0', 'like_0')]]).reply_markup }
+            { reply_markup: buildLinkButtons(0, 0) }
         );
         console.log('[APP-LINK] Gesendet an Gruppe A, msgId:', botMsg.message_id);
 

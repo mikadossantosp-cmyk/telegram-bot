@@ -3769,11 +3769,50 @@ async function fethreadCreate(res) {
     res.json({ ok: true, threadId });
 }
 
-app.get('/thread-messages/:threadId', (req, res) => {
+// Quick-Sync: prüft die letzten N Nachrichten eines Threads parallel auf Telegram-Existenz
+const _qsBusy = new Set();
+const _qsLast = new Map();
+async function quickSyncThread(threadId, limit = 12) {
+    if (!GROUP_B_ID) return 0;
+    if (_qsBusy.has(threadId)) return 0; // schon dran
+    const last = _qsLast.get(threadId) || 0;
+    if (Date.now() - last < 8000) return 0; // 8s Throttle pro Thread
+    _qsBusy.add(threadId);
+    _qsLast.set(threadId, Date.now());
+    try {
+        const arr = d.threadMessages?.[threadId] || [];
+        const candidates = arr.filter(m => m && m.msg_id).slice(0, limit);
+        if (!candidates.length) return 0;
+        const results = await Promise.allSettled(candidates.map(m =>
+            bot.telegram.callApi('setMessageReaction', { chat_id: GROUP_B_ID, message_id: Number(m.msg_id), reaction: [], is_big: false })
+                .then(() => null)
+                .catch(e => {
+                    const desc = String(e.description || e.message || '').toLowerCase();
+                    if (desc.includes('not found') || desc.includes('to react') || desc.includes('message to') || e.code === 400) return Number(m.msg_id);
+                    return null;
+                })
+        ));
+        const toRemove = new Set(results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean));
+        if (toRemove.size) {
+            d.threadMessages[threadId] = arr.filter(m => !toRemove.has(Number(m.msg_id)));
+            const thr = (d.threads||[]).find(t => String(t.id) === threadId);
+            if (thr) { thr.last_msg = d.threadMessages[threadId][0] || null; thr.msg_count = d.threadMessages[threadId].length; }
+            if (threadId === 'general' && d.communityFeed?.length) {
+                d.communityFeed = d.communityFeed.filter(m => !toRemove.has(Number(m.msg_id)));
+            }
+            speichern();
+            console.log(`⚡ quickSyncThread ${threadId}: ${toRemove.size} entfernt`);
+        }
+        return toRemove.size;
+    } finally { _qsBusy.delete(threadId); }
+}
+
+app.get('/thread-messages/:threadId', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const tid = req.params.threadId;
+    // Quick-Sync: wartet max 1.5s auf Telegram-Probe der letzten 12 Nachrichten
+    try { await Promise.race([quickSyncThread(tid, 12), new Promise(r => setTimeout(r, 1500))]); } catch(_) {}
     let msgs = d.threadMessages[tid] || [];
-    // Fallback für 'general': communityFeed migrieren wenn threadMessages leer
     if (!msgs.length && tid === 'general' && d.communityFeed?.length) {
         msgs = d.communityFeed.map(m => ({
             uid: String(m.uid || ''), tgName: m.username || null,

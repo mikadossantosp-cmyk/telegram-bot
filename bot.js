@@ -1996,7 +1996,14 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
     const args = (ctx.message.text||'').split(/\s+/).slice(1);
     let targetUid = null, allText = args.join(' ');
     if (ctx.message.reply_to_message) {
-        targetUid = String(ctx.message.reply_to_message.from.id);
+        // Reply auf eine Superlink-Karte? → User über msg_id der Karte ermitteln
+        const replyMsgId = Number(ctx.message.reply_to_message.message_id);
+        const replySl = Object.values(d.superlinks||{}).find(s => Number(s.msg_id) === replyMsgId);
+        if (replySl) {
+            targetUid = String(replySl.uid);
+        } else {
+            targetUid = String(ctx.message.reply_to_message.from.id);
+        }
     } else {
         const target = args.shift() || '';
         allText = args.join(' ');

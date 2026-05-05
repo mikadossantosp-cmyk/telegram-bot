@@ -2012,6 +2012,15 @@ bot.command('forceweeklyreset', async (ctx) => {
     await ctx.reply(archived ? '✅ Weekly archiviert & resettet' : '✅ Reset (nichts zu archivieren)');
 });
 
+bot.command('syncthreaddeletes', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    await ctx.reply('🔄 Prüfe ob Telegram-Nachrichten gelöscht wurden...');
+    try {
+        const r = await syncDeletedThreadMessages();
+        await ctx.reply('✅ Sync fertig\n\n📨 Geprüft: ' + r.checked + '\n🗑️ Gelöscht: ' + r.removed + ' (waren auf Telegram nicht mehr vorhanden)');
+    } catch(e) { await ctx.reply('❌ Fehler: ' + e.message); }
+});
+
 bot.command('syncsldms', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     await ctx.reply('🧹 Synchronisiere Superlink-DMs...');
@@ -2597,6 +2606,7 @@ async function zeitCheck() {
         if (h === 19 && m === 0)  einmalig('bonusReminder',() => bonusLinkErinnerung());
         if (h === 11 && m === 0)  einmalig('welcomeFunnel',() => welcomeFunnelCheck());
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
+        if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();
@@ -3536,31 +3546,88 @@ app.post('/delete-dm-api', (req, res) => {
 app.post('/delete-thread-msg-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { threadId, timestamp, msgId, uid } = req.body || {};
-    if (!threadId || !timestamp) return res.json({ok:false});
-    const isAdmin = d.users?.[String(uid)]?.role?.includes('Admin');
+    if (!threadId || !timestamp) return res.json({ok:false, error:'Fehlende Felder'});
+    // Akzeptiere Admin via Role ODER via ADMIN_IDS env (robuster)
+    const userRole = d.users?.[String(uid)]?.role || '';
+    const isAdmin = userRole.includes('Admin') || istAdminId(uid);
     const msgs = d.threadMessages?.[threadId] || [];
-    let msg = msgs.find(m => m.timestamp === Number(timestamp));
+    let msg = msgs.find(m => Number(m.timestamp) === Number(timestamp));
     let isCFOnly = false;
     if (!msg && threadId === 'general' && d.communityFeed?.length) {
-        msg = d.communityFeed.find(m => m.timestamp === Number(timestamp));
+        msg = d.communityFeed.find(m => Number(m.timestamp) === Number(timestamp));
         if (msg) isCFOnly = true;
     }
-    if (!msg) return res.json({ok:false});
-    if (msg.uid && msg.uid !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff'});
-    if (!isCFOnly) d.threadMessages[threadId] = msgs.filter(m => m.timestamp !== Number(timestamp));
-    if (d.communityFeed) d.communityFeed = d.communityFeed.filter(m => m.timestamp !== Number(timestamp));
-    // Aktualisiere d.threads last_msg + msg_count
+    if (!msg) return res.json({ok:false, error:'Nachricht nicht gefunden (eventuell schon gelöscht)'});
+    if (msg.uid && String(msg.uid) !== String(uid) && !isAdmin) return res.json({ok:false, error:'Kein Zugriff (nicht eigene Nachricht)'});
+    if (!isCFOnly) d.threadMessages[threadId] = msgs.filter(m => Number(m.timestamp) !== Number(timestamp));
+    if (d.communityFeed) d.communityFeed = d.communityFeed.filter(m => Number(m.timestamp) !== Number(timestamp));
     const thr = (d.threads||[]).find(t => String(t.id) === threadId);
     if (thr) {
         thr.last_msg = d.threadMessages[threadId]?.[0] || null;
         thr.msg_count = d.threadMessages[threadId]?.length || 0;
     }
     speichern();
-    if (msgId && GROUP_B_ID) {
-        try { await bot.telegram.deleteMessage(GROUP_B_ID, Number(msgId)); } catch(e) {}
+    if ((msgId || msg.msg_id) && GROUP_B_ID) {
+        try { await bot.telegram.deleteMessage(GROUP_B_ID, Number(msgId || msg.msg_id)); }
+        catch(e) { console.log('Telegram-Löschen fehlgeschlagen:', e.description || e.message); }
     }
     res.json({ok:true});
 });
+
+// Auto-Sync: prüft alle ~30 Min ob Nachrichten in Telegram gelöscht wurden und entfernt sie aus threadMessages
+async function syncDeletedThreadMessages() {
+    if (!GROUP_B_ID) return { checked: 0, removed: 0 };
+    const tm = d.threadMessages || {};
+    let checked = 0, removed = 0;
+    for (const threadId of Object.keys(tm)) {
+        const arr = tm[threadId] || [];
+        const candidates = arr.filter(m => m && m.msg_id).slice(0, 30); // letzte 30 pro Thread
+        const toRemove = new Set();
+        for (const m of candidates) {
+            checked++;
+            try {
+                await bot.telegram.callApi('setMessageReaction', {
+                    chat_id: GROUP_B_ID,
+                    message_id: Number(m.msg_id),
+                    reaction: [],
+                    is_big: false
+                });
+            } catch(e) {
+                const desc = String(e.description || e.message || '').toLowerCase();
+                if (desc.includes('not found') || desc.includes('to react') || desc.includes('message_id_invalid') || desc.includes('message to') || e.code === 400) {
+                    toRemove.add(Number(m.msg_id));
+                }
+            }
+            await new Promise(r => setTimeout(r, 25));
+        }
+        if (toRemove.size) {
+            tm[threadId] = arr.filter(m => !toRemove.has(Number(m.msg_id)));
+            removed += toRemove.size;
+            const thr = (d.threads||[]).find(t => String(t.id) === threadId);
+            if (thr) { thr.last_msg = tm[threadId][0] || null; thr.msg_count = tm[threadId].length; }
+        }
+    }
+    if (d.communityFeed?.length) {
+        const cfRemove = new Set();
+        for (const m of d.communityFeed.slice(0, 30)) {
+            if (!m.msg_id) continue;
+            checked++;
+            try {
+                await bot.telegram.callApi('setMessageReaction', { chat_id: GROUP_B_ID, message_id: Number(m.msg_id), reaction: [], is_big: false });
+            } catch(e) {
+                const desc = String(e.description || e.message || '').toLowerCase();
+                if (desc.includes('not found') || desc.includes('to react') || desc.includes('message to') || e.code === 400) cfRemove.add(Number(m.msg_id));
+            }
+            await new Promise(r => setTimeout(r, 25));
+        }
+        if (cfRemove.size) {
+            d.communityFeed = d.communityFeed.filter(m => !cfRemove.has(Number(m.msg_id)));
+            removed += cfRemove.size;
+        }
+    }
+    if (removed) { speichern(); console.log(`🔄 syncDeletedThreadMessages: ${removed}/${checked} entfernt (Telegram-seitig gelöscht)`); }
+    return { checked, removed };
+}
 
 app.post('/send-group-message', async (req, res) => {
     const { text, uid } = req.body || {};

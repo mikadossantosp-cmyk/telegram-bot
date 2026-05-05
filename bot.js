@@ -3430,25 +3430,32 @@ app.get('/like-from-app', async (req, res) => {
 
 app.post('/follow-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { followerUid, targetUid } = req.body || {};
-    if (!followerUid || !targetUid) return res.json({ok:false});
-    if (!d.users[followerUid]) return res.json({ok:false});
-    if (!d.users[followerUid].following) d.users[followerUid].following = [];
-    if (!d.users[targetUid]) return res.json({ok:false});
-    if (!d.users[targetUid].followers) d.users[targetUid].followers = [];
+    const followerUid = req.body && req.body.followerUid ? String(req.body.followerUid) : '';
+    const targetUid = req.body && req.body.targetUid ? String(req.body.targetUid) : '';
+    if (!followerUid || !targetUid) return res.json({ok:false, error:'Fehlende UIDs'});
+    if (!d.users[followerUid]) return res.json({ok:false, error:'Follower nicht gefunden ('+followerUid+')'});
+    if (!d.users[targetUid]) return res.json({ok:false, error:'Target nicht gefunden ('+targetUid+')'});
+    if (!Array.isArray(d.users[followerUid].following)) d.users[followerUid].following = [];
+    if (!Array.isArray(d.users[targetUid].followers)) d.users[targetUid].followers = [];
+    // Konsistenz: alles als String speichern damit indexOf zuverlässig matcht
+    d.users[followerUid].following = d.users[followerUid].following.map(String);
+    d.users[targetUid].followers = d.users[targetUid].followers.map(String);
     const idx = d.users[followerUid].following.indexOf(targetUid);
+    let action = '';
     if (idx === -1) {
         d.users[followerUid].following.push(targetUid);
-        d.users[targetUid].followers.push(followerUid);
-        // Benachrichtigung
+        if (!d.users[targetUid].followers.includes(followerUid)) d.users[targetUid].followers.push(followerUid);
         const followerName = d.users[followerUid]?.spitzname || d.users[followerUid]?.name || 'Jemand';
-        addNotification(targetUid, '👤', followerName + ' folgt dir jetzt');
+        try { addNotification(targetUid, '👤', followerName + ' folgt dir jetzt'); } catch(e) {}
+        action = 'follow';
     } else {
         d.users[followerUid].following.splice(idx, 1);
         d.users[targetUid].followers = d.users[targetUid].followers.filter(id => id !== followerUid);
+        action = 'unfollow';
     }
     speichern();
-    res.json({ok:true});
+    console.log('[follow-api] ' + followerUid + ' ' + action + ' ' + targetUid);
+    res.json({ok:true, action});
 });
 
 app.post('/create-post-api', (req, res) => {

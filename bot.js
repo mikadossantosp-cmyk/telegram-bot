@@ -3462,12 +3462,20 @@ app.post('/mark-notifications-read', (req, res) => {
 
 app.post('/send-message-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { from, to, text, image, audio } = req.body || {};
+    const { from, to, text, image, audio, replyTo } = req.body || {};
     if (!from || !to || (!text?.trim() && !image && !audio)) return res.json({ok:false});
     if (!d.messages) d.messages = {};
     const chatKey = [String(from), String(to)].sort().join('_');
     if (!d.messages[chatKey]) d.messages[chatKey] = [];
-    d.messages[chatKey].push({ from: String(from), to: String(to), text: (text||'').slice(0,500), image: image||null, audio: audio||null, timestamp: Date.now(), read: false });
+    const msgEntry = { from: String(from), to: String(to), text: (text||'').slice(0,500), image: image||null, audio: audio||null, timestamp: Date.now(), read: false };
+    if (replyTo && (replyTo.text || replyTo.name)) {
+        msgEntry.replyTo = {
+            ts: Number(replyTo.ts) || 0,
+            name: String(replyTo.name||'').slice(0,40),
+            text: String(replyTo.text||'').slice(0,140)
+        };
+    }
+    d.messages[chatKey].push(msgEntry);
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     const fromUser = d.users[from];
     const senderName = fromUser?.spitzname || fromUser?.name || 'Jemand';

@@ -1452,13 +1452,31 @@ bot.on('left_chat_member', async (ctx) => {
 bot.on('message', async (ctx, next) => {
     if (ctx.chat?.id === GROUP_B_ID && ctx.message?.forum_topic_created) {
         const name = ctx.message.forum_topic_created.name;
-        const emoji = ctx.message.forum_topic_created.icon_emoji_id || '📌';
+        // icon_emoji_id ist eine Custom-Sticker-ID (numerisch) — nicht renderbar als Zeichen.
+        // Stattdessen Default-Pin nutzen; App rendert dann hash-basiertes Emoji aus dem Namen.
+        const rawEmoji = ctx.message.forum_topic_created.icon_emoji_id;
+        const emoji = (!rawEmoji || /^\d+$/.test(String(rawEmoji))) ? '📌' : String(rawEmoji);
         const topicId = String(ctx.message.message_id);
         if (!d.threads) d.threads = [];
         const existing = d.threads.find(t => String(t.id) === topicId);
         if (existing) { existing.name = name; existing.emoji = emoji; }
         else d.threads.push({ id: Number(topicId), name, emoji, last_msg: null, msg_count: 0 });
         speichern();
+    }
+    // Forum Topic edited: Namen synchronisieren wenn Admin im Telegram umbenennt
+    if (ctx.chat?.id === GROUP_B_ID && ctx.message?.forum_topic_edited) {
+        const ed = ctx.message.forum_topic_edited;
+        const topicId = String(ctx.message.message_thread_id || ctx.message.message_id);
+        if (d.threads) {
+            const t = d.threads.find(x => String(x.id) === topicId);
+            if (t) {
+                if (ed.name) t.name = ed.name;
+                if (ed.icon_emoji_id !== undefined) {
+                    t.emoji = (!ed.icon_emoji_id || /^\d+$/.test(String(ed.icon_emoji_id))) ? '📌' : String(ed.icon_emoji_id);
+                }
+                speichern();
+            }
+        }
     }
     return next();
 });
@@ -1588,9 +1606,23 @@ bot.on('message', async (ctx, next) => {
                 // Update or auto-create thread metadata
                 if (!d.threads) d.threads = [];
                 let thr = d.threads.find(t => String(t.id) === threadId);
+                // Fallback-Name aus reply_to_message.forum_topic_created (oft mitgesendet)
+                const ftc = ctx.message?.reply_to_message?.forum_topic_created;
+                const inferredName = ftc?.name;
+                const inferredRawEmoji = ftc?.icon_emoji_id;
+                const inferredEmoji = (!inferredRawEmoji || /^\d+$/.test(String(inferredRawEmoji))) ? '📌' : String(inferredRawEmoji);
                 if (!thr) {
-                    thr = { id: threadId === 'general' ? 'general' : Number(threadId), name: threadId === 'general' ? 'Allgemein' : `Thread ${threadId}`, emoji: threadId === 'general' ? '💬' : '📌', last_msg: null, msg_count: 0 };
+                    thr = {
+                        id: threadId === 'general' ? 'general' : Number(threadId),
+                        name: threadId === 'general' ? 'Allgemein' : (inferredName || `Thread ${threadId}`),
+                        emoji: threadId === 'general' ? '💬' : inferredEmoji,
+                        last_msg: null, msg_count: 0
+                    };
                     threadId === 'general' ? d.threads.unshift(thr) : d.threads.push(thr);
+                } else if (inferredName && (thr.name === `Thread ${threadId}` || !thr.name)) {
+                    // Backfill für früher auto-erstellte Threads ohne richtigen Namen
+                    thr.name = inferredName;
+                    if (inferredEmoji !== '📌' || thr.emoji === '📌') thr.emoji = inferredEmoji;
                 }
                 thr.last_msg = entry; thr.msg_count = d.threadMessages[threadId].length;
                 // Track daily group messages

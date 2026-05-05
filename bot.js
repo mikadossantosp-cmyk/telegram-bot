@@ -1048,6 +1048,36 @@ bot.command('extralink', async (ctx) => {
 bot.command('testxp', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; xpAddMitDaily(ctx.from.id, 50, ctx.from.first_name); speichern(); await ctx.reply('✅ +50 XP'); });
 bot.command('testwarn', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; const u = user(ctx.from.id, ctx.from.first_name); u.warnings++; speichern(); await ctx.reply('✅ Warn: ' + u.warnings + '/5'); });
 bot.command('testdaily', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; user(ctx.from.id, ctx.from.first_name).lastDaily = null; speichern(); await ctx.reply('✅ Daily reset!'); });
+// /setthread <name> [emoji]  — im jeweiligen Topic ausführen, setzt Name+Emoji für die App.
+// Zum Backfill von Threads die VOR dem forum_topic_created-Capture existierten.
+bot.command('setthread', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const tid = ctx.message?.message_thread_id;
+    if (!tid) return ctx.reply('⚠️ Bitte im jeweiligen Thread/Topic ausführen.');
+    const args = (ctx.message.text || '').replace(/^\/setthread(@\w+)?\s*/i, '').trim();
+    if (!args) return ctx.reply('Format: /setthread <Name> [Emoji]\nBeispiel: /setthread Tipps & Tricks 💡');
+    const parts = args.split(/\s+/);
+    let emoji = '📌';
+    let name = args;
+    const last = parts[parts.length - 1];
+    // Emoji-Heuristik: letztes Token ist ein Single-Symbol/Emoji (nicht alphanumerisch, max 4 chars)
+    if (parts.length > 1 && last.length <= 4 && !/^[a-z0-9_-]+$/i.test(last) && !/^\d+$/.test(last)) {
+        emoji = last;
+        name = parts.slice(0, -1).join(' ');
+    }
+    if (!d.threads) d.threads = [];
+    let thr = d.threads.find(t => String(t.id) === String(tid));
+    if (thr) { thr.name = name; thr.emoji = emoji; }
+    else d.threads.push({ id: Number(tid), name, emoji, last_msg: null, msg_count: 0 });
+    speichern();
+    await ctx.reply('✅ Thread gesetzt: ' + emoji + ' ' + name);
+});
+// /threadlist — übersicht aller bekannten threads (admin-only)
+bot.command('threadlist', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const list = (d.threads||[]).map(t => '• ' + (t.emoji||'📌') + ' ' + (t.name||('Thread '+t.id)) + ' (id ' + t.id + ')').join('\n');
+    await ctx.reply(list || 'Keine Threads gespeichert.');
+});
 bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });
 
 bot.command('dellink', async (ctx) => {

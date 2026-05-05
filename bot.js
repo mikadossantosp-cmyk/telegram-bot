@@ -562,11 +562,25 @@ function xpAddMitDaily(uid, menge, name) {
     const u = user(uid, name);
     let finalXP = menge;
     if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalXP = Math.round(menge * d.xpEvent.multiplier);
+    const alteBadge = u.role;
     u.xp += finalXP; u.level = level(u.xp); u.role = badge(u.xp);
     if (!d.dailyXP[uid]) d.dailyXP[uid] = 0;
     d.dailyXP[uid] += finalXP;
     if (!d.weeklyXP[uid]) d.weeklyXP[uid] = 0;
     d.weeklyXP[uid] += finalXP;
+    // Badge-Aufstieg auch hier — Vorher gingen Level-Ups via App-Aktionen (Like/Post/Comment) lautlos durch.
+    if (alteBadge !== u.role && u.role) {
+        if (!u.trophies) u.trophies = [];
+        const trophyMap = { '📘 Anfänger': '📘', '⬆️ Aufsteiger': '⬆️', '🏅 Erfahrener': '🏅', '👑 Elite': '👑', '🌟 Elite+': '🌟' };
+        const trophy = trophyMap[u.role];
+        if (trophy && !u.trophies.includes(trophy)) u.trophies.push(trophy);
+        const isElitePlus = u.role === '🌟 Elite+';
+        const levelUpExtra = isElitePlus ? '\n\n🌟 *Elite+ Bonus:* Du erhältst jetzt 2 Superlinks pro Woche!' : '';
+        bot.telegram.sendMessage(Number(uid),
+            '🎉 *Badge Aufstieg!*\n\n' + alteBadge + ' → ' + u.role + '\n\n━━━━━━━━━━━━━━\n⭐ ' + u.xp + ' XP\n━━━━━━━━━━━━━━\n\nWeiter so! 💪' + levelUpExtra,
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+    }
     return finalXP;
 }
 
@@ -1400,7 +1414,7 @@ bot.action('shopbuy_el', async (ctx) => {
         const u = d.users[uid];
         if (!u) return;
         if ((u.diamonds||0) < 5) return ctx.reply('❌ Nicht genug Diamanten (benötigt: 5, vorhanden: ' + (u.diamonds||0) + ')');
-        u.diamonds -= 5;
+        u.diamonds = (u.diamonds||0) - 5;
         if (!d.bonusLinks) d.bonusLinks = {};
         d.bonusLinks[uid] = (d.bonusLinks[uid] || 0) + 1;
         speichern();
@@ -1430,11 +1444,18 @@ bot.command('mycode', async (ctx) => {
     const uid = String(ctx.from.id);
     const u = user(ctx.from.id, ctx.from.first_name);
 
-    // Code generieren falls noch keiner existiert
+    // Code generieren falls noch keiner existiert. Mit firstName + 4 zufälligen Ziffern hatten
+    // mehrere "Max1234"-User Kollisionsrisiko (Login-Hijack: 1. Treffer gewinnt). Jetzt 8 zufällige
+    // Hex-Zeichen + Kollisionscheck gegen alle bestehenden Codes.
     if (!u.appCode) {
-        const name = (ctx.from.first_name||'user').toLowerCase().replace(/[^a-z0-9]/g,'');
-        const rand = Math.floor(1000 + Math.random() * 9000);
-        u.appCode = name + rand;
+        const taken = new Set(Object.values(d.users||{}).map(x => x.appCode).filter(Boolean));
+        const namePart = (ctx.from.first_name||'user').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8) || 'user';
+        let candidate;
+        do {
+            const rand = require('crypto').randomBytes(4).toString('hex'); // 8 hex chars, ~1 in 4 Mrd
+            candidate = namePart + rand;
+        } while (taken.has(candidate));
+        u.appCode = candidate;
         speichern();
     }
 
@@ -2830,8 +2851,17 @@ async function zeitCheck() {
             d._lastEvents[fullKey] = true;
             return fn();
         };
-        if (h === 3  && m === 0)  einmalig('backup',       () => backup());
-        if (h === 4  && m === 0)  einmalig('memberCheck', () => gruppenMitgliederPruefen());
+        // Einmal-pro-Stunde-pro-Tag: nimmt einen 5-Minuten-Toleranzfenster auf, damit setInterval-
+        // Drift nicht ganze Tage überspringt (vorher: einziger Tick auf m===0 — bei einer Verzögerung
+        // läuft missionenAuswerten/dailyRanking gar nicht).
+        const taeglich = (key, fn) => {
+            const fullKey = `${key}_${h}_${tagStr}`;
+            if (d._lastEvents[fullKey]) return;
+            d._lastEvents[fullKey] = true;
+            return fn();
+        };
+        if (h === 3  && m < 5)  taeglich('backup',       () => backup());
+        if (h === 4  && m < 5)  taeglich('memberCheck', () => gruppenMitgliederPruefen());
         if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
             d.wochenMissionen = {};
             // Fallback: falls /gewinnspiel-abschluss vom Announcer nicht durchlief, hier resetten
@@ -2846,15 +2876,15 @@ async function zeitCheck() {
             console.log('✅ Wochenmissionen resettet');
             speichern();
         });
-        if (h === 7  && m === 5)  einmalig('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
-        if (h === 12 && m === 0)  einmalig('missionen',    () => missionenAuswerten());
-        if (h === 22 && m === 0)  einmalig('abendwarnung', () => abendM1Warnung());
-        if (h === 22 && m === 0)  einmalig('reminder',     () => likeErinnerung());
-        if (h === 19 && m === 0)  einmalig('bonusReminder',() => bonusLinkErinnerung());
-        if (h === 11 && m === 0)  einmalig('welcomeFunnel',() => welcomeFunnelCheck());
+        if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
+        if (h === 12 && m < 5)  taeglich('missionen',    () => missionenAuswerten());
+        if (h === 22 && m < 5)  taeglich('abendwarnung', () => abendM1Warnung());
+        if (h === 22 && m < 5)  taeglich('reminder',     () => likeErinnerung());
+        if (h === 19 && m < 5)  taeglich('bonusReminder',() => bonusLinkErinnerung());
+        if (h === 11 && m < 5)  taeglich('welcomeFunnel',() => welcomeFunnelCheck());
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
-        if (h === 23 && m === 55) einmalig('dailyRanking', () => dailyRankingAbschluss());
+        if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();
             if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
@@ -3543,9 +3573,13 @@ app.post('/comment-api', (req, res) => {
     if (!d.comments[linkId]) d.comments[linkId] = [];
     d.comments[linkId].push({ uid, name, text: text.slice(0,200), timestamp: Date.now() });
     if (d.comments[linkId].length > 100) d.comments[linkId].shift();
-    // Post Owner benachrichtigen
-    const postOwnerUid = linkId.split('_')[0];
-    if (postOwnerUid && postOwnerUid !== uid && d.users[postOwnerUid]) {
+    // Post-Owner benachrichtigen. linkId ist eine counter_msg_id (oder selten ein "uid_ts"-Schlüssel),
+    // NICHT zwingend uid_irgendwas. Erst d.links lookup, dann notfalls als post-Schlüssel parsen.
+    let postOwnerUid = null;
+    const lnk = d.links?.[linkId] || Object.values(d.links||{}).find(l => String(l.counter_msg_id) === String(linkId));
+    if (lnk?.user_id) postOwnerUid = String(lnk.user_id);
+    else if (typeof linkId === 'string' && linkId.includes('_')) postOwnerUid = linkId.split('_')[0]; // legacy/post-Schlüssel
+    if (postOwnerUid && String(postOwnerUid) !== String(uid) && d.users[postOwnerUid]) {
         addNotification(postOwnerUid, '💬', (name||'Jemand') + ' hat kommentiert: ' + text.slice(0,40));
     }
     speichern();
@@ -4200,7 +4234,7 @@ app.post('/buy-item-api', (req, res) => {
     if (!price) return res.json({ok:false, error:'Unbekanntes Item'});
     const isAdmin = istAdminId(Number(uid));
     if (!isAdmin && (u.diamonds||0) < price) return res.json({ok:false, error:`Nicht genug Diamanten (benötigt: ${price})`});
-    if (!isAdmin) u.diamonds -= price;
+    if (!isAdmin) u.diamonds = (u.diamonds||0) - price;
     u.inventory.push(itemId);
     speichern();
     const itemNames = {
@@ -4233,7 +4267,7 @@ app.post('/buy-extralink-api', (req, res) => {
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     const isAdminEl = istAdminId(Number(uid));
     if (!isAdminEl && (u.diamonds||0) < 5) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 5)'});
-    if (!isAdminEl) u.diamonds -= 5;
+    if (!isAdminEl) u.diamonds = (u.diamonds||0) - 5;
     if (!d.bonusLinks) d.bonusLinks = {};
     d.bonusLinks[String(uid)] = (d.bonusLinks[String(uid)] || 0) + 1;
     speichern();

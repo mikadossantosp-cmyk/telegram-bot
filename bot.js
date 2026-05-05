@@ -2723,6 +2723,7 @@ app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;
     if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });
     const out = Object.assign({}, d);
+    out._adminIds = [...ADMIN_IDS];
 
     // Likes nach URL zusammenführen - Bridge Bot Links bekommen alle Likes
     const likesByUrl = {};

@@ -3575,31 +3575,20 @@ app.post('/delete-thread-msg-api', async (req, res) => {
     res.json({ok:true});
 });
 
-// Auto-Sync: prüft alle ~30 Min ob Nachrichten in Telegram gelöscht wurden und entfernt sie aus threadMessages
+// Auto-Sync: prüft alle ~30 Min ob Nachrichten in Telegram gelöscht wurden und entfernt sie
 async function syncDeletedThreadMessages() {
     if (!GROUP_B_ID) return { checked: 0, removed: 0 };
     const tm = d.threadMessages || {};
     let checked = 0, removed = 0;
     for (const threadId of Object.keys(tm)) {
         const arr = tm[threadId] || [];
-        const candidates = arr.filter(m => m && m.msg_id).slice(0, 30); // letzte 30 pro Thread
+        const candidates = arr.filter(m => m && m.msg_id).slice(0, 30);
         const toRemove = new Set();
         for (const m of candidates) {
             checked++;
-            try {
-                await bot.telegram.callApi('setMessageReaction', {
-                    chat_id: GROUP_B_ID,
-                    message_id: Number(m.msg_id),
-                    reaction: [],
-                    is_big: false
-                });
-            } catch(e) {
-                const desc = String(e.description || e.message || '').toLowerCase();
-                if (desc.includes('not found') || desc.includes('to react') || desc.includes('message_id_invalid') || desc.includes('message to') || e.code === 400) {
-                    toRemove.add(Number(m.msg_id));
-                }
-            }
-            await new Promise(r => setTimeout(r, 25));
+            const exists = await _probeMessageExists(m.msg_id);
+            if (exists === false) toRemove.add(Number(m.msg_id));
+            await new Promise(r => setTimeout(r, 30));
         }
         if (toRemove.size) {
             tm[threadId] = arr.filter(m => !toRemove.has(Number(m.msg_id)));
@@ -3613,20 +3602,16 @@ async function syncDeletedThreadMessages() {
         for (const m of d.communityFeed.slice(0, 30)) {
             if (!m.msg_id) continue;
             checked++;
-            try {
-                await bot.telegram.callApi('setMessageReaction', { chat_id: GROUP_B_ID, message_id: Number(m.msg_id), reaction: [], is_big: false });
-            } catch(e) {
-                const desc = String(e.description || e.message || '').toLowerCase();
-                if (desc.includes('not found') || desc.includes('to react') || desc.includes('message to') || e.code === 400) cfRemove.add(Number(m.msg_id));
-            }
-            await new Promise(r => setTimeout(r, 25));
+            const exists = await _probeMessageExists(m.msg_id);
+            if (exists === false) cfRemove.add(Number(m.msg_id));
+            await new Promise(r => setTimeout(r, 30));
         }
         if (cfRemove.size) {
             d.communityFeed = d.communityFeed.filter(m => !cfRemove.has(Number(m.msg_id)));
             removed += cfRemove.size;
         }
     }
-    if (removed) { speichern(); console.log(`🔄 syncDeletedThreadMessages: ${removed}/${checked} entfernt (Telegram-seitig gelöscht)`); }
+    if (removed) { speichern(); console.log(`🔄 syncDeletedThreadMessages: ${removed}/${checked} entfernt`); }
     return { checked, removed };
 }
 
@@ -3773,26 +3758,45 @@ async function fethreadCreate(res) {
 // Quick-Sync: prüft die letzten N Nachrichten eines Threads parallel auf Telegram-Existenz
 const _qsBusy = new Set();
 const _qsLast = new Map();
+async function _probeMessageExists(messageId) {
+    // forwardMessage zum Bot selbst — sicherste Methode um Existenz zu prüfen.
+    // Wir leiten an die erste ADMIN_ID weiter und löschen den Forward direkt wieder.
+    const sinkChatId = [...ADMIN_IDS][0];
+    if (!sinkChatId) return null; // ohne Sink können wir nicht prüfen
+    try {
+        const fwd = await bot.telegram.callApi('forwardMessage', {
+            chat_id: sinkChatId,
+            from_chat_id: GROUP_B_ID,
+            message_id: Number(messageId),
+            disable_notification: true
+        });
+        // Sofort wieder im Sink löschen damit Admin-DM sauber bleibt
+        if (fwd?.message_id) {
+            bot.telegram.deleteMessage(sinkChatId, fwd.message_id).catch(()=>{});
+        }
+        return true;
+    } catch(e) {
+        const desc = String(e.description || e.message || '').toLowerCase();
+        if (desc.includes('not found') || desc.includes('to forward') || desc.includes('message_id_invalid')) return false;
+        return null; // unbekannter Fehler — sicherheitshalber nicht löschen
+    }
+}
+
 async function quickSyncThread(threadId, limit = 12) {
     if (!GROUP_B_ID) return 0;
-    if (_qsBusy.has(threadId)) return 0; // schon dran
+    if (_qsBusy.has(threadId)) return 0;
     const last = _qsLast.get(threadId) || 0;
-    if (Date.now() - last < 8000) return 0; // 8s Throttle pro Thread
+    if (Date.now() - last < 8000) return 0;
     _qsBusy.add(threadId);
     _qsLast.set(threadId, Date.now());
     try {
         const arr = d.threadMessages?.[threadId] || [];
         const candidates = arr.filter(m => m && m.msg_id).slice(0, limit);
         if (!candidates.length) return 0;
-        const results = await Promise.allSettled(candidates.map(m =>
-            bot.telegram.callApi('setMessageReaction', { chat_id: GROUP_B_ID, message_id: Number(m.msg_id), reaction: [], is_big: false })
-                .then(() => null)
-                .catch(e => {
-                    const desc = String(e.description || e.message || '').toLowerCase();
-                    if (desc.includes('not found') || desc.includes('to react') || desc.includes('message to') || e.code === 400) return Number(m.msg_id);
-                    return null;
-                })
-        ));
+        const results = await Promise.allSettled(candidates.map(async m => {
+            const exists = await _probeMessageExists(m.msg_id);
+            return exists === false ? Number(m.msg_id) : null;
+        }));
         const toRemove = new Set(results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean));
         if (toRemove.size) {
             d.threadMessages[threadId] = arr.filter(m => !toRemove.has(Number(m.msg_id)));

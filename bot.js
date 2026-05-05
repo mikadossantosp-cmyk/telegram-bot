@@ -3181,17 +3181,25 @@ function archiveWeeklyXP(reason='auto') {
 // DASHBOARD API ENDPOINTS
 // ================================
 
-app.get('/reset-user', (req, res) => {
+app.get('/reset-user', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
-    if (d.users[uid]) { d.users[uid].xp=0; d.users[uid].level=1; d.users[uid].role=badge(0); speichern(); }
+    if (d.users[uid]) {
+        d.users[uid].xp=0; d.users[uid].level=1; d.users[uid].role=badge(0);
+        speichern();
+        try { await bot.telegram.sendMessage(Number(uid), '♻️ *XP zurückgesetzt*\n\nEin Admin hat deinen XP-Stand auf 0 zurückgesetzt.', { parse_mode: 'Markdown' }); } catch(e) {}
+    }
     res.json({ ok: true });
 });
 
-app.get('/remove-warn', (req, res) => {
+app.get('/remove-warn', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
-    if (d.users[uid]) { d.users[uid].warnings=0; speichern(); }
+    if (d.users[uid]) {
+        d.users[uid].warnings = 0;
+        speichern();
+        try { await bot.telegram.sendMessage(Number(uid), '✅ *Verwarnungen entfernt*\n\nEin Admin hat alle deine Verwarnungen gelöscht. Warns: 0/5', { parse_mode: 'Markdown' }); } catch(e) {}
+    }
     res.json({ ok: true });
 });
 
@@ -3206,15 +3214,18 @@ app.get('/add-warn', async (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/remove-xp', (req, res) => {
+app.get('/remove-xp', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
     const amount = parseInt(req.query.amount)||0;
     if (d.users[uid] && amount > 0) {
+        const alteBadge = d.users[uid].role;
         d.users[uid].xp = Math.max(0, (d.users[uid].xp||0)-amount);
         d.users[uid].level = level(d.users[uid].xp);
         d.users[uid].role = badge(d.users[uid].xp);
         speichern();
+        const badgeChange = alteBadge !== d.users[uid].role ? `\n📉 Badge: ${alteBadge} → ${d.users[uid].role}` : '';
+        try { await bot.telegram.sendMessage(Number(uid), `📉 *XP-Abzug*\n\nEin Admin hat dir −${amount} XP abgezogen.\n⭐ Aktuell: ${d.users[uid].xp} XP${badgeChange}`, { parse_mode: 'Markdown' }); } catch(e) {}
     }
     res.json({ ok: true });
 });
@@ -3251,8 +3262,9 @@ app.get('/ban-user', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
     if (d.users[uid]) {
+        // DM ZUERST schicken, danach bannen — nach dem Ban kann der Bot dem User nichts mehr senden.
+        try { await bot.telegram.sendMessage(Number(uid), '🚫 *Du wurdest gebannt*\n\nEin Admin hat dich aus der CreatorX-Community entfernt.', { parse_mode: 'Markdown' }); } catch(e) {}
         try {
-            // Ban in allen Gruppen
             for (const chatId of [GROUP_A_ID, GROUP_B_ID]) {
                 if (chatId) await bot.telegram.banChatMember(chatId, Number(uid)).catch(()=>{});
             }
@@ -3302,13 +3314,15 @@ app.get('/manual-backup-api', async (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/add-xp', (req, res) => {
+app.get('/add-xp', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
     const amount = parseInt(req.query.amount)||0;
     if (d.users[uid] && amount > 0) {
         xpAddMitDaily(uid, amount, d.users[uid].name);
         speichern();
+        // xpAddMitDaily sendet schon Badge-Aufstieg-DM bei Level-Up; zusätzlich kurz quittieren.
+        try { await bot.telegram.sendMessage(Number(uid), `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' }); } catch(e) {}
     }
     res.json({ ok: true });
 });

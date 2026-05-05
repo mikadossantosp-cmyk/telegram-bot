@@ -205,18 +205,20 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     const isElitePlus = d.users[uidStr]?.role === '🌟 Elite+';
     const maxSuperlinks = isElitePlus ? 2 : 1;
     const slThisWeek = Object.values(d.superlinks||{}).filter(s => s.uid === uidStr && s.week === week);
-    if (slThisWeek.length >= maxSuperlinks) {
+    const userCredits = d.users[uidStr]?.superlinkCredits || 0;
+    const isExtraSlotTG = slThisWeek.length > 0;
+    if (slThisWeek.length >= maxSuperlinks && userCredits <= 0) {
         try { await ctx.deleteMessage(); } catch(e) {}
         try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits ' + maxSuperlinks + ' Superlink(s) gepostet! Limit: ' + maxSuperlinks + 'x pro Woche.'); } catch(e) {}
         return;
     }
     const uCheck = d.users[uidStr];
-    const isExtraSlotTG = slThisWeek.length > 0;
-    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && (uCheck?.diamonds||0) < 10) {
+    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && (uCheck?.diamonds||0) < 10 && userCredits <= 0) {
         try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten oder einen Admin-Slot. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
         return;
     }
+    const useCredit = (slThisWeek.length >= maxSuperlinks || isExtraSlotTG) && userCredits > 0;
     // Strip /superlink command prefix if user sent it together with the URL
     const cleanText = text.replace(/^\/superlink\s*/i, '').trim();
     const urlMatch = cleanText.match(/(?:https?:\/\/)?((?:www\.)?instagram\.com\/[^\s]+)/i);
@@ -248,7 +250,12 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
-    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
+    if (useCredit && d.users[uidStr]) {
+        d.superlinks[slId].adminCredit = true;
+        d.users[uidStr].superlinkCredits = Math.max(0, (d.users[uidStr].superlinkCredits||0) - 1);
+    } else if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) {
+        d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
+    }
     // Superlink-Karte im Web-Thread speichern
     const feThreadKey = String(feThreadId);
     if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
@@ -2001,15 +2008,29 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
                 String(u?.spitzname||'').toLowerCase() === uname ||
                 String(u?.name||'').toLowerCase() === uname
             );
-            if (!found) return ctx.reply('❌ User '+target+' nicht gefunden.\nNutzung: /givesuperlink <UserID|@username|@name> <Instagram-Link> [Caption]\nOder als Reply auf eine Nachricht: /givesuperlink <Instagram-Link>');
+            if (!found) return ctx.reply('❌ User '+target+' nicht gefunden.\nNutzung: /givesuperlink <UserID|@username|@name> [Instagram-Link]\nOder als Reply auf eine User-Nachricht (mit oder ohne Link).');
             targetUid = found[0];
         } else if (target) {
-            return ctx.reply('❌ Erstes Argument muss UserID, @username oder Reply sein.\nNutzung: /givesuperlink <UserID|@username> <Instagram-Link>');
+            return ctx.reply('❌ Erstes Argument muss UserID, @username oder Reply sein.\nNutzung: /givesuperlink <UserID|@username> [Instagram-Link]');
         }
     }
-    if (!targetUid) return ctx.reply('❌ Kein Target-User. Nutzung: /givesuperlink <UserID|@username> <Instagram-Link>\nOder Reply auf User-Nachricht.');
+    if (!targetUid) return ctx.reply('❌ Kein Target-User. Nutzung: /givesuperlink <UserID|@username> [Instagram-Link]\nOder Reply auf User-Nachricht.');
     const urlMatch = allText.match(/(?:https?:\/\/)?((?:www\.)?instagram\.com\/[^\s]+)/i);
-    if (!urlMatch) return ctx.reply('❌ Kein Instagram-Link gefunden.');
+    // OHNE URL = Slot/Gutschein-Modus: User darf selbst einen Extra-Superlink posten
+    if (!urlMatch) {
+        const u = d.users[targetUid];
+        if (!u) return ctx.reply('❌ User '+targetUid+' nicht in Daten. User muss erst /start im Bot machen.');
+        u.superlinkCredits = (u.superlinkCredits||0) + 1;
+        speichern();
+        try { await bot.telegram.sendMessage(Number(targetUid),
+            '🎁 *Superlink-Gutschein erhalten!*\n\nEin Admin hat dir einen *Superlink-Slot* freigeschaltet!\n\n' +
+            'Du kannst jetzt einen *zusätzlichen Superlink* posten — auch wenn dein Wochenlimit erreicht ist und ohne 10 💎 zu zahlen.\n\n' +
+            '📲 So gehts: schreib hier `/superlink <dein-Instagram-Link>` oder posts den Link einfach in den Full-Engagement-Thread.\n\n' +
+            '✅ Verbleibende Slots: ' + u.superlinkCredits,
+            { parse_mode: 'Markdown' }); } catch(e) {}
+        sendAppPush(targetUid, '🎁 Superlink-Slot!', 'Admin hat dir einen Superlink-Slot gegeben — nutze /superlink', '/feed').catch(()=>{});
+        return ctx.reply('✅ ' + (u.spitzname||u.name||targetUid) + ' hat jetzt *' + u.superlinkCredits + '* Superlink-Slot(s)\n\nDer User kann mit `/superlink <Instagram-Link>` einen Extra-Superlink posten.', { parse_mode:'Markdown' });
+    }
     let url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
     url = url.replace(/[.,;!?]+$/, '');
     const caption = allText.replace(urlMatch[0], '').trim();
@@ -2068,6 +2089,45 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
     } catch(e) {
         await ctx.reply('❌ Fehler: ' + e.message);
     }
+});
+
+bot.command('delete', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const replyTo = ctx.message.reply_to_message;
+    if (!replyTo) return ctx.reply('❌ /delete als Reply auf eine Superlink-Karte verwenden.\nFür beliebige Superlink-ID: /deletesuperlink <slId>');
+    const targetMsgId = Number(replyTo.message_id);
+    const sl = Object.values(d.superlinks||{}).find(s => Number(s.msg_id) === targetMsgId);
+    if (!sl) {
+        return ctx.reply('❌ Diese Nachricht ist kein Superlink (oder schon aus der DB entfernt).\nFalls Telegram-Nachricht trotzdem weg soll: /deletesuperlink <slId> oder manuell per Long-Press.');
+    }
+    const slId = sl.id;
+    let tgDeleted = false; let dmsDeleted = 0; let threadCleaned = 0;
+    if (sl.msg_id && GROUP_B_ID) {
+        try { await bot.telegram.deleteMessage(GROUP_B_ID, Number(sl.msg_id)); tgDeleted = true; }
+        catch(e) { console.log('/delete TG-Delete Fehler:', e.description||e.message); }
+    }
+    if (sl.dmNotifications) {
+        for (const [uid, mid] of Object.entries(sl.dmNotifications)) {
+            try { await bot.telegram.deleteMessage(Number(uid), Number(mid)); dmsDeleted++; } catch(e) {}
+        }
+    }
+    for (const tid of Object.keys(d.threadMessages || {})) {
+        const before = d.threadMessages[tid].length;
+        d.threadMessages[tid] = d.threadMessages[tid].filter(m => m.slId !== slId && Number(m.msg_id) !== Number(sl.msg_id||0));
+        const after = d.threadMessages[tid].length;
+        if (after !== before) {
+            threadCleaned += (before - after);
+            const thr = (d.threads||[]).find(t => String(t.id) === tid);
+            if (thr) { thr.last_msg = d.threadMessages[tid][0] || null; thr.msg_count = d.threadMessages[tid].length; }
+        }
+    }
+    delete d.superlinks[slId];
+    speichern();
+    try { await ctx.deleteMessage(); } catch(e) {}
+    try {
+        const conf = await ctx.reply('✅ Superlink gelöscht\n📨 TG: ' + (tgDeleted?'✅':'⚠️') + ' · 📩 DMs: ' + dmsDeleted + ' · 📋 Threads: ' + threadCleaned);
+        setTimeout(() => { ctx.telegram.deleteMessage(ctx.chat.id, conf.message_id).catch(()=>{}); }, 8000);
+    } catch(e) {}
 });
 
 bot.command(['deletesuperlink','delsl','rmsl'], async (ctx) => {

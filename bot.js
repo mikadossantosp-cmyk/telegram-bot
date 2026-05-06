@@ -4659,11 +4659,19 @@ app.post('/add-newsletter-api', (req, res) => {
     if (!istAdminId(Number(uid))) return res.json({ok:false, error:'Kein Admin'});
     if (!d.newsletter) d.newsletter = [];
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    d.newsletter.push({ id, title: (title||'').trim(), content: content.trim(), timestamp: Date.now() });
-    // Alle User benachrichtigen
-    for (const tUid of Object.keys(d.users||{})) {
-        if (!istAdminId(Number(tUid))) addNotification(tUid, '📩', (title||'Neuer Newsletter').slice(0,60) || 'Neuer Newsletter-Eintrag');
+    const trimmedTitle = (title||'').trim();
+    const trimmedContent = content.trim();
+    d.newsletter.push({ id, title: trimmedTitle, content: trimmedContent, timestamp: Date.now() });
+    // In-App-Notification an alle User (nicht-Admins, nicht-Subs)
+    for (const [tUid, tU] of Object.entries(d.users||{})) {
+        if (istAdminId(Number(tUid))) continue;
+        if (tU.parent_uid) continue; // Subs kriegen Push via Parent's Subscription
+        addNotification(tUid, '📩', (trimmedTitle || 'Neuer Newsletter-Eintrag').slice(0,60));
     }
+    // Web-Push an ALLE Geräte (alle Push-Subscriptions). exceptUid=Admin selber, der schon weiß.
+    const pushTitle = '📩 ' + (trimmedTitle || 'Neue News');
+    const pushBody = trimmedContent.slice(0, 140) + (trimmedContent.length > 140 ? '…' : '');
+    broadcastAppPush(pushTitle, pushBody, '/explore?tab=newsletter', String(uid)).catch(e=>console.log('News-Push Fehler:', e.message));
     speichern();
     res.json({ok:true});
 });

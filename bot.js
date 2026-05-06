@@ -1924,7 +1924,7 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         // Benachrichtigung an Poster
         if (!istAdminId(uid) && lnk.user_id !== uid) {
             const likerName = d.users[uid]?.spitzname || d.users[uid]?.name || 'Jemand';
-            addNotification(String(lnk.user_id), '❤️', likerName + ' hat deinen Link geliked');
+            addNotification(String(lnk.user_id), '❤️', likerName + ' hat deinen Link geliked', String(uid));
             sendAppPush(String(lnk.user_id), '❤️ Neuer Like!', likerName + ' hat deinen Link geliked', '/feed').catch(()=>{});
         }
 
@@ -2056,7 +2056,7 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         sl.likes.push(uid);
         const u = d.users[uid];
         sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
-        addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!');
+        addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!', String(uid));
         sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
         await ctx.answerCbQuery('❤️ Geliked!');
         if (ctx.callbackQuery?.message?.chat?.type === 'private') {
@@ -2895,10 +2895,12 @@ function updateStreak(uid) {
     u.lastStreakDay = heute;
 }
 
-function addNotification(targetUid, icon, text) {
+function addNotification(targetUid, icon, text, actorUid = null) {
     if (!d.notifications) d.notifications = {};
     if (!d.notifications[targetUid]) d.notifications[targetUid] = [];
-    d.notifications[targetUid].push({ icon, text, timestamp: Date.now(), read: false });
+    const entry = { icon, text, timestamp: Date.now(), read: false };
+    if (actorUid) entry.actorUid = String(actorUid);
+    d.notifications[targetUid].push(entry);
     // Max 50 Benachrichtigungen pro User
     if (d.notifications[targetUid].length > 50) d.notifications[targetUid].shift();
 }
@@ -3716,7 +3718,7 @@ app.post('/follow-api', (req, res) => {
         d.users[followerUid].following.push(targetUid);
         if (!d.users[targetUid].followers.includes(followerUid)) d.users[targetUid].followers.push(followerUid);
         const followerName = d.users[followerUid]?.spitzname || d.users[followerUid]?.name || 'Jemand';
-        try { addNotification(targetUid, '👤', followerName + ' folgt dir jetzt'); } catch(e) {}
+        try { addNotification(targetUid, '👤', followerName + ' folgt dir jetzt', String(followerUid)); } catch(e) {}
         action = 'follow';
     } else {
         d.users[followerUid].following.splice(idx, 1);
@@ -3757,7 +3759,7 @@ app.post('/comment-api', (req, res) => {
     if (lnk?.user_id) postOwnerUid = String(lnk.user_id);
     else if (typeof linkId === 'string' && linkId.includes('_')) postOwnerUid = linkId.split('_')[0]; // legacy/post-Schlüssel
     if (postOwnerUid && String(postOwnerUid) !== String(uid) && d.users[postOwnerUid]) {
-        addNotification(postOwnerUid, '💬', (name||'Jemand') + ' hat kommentiert: ' + text.slice(0,40));
+        addNotification(postOwnerUid, '💬', (name||'Jemand') + ' hat kommentiert: ' + text.slice(0,40), String(uid));
     }
     speichern();
     res.json({ok:true});
@@ -3968,7 +3970,7 @@ app.post('/send-message-api', async (req, res) => {
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     const fromUser = d.users[from];
     const senderName = fromUser?.spitzname || fromUser?.name || 'Jemand';
-    if (fromUser) addNotification(String(to), '💬', senderName + (text ? ': ' + text.slice(0,40) : ' hat dir etwas gesendet'));
+    if (fromUser) addNotification(String(to), '💬', senderName + (text ? ': ' + text.slice(0,40) : ' hat dir etwas gesendet'), String(from));
     // Telegram DM weiterleiten
     if (d.users[to]?.started) {
         try {

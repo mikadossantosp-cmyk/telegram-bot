@@ -3693,10 +3693,15 @@ app.post('/follow-api', (req, res) => {
     const followerUid = req.body && req.body.followerUid ? String(req.body.followerUid) : '';
     const targetUid = req.body && req.body.targetUid ? String(req.body.targetUid) : '';
     if (!followerUid || !targetUid) return res.json({ok:false, error:'Fehlende UIDs'});
-    // Follower MUSS existieren — auto-create würde gelöschte Subs als Geister wiederbeleben
-    // (Sub-UIDs sind 13-stellige Date.now()-Strings, ohne Bot-Kontext keine Möglichkeit den
-    // Parent zu re-attachen → orphan-Eintrag).
-    if (!d.users[followerUid]) return res.json({ok:false, error:'Follower-Account nicht gefunden'});
+    // Auto-create für unbekannte Telegram-UIDs (≤12 stellig) — Sub-UIDs sind 13-stellig (Date.now)
+    // und werden NICHT auto-created um Orphans zu vermeiden.
+    if (!d.users[followerUid]) {
+        if (followerUid.length <= 12 && /^\d+$/.test(followerUid)) {
+            user(followerUid, '');
+        } else {
+            return res.json({ok:false, error:'Follower-Account nicht gefunden ('+followerUid+')'});
+        }
+    }
     if (!d.users[targetUid]) return res.json({ok:false, error:'Ziel-User nicht gefunden ('+targetUid+')'});
     if (!Array.isArray(d.users[followerUid].following)) d.users[followerUid].following = [];
     if (!Array.isArray(d.users[targetUid].followers)) d.users[targetUid].followers = [];

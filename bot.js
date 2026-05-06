@@ -3688,6 +3688,33 @@ app.post('/delete-subaccount-api', (req, res) => {
     }
     if (d.dailyXP) delete d.dailyXP[sub_uid];
     if (d.weeklyXP) delete d.weeklyXP[sub_uid];
+    // Orphans bereinigen: Links, Superlinks, Kommentare, Notifs und Likes des Subs vollständig löschen
+    if (Array.isArray(d.links)) {
+        d.links = d.links.filter(l => String(l.uid) !== sub_uid);
+        for (const l of d.links) {
+            if (l.likes && typeof l.likes.delete === 'function') l.likes.delete(sub_uid);
+            else if (Array.isArray(l.likes)) l.likes = l.likes.filter(x => String(x) !== sub_uid);
+            if (Array.isArray(l.comments)) l.comments = l.comments.filter(c => String(c.uid) !== sub_uid);
+        }
+    }
+    if (Array.isArray(d.superlinks)) {
+        d.superlinks = d.superlinks.filter(s => String(s.uid) !== sub_uid);
+    }
+    if (d.notifications && typeof d.notifications === 'object') {
+        delete d.notifications[sub_uid];
+        for (const k of Object.keys(d.notifications)) {
+            if (Array.isArray(d.notifications[k])) {
+                d.notifications[k] = d.notifications[k].filter(n => String(n.actorUid||'') !== sub_uid);
+            }
+        }
+    }
+    if (d.threadMessages && typeof d.threadMessages === 'object') {
+        for (const tk of Object.keys(d.threadMessages)) {
+            if (Array.isArray(d.threadMessages[tk])) {
+                d.threadMessages[tk] = d.threadMessages[tk].filter(m => String(m.uid) !== sub_uid);
+            }
+        }
+    }
     speichern();
     res.json({ok:true});
 });

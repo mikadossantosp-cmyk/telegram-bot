@@ -596,6 +596,15 @@ function user(uid, name) {
     return d.users[uid];
 }
 
+// Sub-Account: nur in der App lebende Persona. parent_uid zeigt auf den Telegram-User.
+function isSubAccount(uid) { return !!(d.users[uid] && d.users[uid].parent_uid); }
+function getRootUid(uid) { return d.users[uid]?.parent_uid ? String(d.users[uid].parent_uid) : String(uid); }
+// DM-Send-Wrapper: Sub-Accounts haben keine Telegram-UID, sendMessage würde "chat not found" werfen.
+async function dmUser(uid, text, opts) {
+    if (isSubAccount(uid)) return;
+    try { await bot.telegram.sendMessage(Number(uid), text, opts); } catch(e) {}
+}
+
 function chat(cid, obj) {
     if (!d.chats[cid]) d.chats[cid] = { id: cid, type: (obj?.type) || 'unknown', title: (obj?.title || obj?.first_name) || 'Unbekannt', msgs: 0 };
     if (obj) { d.chats[cid].type = obj.type; d.chats[cid].title = obj.title || obj.first_name || d.chats[cid].title; }
@@ -1851,6 +1860,8 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
 
     try {
         if (String(uid) === String(lnk.user_id)) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
+        // Auch über Sub-Account-Verbindung: kein Like auf Posts vom eigenen Parent/Sub
+        if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
         if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('✅ Bereits geliked! (auch via App möglich)'); } catch (e) {} return; }
 
         lnk.likes.add(uid);
@@ -1985,6 +1996,7 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         const sl = d.superlinks?.[slId];
         if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
         if (sl.uid === uid) return ctx.answerCbQuery('❌ Du kannst deinen eigenen Link nicht liken');
+        if (String(getRootUid(uid)) === String(getRootUid(sl.uid))) return ctx.answerCbQuery('❌ Eigener Account — kein Self-Like');
         if (!Array.isArray(sl.likes)) sl.likes = [];
         if (!sl.likerNames) sl.likerNames = {};
         const idx = sl.likes.indexOf(uid);
@@ -3483,6 +3495,7 @@ app.get('/like-from-app', async (req, res) => {
     } else {
         // Like
         if (String(uidNum) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
+        if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) return res.json({ok:false, error:'Kein Self-Like (eigener Account)'});
         lnk.likes.add(uidNum);
         const u = d.users[uid];
         if (!lnk.likerNames) lnk.likerNames = {};
@@ -3536,6 +3549,54 @@ app.get('/like-from-app', async (req, res) => {
 
 
 // ── PHASE 2 API ENDPOINTS ──
+
+// Sub-Account erstellen (App-only Persona, keine Telegram-Identität).
+// Body: { parent_uid: "<tg uid>", name: "<display name>" } → returns { ok, sub_uid }
+app.post('/create-subaccount-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const parent_uid = req.body && req.body.parent_uid ? String(req.body.parent_uid) : '';
+    const name = (req.body && req.body.name ? String(req.body.name) : '').trim().slice(0, 30);
+    if (!parent_uid || !name) return res.json({ok:false, error:'parent_uid + name erforderlich'});
+    if (!d.users[parent_uid]) return res.json({ok:false, error:'Parent-User nicht gefunden'});
+    if (d.users[parent_uid].parent_uid) return res.json({ok:false, error:'Sub-Account kann keinen Sub-Account erstellen'});
+    if (d.users[parent_uid].subUid && d.users[d.users[parent_uid].subUid]) {
+        return res.json({ok:false, error:'Du hast schon einen Sub-Account', sub_uid: String(d.users[parent_uid].subUid)});
+    }
+    // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision
+    const sub_uid = String(Date.now());
+    d.users[sub_uid] = {
+        name, username: null, instagram: null, bio: null, nische: null, spitzname: null,
+        trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,
+        role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(),
+        inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false,
+        inventory: [], activeRing: null, followers: [], following: [],
+        parent_uid: parent_uid // ← markiert als Sub
+    };
+    d.users[parent_uid].subUid = sub_uid;
+    speichern();
+    res.json({ok:true, sub_uid});
+});
+
+// Sub-Account löschen — Parent ruft das auf, Sub wird komplett aus d.users entfernt.
+app.post('/delete-subaccount-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const parent_uid = req.body && req.body.parent_uid ? String(req.body.parent_uid) : '';
+    const sub_uid = req.body && req.body.sub_uid ? String(req.body.sub_uid) : '';
+    if (!parent_uid || !sub_uid) return res.json({ok:false, error:'parent_uid + sub_uid erforderlich'});
+    const sub = d.users[sub_uid];
+    if (!sub || String(sub.parent_uid) !== parent_uid) return res.json({ok:false, error:'Sub gehört nicht zu diesem Parent'});
+    delete d.users[sub_uid];
+    if (d.users[parent_uid]) delete d.users[parent_uid].subUid;
+    // Sub aus Followern/Following anderer User entfernen damit keine Geister-Referenzen bleiben
+    for (const u of Object.values(d.users||{})) {
+        if (Array.isArray(u.followers)) u.followers = u.followers.filter(x => String(x) !== sub_uid);
+        if (Array.isArray(u.following)) u.following = u.following.filter(x => String(x) !== sub_uid);
+    }
+    if (d.dailyXP) delete d.dailyXP[sub_uid];
+    if (d.weeklyXP) delete d.weeklyXP[sub_uid];
+    speichern();
+    res.json({ok:true});
+});
 
 app.post('/follow-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -4495,6 +4556,7 @@ app.post('/like-superlink-api', async (req, res) => {
     const sl = d.superlinks?.[slId];
     if (!sl) return res.json({ok:false, error:'Superlink nicht gefunden'});
     if (String(sl.uid) === String(uid)) return res.json({ok:false, error:'Eigener Post'});
+    if (String(getRootUid(uid)) === String(getRootUid(sl.uid))) return res.json({ok:false, error:'Eigener Account — kein Self-Like'});
     if (!Array.isArray(sl.likes)) sl.likes = [];
     if (!sl.likerNames) sl.likerNames = {};
     const idx = sl.likes.indexOf(String(uid));

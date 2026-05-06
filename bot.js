@@ -4672,6 +4672,26 @@ app.post('/add-newsletter-api', (req, res) => {
     const pushTitle = '📩 ' + (trimmedTitle || 'Neue News');
     const pushBody = trimmedContent.slice(0, 140) + (trimmedContent.length > 140 ? '…' : '');
     broadcastAppPush(pushTitle, pushBody, '/explore?tab=newsletter', String(uid)).catch(e=>console.log('News-Push Fehler:', e.message));
+    // Telegram-DM an alle Telegram-User (nicht Admin/Sub). Markdown-safe escapen damit der Content
+    // nicht den Markdown-Parser bricht (z.B. _ in Namen, * in Text).
+    const mdEsc = (s) => String(s||'').replace(/[_*`\[\]]/g, c=>'\\'+c);
+    const dmContent = trimmedContent.length > 600 ? trimmedContent.slice(0, 600) + '\n\n…' : trimmedContent;
+    const dmText = '📩 *' + mdEsc(trimmedTitle || 'Neue News') + '*\n\n' + mdEsc(dmContent) + '\n\n━━━━━━━━━━━━━━\n👉 In der App lesen';
+    setTimeout(async () => {
+        let sent = 0, failed = 0;
+        for (const [tUid, tU] of Object.entries(d.users||{})) {
+            if (istAdminId(Number(tUid)) || tU.parent_uid || !tU.started) continue;
+            try {
+                await bot.telegram.sendMessage(Number(tUid), dmText, {
+                    parse_mode: 'Markdown',
+                    reply_markup: APP_URL ? { inline_keyboard: [[{ text: '📲 Zur App', url: APP_URL }]] } : undefined
+                });
+                sent++;
+                await new Promise(r => setTimeout(r, 120)); // Rate-Limit-Schutz (~8/Sek)
+            } catch(e) { failed++; }
+        }
+        console.log('[news] Telegram-DM: ' + sent + ' gesendet, ' + failed + ' fehlgeschlagen');
+    }, 0);
     speichern();
     res.json({ok:true});
 });

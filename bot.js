@@ -702,7 +702,9 @@ async function missionenAuswerten() {
     d.missionAuswertungErledigt[jetzt12] = true;
 
     for (const [uid, queue] of Object.entries(d.missionQueue)) {
-        if (istAdminId(uid) || queue.date === heute) continue;
+        // Admin: keine XP-Auswertung, aber Queue trotzdem aufräumen damit sie nicht ewig wächst
+        if (istAdminId(uid)) { delete d.missionQueue[uid]; continue; }
+        if (queue.date === heute) continue;
         const name = d.users[uid]?.name || '';
         const wMission = getWochenMission(uid);
         const gestern = queue.date;
@@ -3721,11 +3723,23 @@ app.post('/delete-post-api', (req, res) => {
 
 app.post('/delete-comment-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { uid, postId, commentIdx } = req.body || {};
+    const { uid, postId, commentIdx, commentTs } = req.body || {};
     if (!uid || !postId || !d.comments?.[postId]) return res.json({ok:false});
-    const comment = d.comments[postId][commentIdx];
-    if (!comment || String(comment.uid) !== String(uid)) return res.json({ok:false});
-    d.comments[postId].splice(commentIdx, 1);
+    const comments = d.comments[postId];
+    // Bevorzugt: by timestamp + uid (race-safe). Index ist Fallback nur wenn ts fehlt.
+    let target = -1;
+    if (commentTs) {
+        target = comments.findIndex(c => Number(c.timestamp) === Number(commentTs) && String(c.uid) === String(uid));
+        // Admin-Override: Admin darf auch fremde Kommentare löschen wenn nur ts gegeben
+        if (target < 0 && istAdminId(Number(uid))) {
+            target = comments.findIndex(c => Number(c.timestamp) === Number(commentTs));
+        }
+    } else if (Number.isInteger(commentIdx) && comments[commentIdx]) {
+        const c = comments[commentIdx];
+        if (String(c.uid) === String(uid) || istAdminId(Number(uid))) target = commentIdx;
+    }
+    if (target < 0) return res.json({ok:false, error:'Kommentar nicht gefunden oder keine Berechtigung'});
+    comments.splice(target, 1);
     speichern();
     res.json({ok:true});
 });
@@ -3936,7 +3950,9 @@ app.post('/edit-message-api', (req, res) => {
     if (!msg) return res.json({ok:false, error:'Nachricht nicht gefunden oder nicht von dir'});
     if (Date.now() - msg.timestamp > 5*60*1000) return res.json({ok:false, error:'Bearbeitungs-Limit (5 Min) überschritten'});
     if (msg.image || msg.audio) return res.json({ok:false, error:'Nur Text-Nachrichten editierbar'});
-    msg.text = String(newText||'').slice(0, 500).trim();
+    const trimmed = String(newText||'').trim().slice(0, 500);
+    if (!trimmed) return res.json({ok:false, error:'Text darf nicht leer sein'});
+    msg.text = trimmed;
     msg.edited = true;
     msg.editedAt = Date.now();
     speichern();
@@ -4278,6 +4294,28 @@ app.post('/send-thread-message', async (req, res) => {
             .then(sent => { entry.msg_id = sent.message_id; speichernDebounced(); })
             .catch(e => console.log('Thread-Telegram-Send Fehler:', e.message));
     }
+});
+
+// DM-Nachrichten-Reaktionen — gleiche Shape wie thread-msg-api: reactions = { emoji: [uid, ...] }
+app.post('/react-dm-msg-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { chatKey, timestamp, emoji, uid } = req.body || {};
+    if (!chatKey || !timestamp || !emoji || !uid) return res.json({ok:false});
+    const msgs = d.messages?.[String(chatKey)] || [];
+    const msg = msgs.find(m => Number(m.timestamp) === Number(timestamp));
+    if (!msg) return res.json({ok:false, error:'Nachricht nicht gefunden'});
+    if (!msg.reactions) msg.reactions = {};
+    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+    const uidStr = String(uid);
+    const idx = msg.reactions[emoji].indexOf(uidStr);
+    if (idx >= 0) {
+        msg.reactions[emoji].splice(idx, 1);
+        if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
+    } else {
+        msg.reactions[emoji].push(uidStr);
+    }
+    speichern();
+    res.json({ok:true});
 });
 
 app.post('/react-thread-msg-api', async (req, res) => {

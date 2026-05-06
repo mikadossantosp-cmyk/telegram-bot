@@ -4666,8 +4666,17 @@ async function ladeForumTopics() {
 
 setTimeout(() => { migriereAlteDaten(); ladeForumTopics(); }, 2000);
 
-process.on('unhandledRejection', (reason) => { console.log('Unhandled:', reason); });
-process.on('uncaughtException', (error)  => { console.log('Uncaught:', error.message); });
+process.on('unhandledRejection', (reason) => {
+    const msg = reason?.message || reason?.description || String(reason);
+    const code = reason?.code || reason?.response?.error_code || '';
+    const desc = reason?.response?.description || '';
+    console.log('🔴 Unhandled:', code, msg, desc ? ('| ' + desc) : '');
+    if (reason?.stack) console.log(reason.stack);
+});
+process.on('uncaughtException', (error) => {
+    console.log('🔴 Uncaught:', error.message);
+    if (error.stack) console.log(error.stack);
+});
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 

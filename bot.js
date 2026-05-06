@@ -1106,6 +1106,25 @@ bot.command('threadlist', async (ctx) => {
     const list = (d.threads||[]).map(t => '• ' + (t.emoji||'📌') + ' ' + (t.name||('Thread '+t.id)) + ' (id ' + t.id + ')').join('\n');
     await ctx.reply(list || 'Keine Threads gespeichert.');
 });
+bot.command(['diamanten', 'diamonds'], async (ctx) => {
+    const u = d.users[String(ctx.from.id)];
+    const stand = u ? (u.diamonds||0) : 0;
+    const text = '💎 *DIAMANTEN-SYSTEM*\n\n' +
+        'Diamanten sind die Währung im Shop (App + Telegram). Aktuell zu kaufen: *Extralinks* + *Superlinks*. Mehr folgt.\n\n' +
+        '*Wie verdiene ich Diamanten?*\n\n' +
+        '🟢 *Profil vervollständigen* (Name, Bio, Nische, Bild) → +1 💎 (einmalig)\n' +
+        '🟢 *Wochenmission M2* (7 Tage je 80% liken) → +1 💎\n' +
+        '🟢 *Tagesmission M3* (alle Links liken) → +1 💎 (täglich!)\n' +
+        '🟢 *Wochenmission M3* (7 Tage alle liken) → +2 💎\n' +
+        '🟢 *Alle Superlinks der Woche engagiert* → +1 💎\n' +
+        '🟢 *100 Likes via App* → +1 💎\n' +
+        '🟢 *10 Thread-Nachrichten* (min 10 Zeichen, kein Spam) → +1 💎\n' +
+        '🟢 *Pinned Post engagiert* → Owner kriegt +1 💎\n\n' +
+        '⚠️ *Wichtig:* Standard-Regeln gelten weiter (1 Post = 5 Likes + Kommentar). Niemand muss mehr machen — wer aber engagiert, wird belohnt 🙏\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        '*Dein Stand:* ' + stand + ' 💎';
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+});
 // Diagnose: /checkcode <code>  — Admin sucht in d.users nach exakt dem Code, returnt Match.
 // Hilft zu finden warum App-Login fehlschlägt: zeigt Bot ihn überhaupt an?
 bot.command('checkcode', async (ctx) => {
@@ -3202,6 +3221,24 @@ app.post('/gewinnspiel-abschluss', async (req, res) => {
         d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid, datum: new Date().toLocaleDateString() });
         d.wochenGewinnspiel.letzteAuslosung = Date.now();
     }
+    // 💎 Wochen-Superlink-Engagement: wer ALLE Superlinks dieser Woche geliked hat → +1 Diamant.
+    // Auswertung am Wochenreset, weil dann der Zeitraum klar abgeschlossen ist.
+    try {
+        const woche = Object.values(d.superlinks||{}).filter(sl => sl && sl.likes !== undefined);
+        if (woche.length >= 2) {
+            const slLikersPerSl = woche.map(sl => new Set((Array.isArray(sl.likes)?sl.likes:[]).map(String)));
+            const slPosters = new Set(woche.map(sl => String(sl.uid||sl.user_id||'')));
+            for (const [uid, u] of Object.entries(d.users||{})) {
+                if (!u || istAdminId(uid) || u.parent_uid || u.inGruppe===false || !u.started) continue;
+                if (slPosters.has(String(uid))) continue; // Eigene zählen nicht
+                const allEngaged = slLikersPerSl.every(set => set.has(String(uid)));
+                if (allEngaged) {
+                    addDiamond(uid, 1);
+                    dmUser(uid, '💎 *Wochenengagement-Bonus!*\n\nDu hast diese Woche ALLE Superlinks engagiert. +1 Diamant 🙏\nAktuell: ' + (d.users[uid].diamonds||0) + ' 💎', { parse_mode: 'Markdown' });
+                }
+            }
+        }
+    } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
     archiveWeeklyXP('gewinnspiel');
     d.weeklyXP = {}; d.weeklyReset = Date.now();
     speichern();
@@ -3556,6 +3593,14 @@ app.get('/like-from-app', async (req, res) => {
         }
         // XP vergeben
         if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
+        // 💎 alle 100 App-Likes ein Diamant
+        if (!istAdminId(uid) && u) {
+            u.appLikeCount = (u.appLikeCount||0) + 1;
+            if (u.appLikeCount % 100 === 0) {
+                addDiamond(uid, 1);
+                dmUser(uid, `💎 *${u.appLikeCount} Likes via App!*\n\nDu hast +1 Diamant verdient. Aktuell: ${u.diamonds||0} 💎`, { parse_mode: 'Markdown' });
+            }
+        }
         // Mission aktualisieren
         const mission = getMission(uid);
         updateMissionProgress(uid);
@@ -4283,6 +4328,21 @@ app.post('/send-thread-message', async (req, res) => {
     if (!d.threads) d.threads = [];
     let thr = d.threads.find(t => String(t.id) === tid);
     if (thr) { thr.last_msg = entry; thr.msg_count = d.threadMessages[tid].length; }
+    // 💎 alle 10 sinnvolle Thread-Nachrichten ein Diamant.
+    // Anti-Spam: min 10 Zeichen + min 60 Sek seit letzter gezählter Nachricht.
+    if (!istAdminId(uid)) {
+        const trimmed = text.trim();
+        const SPAM_MIN_LEN = 10, SPAM_COOLDOWN_MS = 60000;
+        const now = Date.now();
+        if (trimmed.length >= SPAM_MIN_LEN && (now - (u.lastCountedThreadMsg||0)) >= SPAM_COOLDOWN_MS) {
+            u.lastCountedThreadMsg = now;
+            u.threadMsgCount = (u.threadMsgCount||0) + 1;
+            if (u.threadMsgCount % 10 === 0) {
+                addDiamond(uid, 1);
+                dmUser(uid, `💎 *${u.threadMsgCount} Thread-Nachrichten!*\n\nDanke für dein Engagement — +1 Diamant.\nAktuell: ${u.diamonds||0} 💎`, { parse_mode: 'Markdown' });
+            }
+        }
+    }
     speichernDebounced();
     res.json({ ok: true });
     // Telegram-Nachricht asynchron (kein await → blockiert Response nicht)

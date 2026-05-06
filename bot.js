@@ -3409,6 +3409,7 @@ app.post('/update-profile-api', (req, res) => {
         if (req.body.tiktok !== undefined) d.users[uid].tiktok = req.body.tiktok.replace('@','').slice(0,50);
         if (req.body.youtube !== undefined) d.users[uid].youtube = req.body.youtube.replace('@','').slice(0,50);
         if (req.body.twitter !== undefined) d.users[uid].twitter = req.body.twitter.replace('@','').slice(0,50);
+        if (req.body.instagram !== undefined) d.users[uid].instagram = String(req.body.instagram||'').replace(/^@/,'').replace(/[^a-zA-Z0-9._]/g,'').slice(0,50);
         // Bilder separat speichern
         if (banner !== undefined) {
             if (banner.startsWith('data:image')) {

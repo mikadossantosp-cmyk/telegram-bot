@@ -1104,6 +1104,33 @@ bot.command('threadlist', async (ctx) => {
     const list = (d.threads||[]).map(t => '• ' + (t.emoji||'📌') + ' ' + (t.name||('Thread '+t.id)) + ' (id ' + t.id + ')').join('\n');
     await ctx.reply(list || 'Keine Threads gespeichert.');
 });
+// Diagnose: /checkcode <code>  — Admin sucht in d.users nach exakt dem Code, returnt Match.
+// Hilft zu finden warum App-Login fehlschlägt: zeigt Bot ihn überhaupt an?
+bot.command('checkcode', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const code = (ctx.message.text||'').replace(/^\/checkcode(@\w+)?\s*/i,'').trim().toLowerCase();
+    if (!code) return ctx.reply('Format: /checkcode <code>');
+    const matches = Object.entries(d.users||{}).filter(([,u]) => u.appCode === code);
+    if (!matches.length) {
+        // Fuzzy: ist der Code als prefix/suffix bei jemandem?
+        const fuzzy = Object.entries(d.users||{}).filter(([,u]) => u.appCode && (u.appCode.startsWith(code.slice(0,8)) || u.appCode.endsWith(code.slice(-4))));
+        const list = fuzzy.slice(0,5).map(([uid,u]) => `${uid}: ${u.name||'?'} → \`${u.appCode}\``).join('\n');
+        return ctx.reply(`❌ Kein User hat genau diesen Code.\n${fuzzy.length?'Ähnliche:\n'+list:'(keine ähnlichen)'}`, {parse_mode:'Markdown'});
+    }
+    const out = matches.map(([uid,u]) => `✅ uid \`${uid}\` (${u.name||'?'}${u.username?' @'+u.username:''}) — code \`${u.appCode}\``).join('\n');
+    await ctx.reply(out, {parse_mode:'Markdown'});
+});
+// /resetmycode <uid>  — Admin löscht den appCode eines Users, nächstes /mycode generiert neu
+bot.command('resetmycode', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return;
+    const target = (ctx.message.text||'').replace(/^\/resetmycode(@\w+)?\s*/i,'').trim();
+    if (!target) return ctx.reply('Format: /resetmycode <uid>');
+    const u = d.users[target];
+    if (!u) return ctx.reply('User nicht gefunden');
+    delete u.appCode;
+    speichern();
+    await ctx.reply(`✅ AppCode gelöscht für ${target}. User soll /mycode neu schreiben.`);
+});
 bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });
 
 bot.command('dellink', async (ctx) => {

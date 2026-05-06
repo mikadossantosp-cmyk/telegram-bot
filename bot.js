@@ -86,7 +86,9 @@ function laden() {
         }
         for (const k of Object.keys(d.links)) {
             const link = d.links[k];
-            link.likes = new Set(Array.isArray(link.likes) ? link.likes : []);
+            // KONSISTENT String — vorher hatten Telegram-Pfade Number, App-Pfade auch Number, aber
+            // Sub-UIDs waren String. has(Number) vs has(String) ergibt false → Likes verschwanden.
+            link.likes = new Set((Array.isArray(link.likes) ? link.likes : []).map(String));
             link.msgId = Number(k);
             if (!link.likerNames) link.likerNames = {};
             if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
@@ -670,7 +672,7 @@ function updateMissionProgress(uid) {
     );
     heuteLinks.forEach(l => { if (!l.likes) l.likes = new Set(); });
     const gesamt = heuteLinks.length;
-    const geliked = heuteLinks.filter(l => l.likes.has(Number(uid))).length;
+    const geliked = heuteLinks.filter(l => l.likes.has(String(uid))).length;
     if (gesamt > 0) { mission.m2 = geliked / gesamt >= 0.8; mission.m3 = geliked === gesamt; }
     else { mission.m2 = false; mission.m3 = false; }
 }
@@ -713,7 +715,7 @@ async function missionenAuswerten() {
         const gestrigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === gestern);
         const gestrigeInstaLinks = gestrigeLinks.filter(l => istInstagramLink(l.text) && String(l.user_id) !== String(uid));
         const gesamtGestern = gestrigeInstaLinks.length;
-        const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(Number(uid))).length;
+        const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(String(uid))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
         const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
         const mission = getMission(uid);
@@ -875,7 +877,7 @@ bot.command('missionen', async (ctx) => {
         istInstagramLink(l.text)
     );
     const gesamtGestern = gestrigeLinks.length;
-    const gelikedGestern = gestrigeLinks.filter(l => l.likes.has(Number(uid))).length;
+    const gelikedGestern = gestrigeLinks.filter(l => l.likes.has(String(uid))).length;
     const prozentGestern = gesamtGestern > 0 ? Math.round(gelikedGestern / gesamtGestern * 100) : 0;
 
     // Heutige Links für M1
@@ -1238,7 +1240,7 @@ bot.command('dmcleanup', async (ctx) => {
     for (const [msgKey, uids] of Object.entries(d.dmNachrichten || {})) {
         const lnk = Object.values(d.links).find(l => String(l.counter_msg_id) === msgKey);
         for (const [uidStr, dmId] of Object.entries(uids)) {
-            const hasLiked = lnk && lnk.likes && (lnk.likes.has(Number(uidStr)) || lnk.likes.has(uidStr));
+            const hasLiked = lnk && lnk.likes && lnk.likes.has(String(uidStr));
             if (hasLiked) {
                 bot.telegram.deleteMessage(Number(uidStr), dmId).catch(()=>{});
                 delete d.dmNachrichten[msgKey][uidStr];
@@ -1910,9 +1912,9 @@ bot.action(/^like_(\d+)$/, async (ctx) => {
         if (String(uid) === String(lnk.user_id)) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
         // Auch über Sub-Account-Verbindung: kein Like auf Posts vom eigenen Parent/Sub
         if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) { try { await ctx.answerCbQuery('❌ Kein Self-Like!'); } catch (e) {} return; }
-        if (lnk.likes.has(uid)) { try { await ctx.answerCbQuery('✅ Bereits geliked! (auch via App möglich)'); } catch (e) {} return; }
+        if (lnk.likes.has(String(uid))) { try { await ctx.answerCbQuery('✅ Bereits geliked! (auch via App möglich)'); } catch (e) {} return; }
 
-        lnk.likes.add(uid);
+        lnk.likes.add(String(uid));
         lnk.likerNames[uid] = { name: ctx.from.first_name, insta: d.users[uid]?.instagram || null };
         if (!lnk.likeSource) lnk.likeSource = { app: 0, telegram: 0 };
         lnk.likeSource.telegram = (lnk.likeSource.telegram||0) + 1;
@@ -2697,7 +2699,7 @@ async function likeErinnerung() {
         if (!u.started || istAdminId(uid)) continue;
 
         const nichtGeliked = heutigeLinks.filter(([, l]) =>
-            String(l.user_id) !== String(uid) && !l.likes.has(Number(uid))
+            String(l.user_id) !== String(uid) && !l.likes.has(String(uid))
         );
         if (!nichtGeliked.length) continue;
 
@@ -3159,10 +3161,10 @@ app.post('/bridge-event', async (req, res) => {
             const uidNum = Number(uid);
             if (!link.likes) link.likes = new Set();
             // FIX: Nicht nochmal hinzufügen wenn schon geliked
-            if (!link.likes.has(uidNum)) {
-                link.likes.add(uidNum);
+            if (!link.likes.has(String(uid))) {
+                link.likes.add(String(uid));
                 if (!link.likerNames) link.likerNames = {};
-                link.likerNames[uidNum] = { name: name, insta: d.users[uid]?.instagram || null };
+                link.likerNames[String(uid)] = { name: name, insta: d.users[uid]?.instagram || null };
                 if (!link.likeSource) link.likeSource = { app: 0, telegram: 0 };
                 link.likeSource.telegram = (link.likeSource.telegram||0) + 1;
             }
@@ -3570,7 +3572,7 @@ app.get('/like-from-app', async (req, res) => {
 
     const uidNum = Number(uid);
     if (!lnk.likes) lnk.likes = new Set();
-    const wasLiked = lnk.likes.has(uidNum);
+    const wasLiked = lnk.likes.has(String(uid));
     if (wasLiked) {
         // Bereits geliked - kein Unlike möglich
         return res.json({ok:true, liked:true, likes: lnk.likes.size});
@@ -3578,10 +3580,10 @@ app.get('/like-from-app', async (req, res) => {
         // Like
         if (String(uidNum) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
         if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) return res.json({ok:false, error:'Kein Self-Like (eigener Account)'});
-        lnk.likes.add(uidNum);
+        lnk.likes.add(String(uid));
         const u = d.users[uid];
         if (!lnk.likerNames) lnk.likerNames = {};
-        lnk.likerNames[uidNum] = { name: u?.name||'User', insta: u?.instagram||null };
+        lnk.likerNames[String(uid)] = { name: u?.name||'User', insta: u?.instagram||null };
         if (!lnk.likeSource) lnk.likeSource = { app: 0, telegram: 0 };
         lnk.likeSource.app = (lnk.likeSource.app||0) + 1;
         // DM-Benachrichtigung löschen
@@ -4529,7 +4531,7 @@ app.get('/mission-status-api', (req, res) => {
         istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(l.user_id) !== String(uid)
     );
     const gesamt = heuteLinks.length;
-    const geliked = heuteLinks.filter(l => l.likes && l.likes.has(Number(uid))).length;
+    const geliked = heuteLinks.filter(l => l.likes && l.likes.has(String(uid))).length;
     const prozent = gesamt > 0 ? Math.round((geliked / gesamt) * 100) : 0;
     res.json({
         ok: true,

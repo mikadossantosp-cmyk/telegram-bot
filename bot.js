@@ -1,6 +1,9 @@
 import { Telegraf, Markup } from 'telegraf';
 import fs from 'fs';
 import express from 'express';
+import crypto from 'crypto';
+import http from 'http';
+import https from 'https';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
@@ -365,7 +368,7 @@ async function sendAppPush(targetUid, title, body, urlPath = '/feed') {
     try {
         const fullUrl = APP_URL.replace(/\/$/, '') + '/api/push-notify';
         const data = JSON.stringify({ uid: String(targetUid), title, body, url: urlPath });
-        const lib = fullUrl.startsWith('https') ? require('https') : require('http');
+        const lib = fullUrl.startsWith('https') ? https : http;
         const u = new URL(fullUrl);
         await new Promise(resolve => {
             const req = lib.request({
@@ -383,7 +386,7 @@ async function broadcastAppPush(title, body, urlPath = '/feed', exceptUid = null
     try {
         const fullUrl = APP_URL.replace(/\/$/, '') + '/api/push-broadcast';
         const data = JSON.stringify({ title, body, url: urlPath, exceptUid: exceptUid ? String(exceptUid) : '' });
-        const lib = fullUrl.startsWith('https') ? require('https') : require('http');
+        const lib = fullUrl.startsWith('https') ? https : http;
         const u = new URL(fullUrl);
         await new Promise(resolve => {
             const req = lib.request({
@@ -1452,7 +1455,7 @@ bot.command('mycode', async (ctx) => {
         const namePart = (ctx.from.first_name||'user').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8) || 'user';
         let candidate;
         do {
-            const rand = require('crypto').randomBytes(4).toString('hex'); // 8 hex chars, ~1 in 4 Mrd
+            const rand = crypto.randomBytes(4).toString('hex'); // 8 hex chars, ~1 in 4 Mrd
             candidate = namePart + rand;
         } while (taken.has(candidate));
         u.appCode = candidate;
@@ -3370,14 +3373,14 @@ const BILDER_DIR = '/data';
 function saveBild(uid, type, data) {
     try {
         const file = BILDER_DIR + '/bild_' + uid + '_' + type + '.txt';
-        require('fs').writeFileSync(file, data);
+        fs.writeFileSync(file, data);
         return '/bild/' + uid + '/' + type;
     } catch(e) { return data; }
 }
 function loadBild(uid, type) {
     try {
         const file = BILDER_DIR + '/bild_' + uid + '_' + type + '.txt';
-        if (require('fs').existsSync(file)) return require('fs').readFileSync(file, 'utf8');
+        if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8');
     } catch(e) {}
     return null;
 }
@@ -3727,13 +3730,13 @@ app.post('/post-link-from-app', async (req, res) => {
         // Bridge Bot informieren
         try {
             const burl = BRIDGE_BOT_URL;
-            const lib2 = burl.startsWith('https') ? require('https') : require('http');
+            const lib2 = burl.startsWith('https') ? https : http;
             const bdata = JSON.stringify({
                 fromGroup: 'A', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
                 chatId: GROUP_A_ID, linkText: url,
                 userName: u.spitzname||u.name||name, userId: Number(uid), username: u.username||null
             });
-            const urlObj2 = new (require('url').URL)(burl);
+            const urlObj2 = new URL(burl);
             const req2 = lib2.request({
                 hostname: urlObj2.hostname, path: urlObj2.pathname, method: 'POST',
                 headers: {'Content-Type':'application/json','x-bridge-secret':BRIDGE_SECRET,'Content-Length':Buffer.byteLength(bdata)}

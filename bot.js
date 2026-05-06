@@ -1008,7 +1008,7 @@ bot.command('dm', async (ctx) => {
     let ok = 0, err = 0;
     await ctx.reply('📨 Sende...');
     for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started) continue;
+        if (!u.started || u.parent_uid) continue; // Subs haben keine Telegram-UID
         try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*\n\n' + nachricht, { parse_mode: 'Markdown' }); ok++; await new Promise(r => setTimeout(r, 200)); }
         catch (e) { err++; }
     }
@@ -1310,7 +1310,7 @@ bot.command('remindinsta', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     let count = 0;
     for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
+        if (!u.started || u.parent_uid || (u.instagram && u.instagram.trim() !== '')) continue;
         try {
             await bot.telegram.sendMessage(Number(uid),
                 '📸 *Hey ' + u.name + '!*\n\nDu hast noch keinen Instagram Account eingetragen.\n\nBitte trage deinen Instagram Namen ein damit wir dich besser supporten können! 💪\n\n👉 Tippe: /setinsta deinname',
@@ -1989,7 +1989,7 @@ bot.action(/^liker_(\d+)$/, async (ctx) => {
 bot.action('remind_insta', async (ctx) => {
     let count = 0;
     for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
+        if (!u.started || u.parent_uid || (u.instagram && u.instagram.trim() !== '')) continue;
         try {
             await bot.telegram.sendMessage(Number(uid), '📸 Bitte sende mir deinen Instagram Namen.\n\n(z.B. max123)', { reply_markup: { inline_keyboard: [[{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]] } });
             count++;
@@ -3229,7 +3229,7 @@ app.get('/reset-user', async (req, res) => {
     if (d.users[uid]) {
         d.users[uid].xp=0; d.users[uid].level=1; d.users[uid].role=badge(0);
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '♻️ *XP zurückgesetzt*\n\nEin Admin hat deinen XP-Stand auf 0 zurückgesetzt.', { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, '♻️ *XP zurückgesetzt*\n\nEin Admin hat deinen XP-Stand auf 0 zurückgesetzt.', { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3240,7 +3240,7 @@ app.get('/remove-warn', async (req, res) => {
     if (d.users[uid]) {
         d.users[uid].warnings = 0;
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '✅ *Verwarnungen entfernt*\n\nEin Admin hat alle deine Verwarnungen gelöscht. Warns: 0/5', { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, '✅ *Verwarnungen entfernt*\n\nEin Admin hat alle deine Verwarnungen gelöscht. Warns: 0/5', { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3251,7 +3251,7 @@ app.get('/add-warn', async (req, res) => {
     if (d.users[uid]) {
         d.users[uid].warnings = (d.users[uid].warnings||0)+1;
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\nWarn: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, '⚠️ *Verwarnung!*\nWarn: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3267,7 +3267,7 @@ app.get('/remove-xp', async (req, res) => {
         d.users[uid].role = badge(d.users[uid].xp);
         speichern();
         const badgeChange = alteBadge !== d.users[uid].role ? `\n📉 Badge: ${alteBadge} → ${d.users[uid].role}` : '';
-        try { await bot.telegram.sendMessage(Number(uid), `📉 *XP-Abzug*\n\nEin Admin hat dir −${amount} XP abgezogen.\n⭐ Aktuell: ${d.users[uid].xp} XP${badgeChange}`, { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, `📉 *XP-Abzug*\n\nEin Admin hat dir −${amount} XP abgezogen.\n⭐ Aktuell: ${d.users[uid].xp} XP${badgeChange}`, { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3279,7 +3279,7 @@ app.get('/give-bonus', async (req, res) => {
         if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
         d.bonusLinks[uid]++;
         speichern();
-        try { await bot.telegram.sendMessage(Number(uid), '🎁 *Extra-Link erhalten!*', { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, '🎁 *Extra-Link erhalten!*', { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3304,8 +3304,23 @@ app.get('/ban-user', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
     if (d.users[uid]) {
+        // Sub-Account hat keine Telegram-Identität → "Ban" macht keinen Sinn.
+        // Stattdessen: Sub komplett löschen, Parent-Verbindung räumen.
+        if (isSubAccount(uid)) {
+            const parentUid = String(d.users[uid].parent_uid);
+            delete d.users[uid];
+            if (d.users[parentUid]) delete d.users[parentUid].subUid;
+            for (const u of Object.values(d.users||{})) {
+                if (Array.isArray(u.followers)) u.followers = u.followers.filter(x => String(x) !== uid);
+                if (Array.isArray(u.following)) u.following = u.following.filter(x => String(x) !== uid);
+            }
+            if (d.dailyXP) delete d.dailyXP[uid];
+            if (d.weeklyXP) delete d.weeklyXP[uid];
+            speichern();
+            return res.json({ ok: true, action: 'sub-deleted' });
+        }
         // DM ZUERST schicken, danach bannen — nach dem Ban kann der Bot dem User nichts mehr senden.
-        try { await bot.telegram.sendMessage(Number(uid), '🚫 *Du wurdest gebannt*\n\nEin Admin hat dich aus der CreatorX-Community entfernt.', { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, '🚫 *Du wurdest gebannt*\n\nEin Admin hat dich aus der CreatorX-Community entfernt.', { parse_mode: 'Markdown' });
         try {
             for (const chatId of [GROUP_A_ID, GROUP_B_ID]) {
                 if (chatId) await bot.telegram.banChatMember(chatId, Number(uid)).catch(()=>{});
@@ -3327,7 +3342,7 @@ app.post('/send-dm-api', async (req, res) => {
         // DM an alle
         let ok = 0;
         for (const [id, u] of Object.entries(d.users)) {
-            if (!u.started) continue;
+            if (!u.started || u.parent_uid) continue;
             try { await bot.telegram.sendMessage(Number(id), '📢 *Admin:*\n\n' + text, { parse_mode: 'Markdown', reply_markup: adminButton }); ok++; await new Promise(r=>setTimeout(r,200)); } catch(e) {}
         }
     }
@@ -3364,7 +3379,7 @@ app.get('/add-xp', async (req, res) => {
         xpAddMitDaily(uid, amount, d.users[uid].name);
         speichern();
         // xpAddMitDaily sendet schon Badge-Aufstieg-DM bei Level-Up; zusätzlich kurz quittieren.
-        try { await bot.telegram.sendMessage(Number(uid), `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' }); } catch(e) {}
+        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -3381,7 +3396,7 @@ app.get('/remind-insta-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     let count = 0;
     for (const [uid, u] of Object.entries(d.users)) {
-        if (!u.started || (u.instagram && u.instagram.trim() !== '')) continue;
+        if (!u.started || u.parent_uid || (u.instagram && u.instagram.trim() !== '')) continue;
         try {
             await bot.telegram.sendMessage(Number(uid),
                 '📸 *Hey ' + u.name + '!*\n\nDu hast noch keinen Instagram Account eingetragen.\n\nBitte trage deinen Instagram Namen ein!\n\n👉 Tippe: /setinsta deinname',
@@ -3631,8 +3646,10 @@ app.post('/follow-api', (req, res) => {
     const followerUid = req.body && req.body.followerUid ? String(req.body.followerUid) : '';
     const targetUid = req.body && req.body.targetUid ? String(req.body.targetUid) : '';
     if (!followerUid || !targetUid) return res.json({ok:false, error:'Fehlende UIDs'});
-    // Auto-create Follower-Eintrag falls fehlt (App-Only User)
-    if (!d.users[followerUid]) user(followerUid, '');
+    // Follower MUSS existieren — auto-create würde gelöschte Subs als Geister wiederbeleben
+    // (Sub-UIDs sind 13-stellige Date.now()-Strings, ohne Bot-Kontext keine Möglichkeit den
+    // Parent zu re-attachen → orphan-Eintrag).
+    if (!d.users[followerUid]) return res.json({ok:false, error:'Follower-Account nicht gefunden'});
     if (!d.users[targetUid]) return res.json({ok:false, error:'Ziel-User nicht gefunden ('+targetUid+')'});
     if (!Array.isArray(d.users[followerUid].following)) d.users[followerUid].following = [];
     if (!Array.isArray(d.users[targetUid].followers)) d.users[targetUid].followers = [];

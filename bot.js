@@ -1456,7 +1456,7 @@ async function sendShopNachricht(ctx, uid) {
 
 bot.command('shop', async (ctx) => {
     const uid = ctx.from.id;
-    if (istAdminId(uid)) return ctx.reply('⚙️ Admins haben keinen Diamanten-Shop. /shop ist nur für reguläre User.');
+    // Admin-Block entfernt — Admins können /shop ansehen (User-Anfrage zur Vorschau)
     if (!istPrivat(ctx.chat.type)) {
         try {
             await sendShopNachricht({ reply: (text, opts) => bot.telegram.sendMessage(uid, text, opts) }, uid);

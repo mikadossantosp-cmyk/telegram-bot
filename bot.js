@@ -4671,12 +4671,14 @@ app.post('/engage-pinned-post-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { engagerUid, ownerUid } = req.body || {};
     if (!engagerUid || !ownerUid || engagerUid === ownerUid) return res.json({ok:false});
+    // Track per ENGAGER (nicht per Owner) — jeder User kann nur 1× pro Owner einen Diamant kriegen
     if (!d.pinnedEngages) d.pinnedEngages = {};
-    if (!d.pinnedEngages[ownerUid]) d.pinnedEngages[ownerUid] = [];
-    if (d.pinnedEngages[ownerUid].includes(String(engagerUid))) return res.json({ok:false, alreadyDone:true});
-    d.pinnedEngages[ownerUid].push(String(engagerUid));
-    addDiamond(ownerUid, 1);
-    addNotification(ownerUid, '💎', 'Jemand hat deinen Post engagiert! +1 Diamant');
+    if (!d.pinnedEngages[engagerUid]) d.pinnedEngages[engagerUid] = [];
+    if (d.pinnedEngages[engagerUid].includes(String(ownerUid))) return res.json({ok:false, alreadyDone:true});
+    d.pinnedEngages[engagerUid].push(String(ownerUid));
+    // Belohnung an den ENGAGER (= der den pinned-link geliked hat) — nicht an den Owner
+    addDiamond(engagerUid, 1);
+    addNotification(engagerUid, '💎', 'Du hast einen Pinned-Post engagiert! +1 Diamant');
     speichern();
     res.json({ok:true});
 });

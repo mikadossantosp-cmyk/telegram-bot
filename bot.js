@@ -1394,7 +1394,7 @@ async function startMeldenFlow(ctx, uid) {
 
 bot.command('melden', async (ctx) => {
     const uid = ctx.from.id;
-    if (istAdminId(uid)) return;
+    if (istAdminId(uid)) return ctx.reply('⚙️ Admins können /melden nicht nutzen. Nur reguläre User können Verstöße melden.');
     try {
         if (!istPrivat(ctx.chat.type)) {
             const info = await ctx.telegram.getMe();
@@ -1456,7 +1456,7 @@ async function sendShopNachricht(ctx, uid) {
 
 bot.command('shop', async (ctx) => {
     const uid = ctx.from.id;
-    if (istAdminId(uid)) return;
+    if (istAdminId(uid)) return ctx.reply('⚙️ Admins haben keinen Diamanten-Shop. /shop ist nur für reguläre User.');
     if (!istPrivat(ctx.chat.type)) {
         try {
             await sendShopNachricht({ reply: (text, opts) => bot.telegram.sendMessage(uid, text, opts) }, uid);

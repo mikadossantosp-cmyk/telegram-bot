@@ -4278,7 +4278,9 @@ app.post('/post-link-from-app', async (req, res) => {
         const mapKey = linkId;
         const linkData = {
             chat_id: GROUP_A_ID,
-            user_id: Number(uid),
+            // Sub-Account-Safe: uid bleibt String (Number('sub_xyz') = NaN würde
+            // String(link.user_id)===String(myUid) Self-Check brechen).
+            user_id: /^\d+$/.test(String(uid)) ? Number(uid) : String(uid),
             user_name: u.spitzname||u.name||name,
             text: url,
             caption: caption||'',

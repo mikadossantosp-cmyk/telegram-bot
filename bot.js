@@ -332,22 +332,24 @@ async function runEngagementCheck(isReminder = false) {
 async function superlinkDailyReminder() {
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
-    if (weekSuperlinks.length < 2) return { sent: 0 };
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
     const threadUrl = getFullEngagementThreadUrl();
     let sent = 0;
     for (const uid of posters) {
         const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
         if (offen === 0) continue;
-        const txt = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+        const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
         const opts = threadUrl
             ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt engagen', url: threadUrl }]] } }
             : { parse_mode: 'Markdown' };
         try {
-            await bot.telegram.sendMessage(Number(uid), txt, opts);
+            await bot.telegram.sendMessage(Number(uid), tgText, opts);
             sent++;
         } catch(e) {}
-        sendAppPush(String(uid), '⭐ Superlink-Erinnerung', `Du hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche — jetzt engagen!`, '/feed?tab=engagement').catch(()=>{});
+        try {
+            const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.${threadUrl ? '\n\n📲 ' + threadUrl : ''}`;
+            sendCreatorBoostDM(uid, inappText);
+        } catch(e) {}
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
     return { sent };

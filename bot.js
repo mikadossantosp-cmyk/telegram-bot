@@ -5185,10 +5185,13 @@ app.post('/like-superlink-api', async (req, res) => {
     if (!Array.isArray(sl.likes)) sl.likes = [];
     if (!sl.likerNames) sl.likerNames = {};
     const idx = sl.likes.indexOf(String(uid));
+    // Engagement-Pflicht: einmal geliked = erfüllt. Unlike NICHT erlaubt (analog zum
+    // Telegram-Button-Callback Line 2233 + zur /like-from-app Logik). Vorher konnte
+    // App-User über direkten API-Hit den Like wieder entfernen → Pflicht-Bypass.
     if (idx >= 0) {
-        sl.likes.splice(idx, 1);
-        delete sl.likerNames[String(uid)];
-    } else {
+        return res.json({ok:true, liked:true, likes: sl.likes.length});
+    }
+    {
         sl.likes.push(String(uid));
         const u = d.users[String(uid)];
         sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';

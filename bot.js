@@ -2936,6 +2936,40 @@ function updateStreak(uid) {
     u.lastStreakDay = heute;
 }
 
+// System-User "CreatorBoost" für In-App DMs (z.B. Superlink-Pflicht-Reminder)
+const CREATORBOOST_UID = 'creatorboost';
+function ensureCreatorBoostUser() {
+    if (!d.users) d.users = {};
+    if (!d.users[CREATORBOOST_UID]) {
+        d.users[CREATORBOOST_UID] = {
+            id: CREATORBOOST_UID,
+            name: 'CreatorBoost',
+            spitzname: 'CreatorBoost',
+            role: '🤖 System',
+            xp: 0,
+            joined: Date.now(),
+            isSystem: true
+        };
+    }
+}
+function sendCreatorBoostDM(toUid, text) {
+    ensureCreatorBoostUser();
+    if (!d.messages) d.messages = {};
+    const chatKey = [CREATORBOOST_UID, String(toUid)].sort().join('_');
+    if (!d.messages[chatKey]) d.messages[chatKey] = [];
+    d.messages[chatKey].push({
+        from: CREATORBOOST_UID,
+        to: String(toUid),
+        text: String(text||'').slice(0,1000),
+        timestamp: Date.now(),
+        read: false
+    });
+    if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
+    addNotification(String(toUid), '💬', 'CreatorBoost: ' + String(text||'').slice(0,40), CREATORBOOST_UID);
+    sendAppPush(String(toUid), '💬 CreatorBoost', String(text||'').slice(0,100), '/nachrichten/' + CREATORBOOST_UID).catch(()=>{});
+    speichern();
+}
+
 function addNotification(targetUid, icon, text, actorUid = null) {
     if (!d.notifications) d.notifications = {};
     if (!d.notifications[targetUid]) d.notifications[targetUid] = [];
@@ -4864,12 +4898,12 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks[slId] = newSL;
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
         speichern();
-        // DM an Poster — Pflicht-Reminder mit Regel-Link
+        // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).
+        // Telegram-DM bewusst weggelassen — Telegram-Bot deckt seinen Flow selbst ab.
         try {
             const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
-            await bot.telegram.sendMessage(Number(uid),
-                '⭐ *Dein Superlink wurde gepostet!*\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst *alle Superlinks dieser Woche engagieren* (Liken, Kommentieren, Teilen, Speichern) bis *Sonntag 23:59 Uhr*.\n\n📖 [Regeln hier](' + rulesUrl + ')',
-                { parse_mode: 'Markdown', disable_web_page_preview: true });
+            sendCreatorBoostDM(uid,
+                '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.\n\n📖 Regeln: ' + rulesUrl);
         } catch(e) {}
         // DM an alle anderen Poster dieser Woche
         const posterUser = d.users[String(uid)];

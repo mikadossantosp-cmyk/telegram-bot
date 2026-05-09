@@ -4075,8 +4075,16 @@ app.post('/create-subaccount-api', (req, res) => {
     if (d.users[parent_uid].subUid && d.users[d.users[parent_uid].subUid]) {
         return res.json({ok:false, error:'Du hast schon einen Sub-Account', sub_uid: String(d.users[parent_uid].subUid)});
     }
-    // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision
-    const sub_uid = String(Date.now());
+    // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision.
+    // Plus Kollisions-Check: zwei Parents im selben Millisekunden würden sonst die gleiche UID kriegen.
+    let sub_uid = String(Date.now());
+    let attempts = 0;
+    while (d.users[sub_uid] && attempts++ < 50) {
+        sub_uid = String(Date.now()) + Math.floor(Math.random() * 1000);
+    }
+    if (d.users[sub_uid]) {
+        return res.json({ok:false, error:'Sub-UID-Kollision — bitte gleich nochmal versuchen'});
+    }
     d.users[sub_uid] = {
         name, username: null, instagram: null, bio: null, nische: null, spitzname: null,
         trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,

@@ -2720,6 +2720,54 @@ bot.command('appreminder', async (ctx) => {
     await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
 });
 
+// /relinksubs [dry] — Repariert kaputte Parent→Sub-Backlinks.
+// Hintergrund: Sub-Accounts haben d.users[sub].parent_uid gesetzt, aber
+// d.users[parent].subUid kann durch Bug verloren gegangen sein. Switcher
+// rendert dann leer obwohl die Subs in d.users weiter existieren.
+bot.command('relinksubs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const args = (ctx.message?.text||'').split(/\s+/).slice(1);
+    const dry = args.some(a => a.toLowerCase() === 'dry' || a.toLowerCase() === 'trocken');
+    const fixed = [], alreadyOk = [], conflicts = [], orphaned = [];
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || !u.parent_uid) continue;
+        const parentUid = String(u.parent_uid);
+        const parent = d.users[parentUid];
+        if (!parent) {
+            orphaned.push({ sub: uid, parent: parentUid, name: u.spitzname || u.name || '?' });
+            continue;
+        }
+        if (parent.subUid && String(parent.subUid) === String(uid)) {
+            alreadyOk.push({ sub: uid, parent: parentUid });
+            continue;
+        }
+        if (parent.subUid && String(parent.subUid) !== String(uid)) {
+            // Parent hat bereits einen anderen Sub-Pointer → potentielles Problem.
+            // Wir überschreiben NICHT automatisch; user muss manuell prüfen.
+            conflicts.push({ sub: uid, parent: parentUid, parentSubUid: parent.subUid, name: u.spitzname || u.name || '?' });
+            continue;
+        }
+        // parent.subUid fehlt → setzen.
+        if (!dry) parent.subUid = String(uid);
+        fixed.push({ sub: uid, parent: parentUid, name: u.spitzname || u.name || '?', xp: u.xp || 0 });
+    }
+    if (!dry && fixed.length) speichern();
+    const head = dry ? '🧪 *Dry-Run* — nichts gespeichert' : '✅ *Relink ausgeführt*';
+    let msg = head + '\n\n';
+    msg += `🔗 Repariert: *${fixed.length}*\n👌 Bereits OK: *${alreadyOk.length}*\n⚠️ Konflikt: *${conflicts.length}*\n❓ Verwaist: *${orphaned.length}*`;
+    if (fixed.length) {
+        msg += '\n\n*Repariert (Parent → Sub):*\n' + fixed.slice(0, 15).map(f => '• ' + f.name + ' → Parent `' + f.parent + '` (' + f.xp + ' XP)').join('\n');
+        if (fixed.length > 15) msg += '\n• … +' + (fixed.length - 15) + ' weitere';
+    }
+    if (conflicts.length) {
+        msg += '\n\n*Konflikte (Parent zeigt auf anderen Sub):*\n' + conflicts.slice(0, 5).map(c => '• ' + c.name + ' (Parent zeigt auf `' + c.parentSubUid + '` statt `' + c.sub + '`)').join('\n');
+    }
+    if (orphaned.length) {
+        msg += '\n\n*Verwaist (Parent fehlt komplett):*\n' + orphaned.slice(0, 5).map(o => '• ' + o.name + ' → Parent `' + o.parent + '` nicht in d.users').join('\n');
+    }
+    return ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
 // /restoresubs [YYYY-MM-DD] [dry] — Sub-Accounts aus einem Backup wiederherstellen.
 // Default: heutiges Datum. 'dry' an zweiter Stelle = Trockenlauf ohne Speichern.
 bot.command('restoresubs', async (ctx) => {

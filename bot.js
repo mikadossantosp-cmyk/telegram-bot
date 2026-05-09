@@ -4,6 +4,7 @@ import express from 'express';
 import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
+import { detectGender, genderize } from './gender-helper.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
@@ -682,10 +683,15 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false, inventory: [], activeRing: null };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false, inventory: [], activeRing: null, gender: null };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
+    // Auto-Detect Gender wenn noch nicht gesetzt — manuelles /setgender überschreibt das.
+    if (d.users[uid].gender == null) {
+        const detected = detectGender(d.users[uid].spitzname || d.users[uid].name);
+        if (detected) d.users[uid].gender = detected;
+    }
     return d.users[uid];
 }
 
@@ -2548,6 +2554,32 @@ bot.command('superlinkreminder', async (ctx) => {
     await ctx.reply('⏳ Sende Reminder an alle Poster mit offenen Superlinks...');
     const result = await superlinkDailyReminder();
     await ctx.reply(`✅ ${result.sent} Reminder-DMs gesendet`);
+});
+
+bot.command('setgender', async (ctx) => {
+    const u = user(ctx.from.id, ctx.from.first_name);
+    const arg = (ctx.message?.text||'').split(/\s+/)[1]?.toLowerCase().trim();
+    if (!arg || !['m','w','d','unset','reset','auto'].includes(arg)) {
+        const current = u.gender ? (u.gender === 'm' ? 'männlich' : u.gender === 'w' ? 'weiblich' : 'divers') : 'nicht gesetzt (Auto-Detect aktiv)';
+        return ctx.reply(
+            '👤 *Geschlecht festlegen*\n\n' +
+            'Aktuell: *' + current + '*\n\n' +
+            'Setzen mit:\n' +
+            '• `/setgender m` — männlich\n' +
+            '• `/setgender w` — weiblich\n' +
+            '• `/setgender d` — divers / neutrale Sprache\n' +
+            '• `/setgender unset` — zurück auf Auto-Detect',
+            { parse_mode: 'Markdown' });
+    }
+    if (arg === 'unset' || arg === 'reset' || arg === 'auto') {
+        u.gender = null;
+        speichern();
+        return ctx.reply('🔄 Geschlecht zurückgesetzt — Auto-Detect ist wieder aktiv.');
+    }
+    u.gender = arg;
+    speichern();
+    const label = arg === 'm' ? 'männlich' : arg === 'w' ? 'weiblich' : 'divers';
+    return ctx.reply('✅ Geschlecht gesetzt auf *' + label + '*.', { parse_mode: 'Markdown' });
 });
 
 bot.command('appreminder', async (ctx) => {

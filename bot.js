@@ -2664,6 +2664,42 @@ bot.command('setgender', async (ctx) => {
     return ctx.reply('✅ Geschlecht gesetzt auf *' + label + '*.', { parse_mode: 'Markdown' });
 });
 
+bot.command('setemail', async (ctx) => {
+    const u = user(ctx.from.id, ctx.from.first_name);
+    const arg = (ctx.message?.text||'').split(/\s+/).slice(1).join(' ').toLowerCase().trim();
+    if (!arg || arg === 'show' || arg === 'status') {
+        const current = u.email ? '`' + u.email + '`' : '_nicht gesetzt_';
+        return ctx.reply(
+            '📧 *Email-Login*\n\n' +
+            'Aktuell: ' + current + '\n\n' +
+            'Wenn du eine Email setzt, kannst du dich auch ohne Telegram-Code in der App einloggen — wir schicken dir einen Magic-Link an die Email.\n\n' +
+            'Setzen mit:\n' +
+            '• `/setemail deine@email.de`\n' +
+            '• `/setemail unset` — Email entfernen',
+            { parse_mode: 'Markdown' });
+    }
+    if (arg === 'unset' || arg === 'reset' || arg === 'remove' || arg === 'delete') {
+        delete u.email;
+        speichern();
+        return ctx.reply('🗑️ Email entfernt. Email-Login ist deaktiviert.');
+    }
+    // Email-Format prüfen.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(arg) || arg.length > 200) {
+        return ctx.reply('❌ Das sieht nicht nach einer gültigen Email aus.\n\nBeispiel: `/setemail max@gmail.com`', { parse_mode: 'Markdown' });
+    }
+    // Schon vergeben? Email muss eindeutig sein, sonst weiß der App-Server nicht zu wem sie gehört.
+    const taken = Object.entries(d.users || {}).find(([uid, x]) => String(uid) !== String(ctx.from.id) && String(x.email||'').toLowerCase() === arg);
+    if (taken) {
+        return ctx.reply('⚠️ Diese Email ist bereits bei einem anderen Account hinterlegt. Bitte nutze eine andere.');
+    }
+    u.email = arg;
+    speichern();
+    return ctx.reply(
+        '✅ Email gesetzt auf `' + arg + '`.\n\n' +
+        '👉 Du kannst dich jetzt unter *App → Login → Email* mit dieser Adresse einloggen. Wir schicken dir dann einen einmaligen Magic-Link per Mail.',
+        { parse_mode: 'Markdown' });
+});
+
 bot.command('appreminder', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     await ctx.reply('⏳ Sende App-Reminder an alle User die die App noch nie geöffnet haben...');

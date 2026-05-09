@@ -3892,6 +3892,71 @@ app.get('/manual-backup-api', async (req, res) => {
     res.json({ ok: true });
 });
 
+// ─── Sub-Account-Wiederherstellung aus Backup ────────────────────────────────
+// Listet alle Backup-Dateien auf (datum + #subs darin).
+app.get('/list-backups', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    try {
+        const dir = require('path').dirname(DATA_FILE);
+        const base = require('path').basename(DATA_FILE).replace('.json', '');
+        const files = fs.readdirSync(dir)
+            .filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json'))
+            .sort()
+            .reverse();
+        const out = files.map(f => {
+            try {
+                const full = require('path').join(dir, f);
+                const stat = fs.statSync(full);
+                const data = JSON.parse(fs.readFileSync(full, 'utf8'));
+                const subs = Object.entries(data.users || {}).filter(([,u]) => u && u.parent_uid).length;
+                const users = Object.keys(data.users || {}).length;
+                return { file: f, mtime: stat.mtime.toISOString(), users, subs };
+            } catch(e) { return { file: f, error: e.message }; }
+        });
+        res.json({ ok: true, backups: out });
+    } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Stellt nur die fehlenden Sub-Accounts aus einem Backup wieder her — überschreibt
+// nichts an aktuellen Daten. Query-Param ?date=2026-05-09 (default = heute).
+// Optional ?dry=1 → zeigt nur was wiederhergestellt würde, ohne zu schreiben.
+app.get('/restore-subs-only', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    try {
+        const dryRun = req.query.dry === '1';
+        const today = new Date().toISOString().slice(0, 10);
+        const date = String(req.query.date || today);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: 'date format YYYY-MM-DD' });
+        const backupFile = DATA_FILE.replace('.json', '_backup_' + date + '.json');
+        if (!fs.existsSync(backupFile)) {
+            return res.status(404).json({ ok: false, error: 'Backup-Datei nicht gefunden: ' + backupFile });
+        }
+        const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+        const restored = [];
+        const skipped = [];
+        const orphaned = [];
+        for (const [uid, u] of Object.entries(backup.users || {})) {
+            if (!u || !u.parent_uid) continue; // nur Subs
+            if (d.users[uid]) {
+                skipped.push({ sub_uid: uid, reason: 'sub already exists in current data' });
+                continue;
+            }
+            const parentUid = String(u.parent_uid);
+            if (!d.users[parentUid]) {
+                orphaned.push({ sub_uid: uid, parent_uid: parentUid, reason: 'parent missing — sub kann nicht relinkt werden' });
+                continue;
+            }
+            if (!dryRun) {
+                d.users[uid] = u;
+                d.users[parentUid].subUid = uid;
+            }
+            restored.push({ sub_uid: uid, parent_uid: parentUid, name: u.name, spitzname: u.spitzname || null, xp: u.xp || 0 });
+        }
+        if (!dryRun && restored.length) speichern();
+        res.json({ ok: true, dryRun, fromBackup: backupFile, restored: restored.length, skipped: skipped.length, orphaned: orphaned.length, details: { restored, skipped, orphaned } });
+    } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get('/add-xp', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.id;
@@ -4033,6 +4098,59 @@ app.post('/auth/code', (req, res) => {
         role: u.role,
         xp: u.xp
     });
+});
+
+// ─── Email-Passwort-Login (App-Bridge) ───────────────────────────────────────
+// Hash mit PBKDF2 + 100k iter SHA-256 — keine ext. Dependencies, ausreichend
+// für unsere Größenordnung (alternativ argon2/bcrypt).
+function hashPasswordPBKDF2(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(String(password), salt, 100000, 64, 'sha256').toString('hex');
+    return 'pbkdf2$100000$' + salt + '$' + hash;
+}
+function verifyPasswordPBKDF2(password, stored) {
+    if (!stored || typeof stored !== 'string') return false;
+    const parts = stored.split('$');
+    if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+    const iter = parseInt(parts[1], 10) || 100000;
+    const salt = parts[2], hash = parts[3];
+    if (!salt || !hash) return false;
+    try {
+        const compare = crypto.pbkdf2Sync(String(password), salt, iter, 64, 'sha256').toString('hex');
+        return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(compare, 'hex'));
+    } catch { return false; }
+}
+
+// Setzt das Passwort für einen User. Bridge-Secret-geschützt.
+app.post('/set-user-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, password } = req.body || {};
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    const pw = String(password || '');
+    if (pw === '') {
+        delete d.users[uid].password_hash;
+        speichern();
+        return res.json({ ok: true, cleared: true });
+    }
+    if (pw.length < 6) return res.status(400).json({ ok: false, error: 'Passwort muss mindestens 6 Zeichen haben' });
+    if (pw.length > 200) return res.status(400).json({ ok: false, error: 'Passwort zu lang' });
+    d.users[uid].password_hash = hashPasswordPBKDF2(pw);
+    speichern();
+    res.json({ ok: true });
+});
+
+// Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.
+app.post('/auth-email-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    const password = String((req.body && req.body.password) || '');
+    if (!email || !password) return res.status(400).json({ ok: false, error: 'Email und Passwort erforderlich' });
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
+    const [uid, u] = found;
+    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'Für diesen Account ist noch kein Passwort gesetzt — bitte Magic-Link nutzen' });
+    if (!verifyPasswordPBKDF2(password, u.password_hash)) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
+    res.json({ ok: true, uid: String(uid), hasPassword: true });
 });
 
 

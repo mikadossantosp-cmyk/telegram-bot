@@ -15,9 +15,11 @@ const APP_URL        = process.env.APP_URL || 'https://site--creatorboost-app--8
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
-const GROUP_A_ID     = Number(process.env.GROUP_A_ID);
-const GROUP_B_ID     = Number(process.env.GROUP_B_ID);
-const MEINE_GRUPPE   = 'B';
+const GROUP_A_ID       = Number(process.env.GROUP_A_ID);
+const GROUP_B_ID       = Number(process.env.GROUP_B_ID);
+const GROUP_A_INVITE   = process.env.GROUP_A_INVITE || 'https://t.me/+w-V2QL-igJw5YjY0';  // Link-Gruppe (zum Insta-Posten)
+const GROUP_B_INVITE   = process.env.GROUP_B_INVITE || '';                                  // Chat-Gruppe (Community-Chat)
+const MEINE_GRUPPE     = 'B';
 
 process.env.TZ = 'Europe/Berlin';
 
@@ -1059,6 +1061,7 @@ bot.use(async (ctx, next) => {
 bot.start(async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
+    const wasNew = !u.started;
     u.started = true;
     if (d.warteNachricht?.[uid]) {
         try { await bot.telegram.deleteMessage(d.warteNachricht[uid].chatId, d.warteNachricht[uid].msgId); } catch (e) {}
@@ -1069,8 +1072,37 @@ bot.start(async (ctx) => {
         const payload = ctx.startPayload;
         if (payload === 'melden') return startMeldenFlow(ctx, uid);
         if (payload === 'shop') return sendShopNachricht(ctx, uid);
-        if (!u.instagram) { d.instaWarte[uid] = true; speichern(); return ctx.reply('📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'); }
-        return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
+        // ─── Großes Welcome-Briefing (immer beim /start, auch wenn schon gestartet) ───
+        const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
+        const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
+        const greeting = wasNew ? `👋 *Willkommen, ${ctx.from.first_name || 'Creator'}!*` : `👋 *Hi ${ctx.from.first_name || 'Creator'}!*`;
+        const briefing = greeting + '\n\n' +
+            'Schön dass du dabei bist 🚀\n\n' +
+            'Hier ist wie *CreatorX* funktioniert — wir haben *2 Gruppen* + *eine App*:\n\n' +
+            '━━━━━━━━━━━━━━\n' +
+            '🔗 *Link-Gruppe* — _hier postest du deine Insta-Reels_\n' +
+            'Jeder postet täglich seinen Reel-Link. Andere Creator liken zurück. Bot trackt alles.\n\n' +
+            '💬 *Chat-Gruppe* — _hier wird gequatscht_\n' +
+            'Community-Chat, Tipps, Fragen, Engagement-Pflicht-Threads.\n\n' +
+            '📱 *Die App* — _dein Creator-Hub_\n' +
+            'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen.\n' +
+            '━━━━━━━━━━━━━━\n\n' +
+            '⚠️ *Wichtig:* Setz unten deinen Instagram-Username — sonst kannst du in der App nicht posten/liken.';
+        const buttons = [];
+        if (GROUP_A_INVITE) buttons.push([{ text: '🔗 Zur Link-Gruppe', url: GROUP_A_INVITE }]);
+        if (GROUP_B_INVITE) buttons.push([{ text: '💬 Zur Chat-Gruppe', url: GROUP_B_INVITE }]);
+        buttons.push([{ text: '📱 App öffnen (1-Klick-Login)', url: magicAppUrl }]);
+        try {
+            await ctx.reply(briefing, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+        } catch (e) {
+            // Markdown-Parsing fail safety
+            await ctx.reply(briefing.replace(/\*/g,'').replace(/_/g,''), { reply_markup: { inline_keyboard: buttons } });
+        }
+        // Wenn noch kein Insta → den Insta-Wait-Flow triggern (zweite Nachricht).
+        if (!u.instagram) {
+            d.instaWarte[uid] = true; speichern();
+            return ctx.reply('📸 Bevor du loslegst — wie heißt dein Instagram?\n\n(z.B. max123 — nur der Username, ohne @)');
+        }
     }
 });
 

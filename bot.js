@@ -4049,13 +4049,28 @@ app.get('/delete-link', async (req, res) => {
     const msgId = req.query.id;
     if (d.links[msgId]) {
         const link = d.links[msgId];
-        if (link.chat_id && link.counter_msg_id) {
-            bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{});
-        }
-        // Remove from dmNachrichten
+        // 1. Telegram-Nachricht in der Link-Gruppe löschen (sowohl Original-Msg als auch Counter-Msg).
+        try { if (link.chat_id && link.counter_msg_id) await bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{}); } catch(e){}
+        try { if (link.chat_id && msgId && /^\d+$/.test(String(msgId))) await bot.telegram.deleteMessage(link.chat_id, Number(msgId)).catch(()=>{}); } catch(e){}
+        // 2. Counter-Mapping aus dmNachrichten räumen.
         if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+        // 3. Comments zum Link löschen (auch unter counter_msg_id Schlüssel).
+        if (d.comments) {
+            delete d.comments[msgId];
+            if (link.counter_msg_id) delete d.comments[String(link.counter_msg_id)];
+        }
+        // 4. Tracker/Counter-Referenzen aufräumen falls vorhanden.
+        if (d.likerNames) delete d.likerNames[msgId];
+        // 5. Aus pinnedEngages entfernen falls dort referenziert.
+        if (d.pinnedEngages) {
+            for (const k of Object.keys(d.pinnedEngages)) {
+                if (String(d.pinnedEngages[k]?.linkId||'') === String(msgId)) delete d.pinnedEngages[k];
+            }
+        }
+        // 6. Den Link selbst löschen.
         delete d.links[msgId];
         speichern();
+        console.log('[DELETE-LINK] Link', msgId, 'komplett gelöscht (TG + Comments + DMs)');
     }
     res.json({ ok: true });
 });

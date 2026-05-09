@@ -320,6 +320,10 @@ async function runEngagementCheck(isReminder = false) {
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
     let warned = 0;
     for (const uid of posters) {
+        const u = d.users[uid];
+        // Sub-Accounts skippen — keine eigenen Reminder/Strafen, läuft alles über den Parent.
+        if (u && u.parent_uid) continue;
+        if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
         const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
         if (!otherLinks.length) continue;
         const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
@@ -331,7 +335,6 @@ async function runEngagementCheck(isReminder = false) {
                 try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
                 try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
-                const u = d.users[uid];
                 if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
                 const warnCount = u?.warnings || 1;
                 const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
@@ -469,6 +472,12 @@ async function superlinkDailyReminder() {
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
     let sent = 0;
     for (const uid of posters) {
+        const u = d.users[uid];
+        // Sub-Accounts skippen: kein eigenes Telegram + keine eigenen DMs erwünscht.
+        // Wenn ein Sub einen Superlink gepostet hat, bekommt der Parent die Reminder
+        // (separat über seine Parent-UID — falls er auch posten sollte).
+        if (u && u.parent_uid) continue;
+        if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
         const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
         if (offen === 0) continue;
         const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;

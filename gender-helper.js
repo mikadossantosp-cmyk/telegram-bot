@@ -37,9 +37,9 @@ const MALE = new Set([
     'philipp','philip','phillip','rene','renee','steffen','steven','timo','toni','vincent',
     'yannick','anton','arne','arnold','axel','bernd','bernhard','bjoern','björn','christof',
     'claus','dennis','dirk','dominik','egon','emil','enrico','ernst','franz','gunther',
-    'günter','hartmut','holger','jan','joerg','jörg','jonathan','juergen','justin','kevin',
+    'hartmut','jan','joerg','jörg','jonathan','justin','kevin',
     'konstantin','leander','lennart','marius','milan','nick','nico','nicolas','pascal','rico',
-    'rico','samuel','silas','tobi','udo','uwe','viktor','vladimir','wilhelm','willi'
+    'samuel','silas','tobi','udo','uwe','viktor','vladimir','wilhelm','willi'
 ]);
 
 function normalizeFirstName(s) {

@@ -2664,12 +2664,12 @@ bot.command('dmpreview', async (ctx) => {
         {
             label: '3️⃣ Sonntag 21:00 Reminder',
             text: '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.',
-            link: null
+            link: { url: engageUrl, label: '📲 Jetzt engagen' }
         },
         {
             label: '4️⃣ Sonntag 23:59 Pflicht-Verletzt',
             text: '⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #1 (insgesamt)',
-            link: null
+            link: { url: engageUrl, label: '📲 In der App ansehen' }
         }
     ];
     for (const p of previews) {
@@ -3127,6 +3127,8 @@ const CREATORBOOST_UID = 'creatorboost';
 
 // Stellt sicher dass user u einen appCode hat — generiert einen wenn nicht.
 // Wiederverwendet die Logik von /mycode (Hex-Random + Namen-Prefix + Kollisionscheck).
+// Persistiert NEU generierte Codes via speichernDebounced damit Magic-Links nach
+// einem Bot-Restart noch gültig sind, auch wenn der Caller selbst nicht speichert.
 function ensureAppCode(uid, u) {
     if (!u) return null;
     if (u.appCode) return u.appCode;
@@ -3138,6 +3140,7 @@ function ensureAppCode(uid, u) {
         candidate = namePart + rand;
     } while (taken.has(candidate));
     u.appCode = candidate;
+    speichernDebounced();
     return candidate;
 }
 
@@ -3185,7 +3188,7 @@ function sendCreatorBoostDM(toUid, text, options = {}) {
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     addNotification(String(toUid), '💬', 'CreatorBoost: ' + String(text||'').slice(0,40), CREATORBOOST_UID);
     sendAppPush(String(toUid), '💬 CreatorBoost', String(text||'').slice(0,100), '/nachrichten/' + CREATORBOOST_UID).catch(()=>{});
-    speichern();
+    speichernDebounced();
 }
 
 function addNotification(targetUid, icon, text, actorUid = null) {

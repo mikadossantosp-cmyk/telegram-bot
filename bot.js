@@ -259,6 +259,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+    tryFetchThumbnail(d.superlinks[slId], 'url');
     if (useCredit && d.users[uidStr]) {
         d.superlinks[slId].adminCredit = true;
         d.users[uidStr].superlinkCredits = Math.max(0, (d.users[uidStr].superlinkCredits||0) - 1);
@@ -1199,6 +1200,7 @@ bot.command('fixlink', async (ctx) => {
     } catch (e) { return ctx.reply('❌ Fehler: ' + e.message); }
     const mapKey = MEINE_GRUPPE + '_' + msgId;
     d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+    tryFetchThumbnail(d.links[mapKey], 'text');
     if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; updateStreak(String(userId)); }
     speichern();
 });
@@ -1981,6 +1983,7 @@ bot.on('message', async (ctx, next) => {
 
             const mapKey = MEINE_GRUPPE + '_' + msgId;
             d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+            tryFetchThumbnail(d.links[mapKey], 'text');
 
             if (!istAdminId(uid)) {
                 try {
@@ -2011,6 +2014,7 @@ bot.on('message', async (ctx, next) => {
         } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
             d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+            tryFetchThumbnail(d.links[mapKey], 'text');
         }
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }
@@ -2351,6 +2355,7 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
             gift: true, giftedBy: String(ctx.from.id),
             dmNotifications: {}
         };
+        tryFetchThumbnail(d.superlinks[slId], 'url');
         const feThreadKey = String(feThreadId);
         if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
         d.threadMessages[feThreadKey].unshift({
@@ -2634,6 +2639,13 @@ bot.command('feedbatch', async (ctx) => {
     await ctx.reply('⏳ Sende Feed-Batch DM an alle gestarteten Bot-User...');
     const result = await feedBatchDM();
     await ctx.reply(`✅ ${result.links} neue Links → ${result.sent} DMs gesendet`);
+});
+
+bot.command('refreshthumbs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Refresh Instagram-Thumbnails (kann ein bisschen dauern)...');
+    const result = await refreshThumbnails();
+    await ctx.reply(`✅ ${result.refreshed}/${result.attempts} Thumbnails neu geladen`);
 });
 
 bot.command('dmappreminder', async (ctx) => {
@@ -3123,6 +3135,80 @@ function updateStreak(uid) {
 }
 
 // System-User "CreatorBoost" für In-App DMs (z.B. Superlink-Pflicht-Reminder)
+// Holt das Instagram-OG-Image (Thumbnail/Deckblatt) für eine URL.
+// Returns die Bild-URL oder null. Fail-soft: bei Block/Timeout/Parse-Fehler → null.
+// Instagram blockt Bots aggressiv, ~80% Success-Rate mit Browser-Headers.
+async function fetchInstagramThumbnail(url) {
+    if (!url || typeof url !== 'string' || !url.includes('instagram.com')) return null;
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const r = await fetch(url, {
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
+                'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                'Cache-Control': 'no-cache'
+            }
+        });
+        clearTimeout(timer);
+        if (!r.ok) return null;
+        const html = await r.text();
+        const m = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/i)
+              || html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"/i);
+        if (!m) return null;
+        return m[1].replace(/&amp;/g,'&').slice(0, 800);
+    } catch(e) {
+        return null;
+    }
+}
+
+// Async-Hook: nicht blockierend ein Thumbnail für eine link/superlink Entry holen.
+function tryFetchThumbnail(entry, urlField = 'text') {
+    if (!entry) return;
+    const url = entry[urlField];
+    if (!url) return;
+    fetchInstagramThumbnail(url).then(thumb => {
+        if (!thumb) return;
+        entry.thumbnail = thumb;
+        entry.thumbnailFetchedAt = Date.now();
+        speichernDebounced();
+    }).catch(()=>{});
+}
+
+// Refreshed Thumbnails alle 6 Std da Instagram-OG-URLs nach ~24h ablaufen.
+// Targets: Links < 48h alt mit fehlendem oder >12h altem Thumbnail.
+async function refreshThumbnails() {
+    const now = Date.now();
+    const cutoff48h = now - 48*3600*1000;
+    const cutoff12h = now - 12*3600*1000;
+    let refreshed = 0, attempts = 0;
+    for (const link of Object.values(d.links||{})) {
+        if (!link.timestamp || link.timestamp < cutoff48h) continue;
+        if (link.thumbnail && (link.thumbnailFetchedAt || 0) > cutoff12h) continue;
+        if (!link.text || !link.text.includes('instagram.com')) continue;
+        attempts++;
+        const thumb = await fetchInstagramThumbnail(link.text);
+        if (thumb) { link.thumbnail = thumb; link.thumbnailFetchedAt = now; refreshed++; }
+        await new Promise(r => setTimeout(r, 250));
+    }
+    const wk = (typeof getBerlinWeekKey === 'function') ? getBerlinWeekKey() : null;
+    for (const sl of Object.values(d.superlinks||{})) {
+        if (wk && sl.week !== wk) continue;
+        if (sl.thumbnail && (sl.thumbnailFetchedAt || 0) > cutoff12h) continue;
+        if (!sl.url) continue;
+        attempts++;
+        const thumb = await fetchInstagramThumbnail(sl.url);
+        if (thumb) { sl.thumbnail = thumb; sl.thumbnailFetchedAt = now; refreshed++; }
+        await new Promise(r => setTimeout(r, 250));
+    }
+    if (refreshed) speichernDebounced();
+    if (attempts) console.log(`📸 Thumbnail-Refresh: ${refreshed}/${attempts} erfolgreich`);
+    return { refreshed, attempts };
+}
+
 const CREATORBOOST_UID = 'creatorboost';
 
 // Stellt sicher dass user u einen appCode hat — generiert einen wenn nicht.
@@ -3247,6 +3333,7 @@ async function zeitCheck() {
         if (h === 11 && m < 5)  taeglich('welcomeFunnel',() => welcomeFunnelCheck());
         if (jetzt.getDay() === 3 && h === 18 && m < 5) taeglich('appReminder', () => appReminderForNonUsers());
         if (m === 0 || m === 30) einmalig('feedBatch_'+h+'_'+m, () => feedBatchDM().catch(e => console.log('feedBatchDM Fehler:', e.message)));
+        if (m < 5 && [0,6,12,18].includes(h)) taeglich('thumbnailRefresh_'+h, () => refreshThumbnails().catch(e => console.log('refreshThumbnails Fehler:', e.message)));
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());
@@ -3419,6 +3506,7 @@ app.post('/bridge-event', async (req, res) => {
                 const linkData = { chat_id: event.meta.groupBChatId, user_id: Number(event.userId), user_name: event.userName, text: event.meta.linkText || '', likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
                 const mapKey = MEINE_GRUPPE + '_' + msgId;
                 d.links[mapKey] = linkData;
+                tryFetchThumbnail(linkData, 'text');
                 const url = event.meta.linkText || '';
                 if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
                 if (uid && !istAdminId(Number(uid))) { d.users[uid].links = (d.users[uid].links || 0) + 1; updateStreak(uid); }
@@ -4200,6 +4288,7 @@ app.post('/post-link-from-app', async (req, res) => {
             likeSource: { app: 0, telegram: 0 }
         };
         d.links[mapKey] = linkData;
+        tryFetchThumbnail(linkData, 'text');
         console.log('[APP-LINK] Link gespeichert als:', mapKey);
 
         // Bonus-Link verbrauchen falls verwendet
@@ -5119,6 +5208,7 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks = d.superlinks || {};
         const newSL = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
         d.superlinks[slId] = newSL;
+        tryFetchThumbnail(newSL, 'url');
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
         speichern();
         // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).

@@ -316,12 +316,17 @@ async function runEngagementCheck(isReminder = false) {
         if (!likedAll) {
             warned++;
             if (isReminder) {
+                const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
                 try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+                try { sendCreatorBoostDM(uid, reminderText); } catch(e) {}
             } else {
                 const u = d.users[uid];
                 if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
-                addNotification(uid, '⚠️', 'Full Engagement Pflicht verletzt! -50 XP');
-                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP und eine Verwarnung wurden vergeben\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+                const warnCount = u?.warnings || 1;
+                const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
+                addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
+                try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2' }); } catch(e) {}
+                try { sendCreatorBoostDM(uid, violationText); } catch(e) {}
             }
         }
     }
@@ -329,9 +334,7 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
-async function appReminderForNonUsers() {
-    const APP_REMINDER_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
+function buildAppReminderMessage() {
     const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
     const text =
         '📱 *Hast du schon die CreatorX-App?*\n\n' +
@@ -346,6 +349,13 @@ async function appReminderForNonUsers() {
         '• Android: Chrome → Menü → "App installieren"\n\n' +
         'Komplett kostenlos, kein Login mit Passwort.';
     const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 App öffnen', url: appUrl }]] } };
+    return { text, opts };
+}
+
+async function appReminderForNonUsers() {
+    const APP_REMINDER_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const { text, opts } = buildAppReminderMessage();
     let sent = 0, skipped = 0;
     for (const uid of Object.keys(d.users || {})) {
         const u = d.users[uid];
@@ -2539,6 +2549,47 @@ bot.command('appreminder', async (ctx) => {
     await ctx.reply('⏳ Sende App-Reminder an alle User die die App noch nie geöffnet haben...');
     const result = await appReminderForNonUsers();
     await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
+});
+
+bot.command('dmappreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const { text, opts } = buildAppReminderMessage();
+    try { await bot.telegram.sendMessage(ctx.from.id, text, opts); } catch(e) {}
+    await ctx.reply('✅ App-Reminder Vorschau hier in deinem Telegram-Chat (siehe oben).');
+});
+
+bot.command('dmpreview', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const uid = String(ctx.from.id);
+    const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
+    const threadUrl = getFullEngagementThreadUrl();
+    const previews = [
+        {
+            label: '1️⃣ App-Post Bestätigung',
+            text: '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
+            link: { url: rulesUrl, label: '📖 Superlink-Regeln' }
+        },
+        {
+            label: '2️⃣ Daily Reminder (Mo–Sa 20:00)',
+            text: '⭐ Superlink-Erinnerung\n\nDu hast noch 3 offene Superlinks dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.',
+            link: threadUrl ? { url: threadUrl, label: '📲 Jetzt engagen' } : null
+        },
+        {
+            label: '3️⃣ Sonntag 21:00 Reminder',
+            text: '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.',
+            link: null
+        },
+        {
+            label: '4️⃣ Sonntag 23:59 Pflicht-Verletzt',
+            text: '⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #1 (insgesamt)',
+            link: null
+        }
+    ];
+    for (const p of previews) {
+        const intro = `[VORSCHAU ${p.label}]\n\n`;
+        sendCreatorBoostDM(uid, intro + p.text, p.link ? { link: p.link } : undefined);
+    }
+    await ctx.reply(`✅ ${previews.length} DM-Previews als CreatorBoost-Chat in der App. Öffne die App → Nachrichten → CreatorBoost.`);
 });
 
 bot.command('fethread', async (ctx) => {

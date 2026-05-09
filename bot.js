@@ -329,6 +329,44 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
+async function appReminderForNonUsers() {
+    const APP_REMINDER_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
+    const text =
+        '📱 *Hast du schon die CreatorX-App?*\n\n' +
+        'Die App ist deine Zentrale für die Community:\n' +
+        '• Feed mit allen Posts der Woche\n' +
+        '• Direktnachrichten\n' +
+        '• Profile, Stats & Diamanten-Shop\n' +
+        '• Push-Benachrichtigungen über Engagement\n\n' +
+        '🔗 *Direkt öffnen:* ' + appUrl + '\n\n' +
+        '📲 *Auf dem Handy installieren:*\n' +
+        '• iPhone: Safari → Teilen → "Zum Home-Bildschirm"\n' +
+        '• Android: Chrome → Menü → "App installieren"\n\n' +
+        'Komplett kostenlos, kein Login mit Passwort.';
+    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 App öffnen', url: appUrl }]] } };
+    let sent = 0, skipped = 0;
+    for (const uid of Object.keys(d.users || {})) {
+        const u = d.users[uid];
+        if (!u?.started) continue;
+        if (uid === CREATORBOOST_UID) continue;
+        if (!/^\d+$/.test(String(uid))) continue;
+        if (d.appActivity?.[uid]) { skipped++; continue; }
+        if (u.lastAppReminder && (now - u.lastAppReminder) < APP_REMINDER_COOLDOWN_MS) { skipped++; continue; }
+        try {
+            await bot.telegram.sendMessage(Number(uid), text, opts);
+            u.lastAppReminder = now;
+            sent++;
+        } catch(e) {}
+    }
+    if (sent || skipped) {
+        speichern();
+        console.log(`📱 App-Reminder: ${sent} gesendet, ${skipped} skipped`);
+    }
+    return { sent, skipped };
+}
+
 async function superlinkDailyReminder() {
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
@@ -347,8 +385,9 @@ async function superlinkDailyReminder() {
             sent++;
         } catch(e) {}
         try {
-            const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.${threadUrl ? '\n\n📲 ' + threadUrl : ''}`;
-            sendCreatorBoostDM(uid, inappText);
+            const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+            const linkOpt = threadUrl ? { link: { url: threadUrl, label: '📲 Jetzt engagen' } } : undefined;
+            sendCreatorBoostDM(uid, inappText, linkOpt);
         } catch(e) {}
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
@@ -2495,6 +2534,13 @@ bot.command('superlinkreminder', async (ctx) => {
     await ctx.reply(`✅ ${result.sent} Reminder-DMs gesendet`);
 });
 
+bot.command('appreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende App-Reminder an alle User die die App noch nie geöffnet haben...');
+    const result = await appReminderForNonUsers();
+    await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
+});
+
 bot.command('fethread', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     if (!GROUP_B_ID) return ctx.reply('❌ GROUP_B_ID nicht gesetzt!');
@@ -2954,18 +3000,25 @@ function ensureCreatorBoostUser() {
         };
     }
 }
-function sendCreatorBoostDM(toUid, text) {
+function sendCreatorBoostDM(toUid, text, options = {}) {
     ensureCreatorBoostUser();
     if (!d.messages) d.messages = {};
     const chatKey = [CREATORBOOST_UID, String(toUid)].sort().join('_');
     if (!d.messages[chatKey]) d.messages[chatKey] = [];
-    d.messages[chatKey].push({
+    const msg = {
         from: CREATORBOOST_UID,
         to: String(toUid),
         text: String(text||'').slice(0,1000),
         timestamp: Date.now(),
         read: false
-    });
+    };
+    if (options.link?.url) {
+        msg.link = {
+            url: String(options.link.url).slice(0, 500),
+            label: String(options.link.label || 'Öffnen').slice(0, 60)
+        };
+    }
+    d.messages[chatKey].push(msg);
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     addNotification(String(toUid), '💬', 'CreatorBoost: ' + String(text||'').slice(0,40), CREATORBOOST_UID);
     sendAppPush(String(toUid), '💬 CreatorBoost', String(text||'').slice(0,100), '/nachrichten/' + CREATORBOOST_UID).catch(()=>{});
@@ -3026,6 +3079,7 @@ async function zeitCheck() {
         if (h === 22 && m < 5)  taeglich('reminder',     () => likeErinnerung());
         if (h === 19 && m < 5)  taeglich('bonusReminder',() => bonusLinkErinnerung());
         if (h === 11 && m < 5)  taeglich('welcomeFunnel',() => welcomeFunnelCheck());
+        if (jetzt.getDay() === 3 && h === 18 && m < 5) taeglich('appReminder', () => appReminderForNonUsers());
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());
@@ -4905,7 +4959,8 @@ app.post('/post-superlink-api', async (req, res) => {
         try {
             const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
             sendCreatorBoostDM(uid,
-                '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.\n\n📖 Regeln: ' + rulesUrl);
+                '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
+                { link: { url: rulesUrl, label: '📖 Superlink-Regeln' } });
         } catch(e) {}
         // DM an alle anderen Poster dieser Woche
         const posterUser = d.users[String(uid)];

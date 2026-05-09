@@ -47,6 +47,10 @@ app.use((req, res, next) => {
 
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
+// System-User für In-App DMs (CreatorBoost). Hier oben definiert damit laden() unten
+// safely darauf referenzieren kann (vorher: TDZ-ReferenceError wenn man's bräuchte).
+const CREATORBOOST_UID = 'creatorboost';
+
 let d = {
     users: {}, chats: {}, links: {},
     tracker: {}, counter: {},
@@ -81,6 +85,10 @@ function laden() {
         const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         d = Object.assign({}, d, geladen);
         for (const uid in d.users) {
+            // System-User wie 'creatorboost' nicht als gestarteter Telegram-User markieren —
+            // sonst iterieren welcomeFunnel/announce/insta-check etc. über ihn und versuchen
+            // bot.telegram.sendMessage(NaN, ...) → wasted error pro Lauf.
+            if (uid === CREATORBOOST_UID || d.users[uid].isSystem) continue;
             d.users[uid].started = true;
             if (!d.users[uid].instagram) d.users[uid].instagram = null;
             if (istAdminId(Number(uid))) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -3229,8 +3237,6 @@ async function refreshThumbnails() {
     if (attempts) console.log(`📸 Thumbnail-Refresh: ${refreshed}/${attempts} erfolgreich`);
     return { refreshed, attempts };
 }
-
-const CREATORBOOST_UID = 'creatorboost';
 
 // Stellt sicher dass user u einen appCode hat — generiert einen wenn nicht.
 // Wiederverwendet die Logik von /mycode (Hex-Random + Namen-Prefix + Kollisionscheck).

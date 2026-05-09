@@ -289,17 +289,14 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     } catch(e) {}
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
     const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
-    const threadUrl = getFullEngagementThreadUrl();
     const sl = d.superlinks[slId];
     if (sl) sl.dmNotifications = sl.dmNotifications || {};
     for (const other of otherPosters) {
         try {
             const magicUrl = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
-            const buttons = [[{ text: '📲 Im App-Feed engagen', url: magicUrl }]];
-            if (threadUrl) buttons.push([{ text: '✈️ Telegram-Thread', url: threadUrl }]);
             const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
                 `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } }
             );
             if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
             sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
@@ -417,9 +414,9 @@ async function feedBatchDM() {
         // Skip wenn ALLE Links von genau diesem User sind (sonst absurd 'du hast was gepostet')
         if (newLinks.every(l => String(l.user_id) === String(uid))) continue;
         try {
-            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
             const text = `🔗 *${newLinks.length} neue${newLinks.length===1?'r':''} Link${newLinks.length===1?'':'s'} im Feed*\n\n${topNames}${more}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
-            const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } };
+            const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Heute-Feed öffnen', url: magicUrl }]] } };
             await bot.telegram.sendMessage(Number(uid), text, opts);
             sent++;
             await new Promise(r => setTimeout(r, 50));
@@ -435,16 +432,13 @@ async function superlinkDailyReminder() {
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
-    const threadUrl = getFullEngagementThreadUrl();
     let sent = 0;
     for (const uid of posters) {
         const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
         if (offen === 0) continue;
         const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
         const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
-        const buttons = [[{ text: '📲 Im App-Feed engagen', url: magicUrl }]];
-        if (threadUrl) buttons.push([{ text: '✈️ Telegram-Thread', url: threadUrl }]);
-        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } };
+        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } };
         try {
             await bot.telegram.sendMessage(Number(uid), tgText, opts);
             sent++;
@@ -2371,14 +2365,14 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
         if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
         speichern();
         try { await bot.telegram.sendMessage(Number(targetUid), '🎁 *Du hast einen Superlink geschenkt bekommen!*\n\nEin Admin hat dir einen Superlink im Full-Engagement-Thread gepostet. Engagement-Pflicht für alle anderen Superlinks der Woche bleibt!\n\n🔗 ' + url, { parse_mode: 'Markdown' }); } catch(e) {}
-        sendAppPush(targetUid, '🎁 Superlink geschenkt!', 'Admin hat dir einen Superlink gegeben — engage die anderen!', '/feed').catch(()=>{});
+        sendAppPush(targetUid, '🎁 Superlink geschenkt!', 'Admin hat dir einen Superlink gegeben — engage die anderen!', '/feed?tab=engagement').catch(()=>{});
         const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== targetUid);
-        const threadUrl = getFullEngagementThreadUrl();
         for (const other of otherPosters) {
             try {
+                const magicUrlGift = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
                 const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
                     `⭐ *Neuer Superlink (Geschenk)!*\n\n👤 ${u.spitzname||u.name||'User'} · 🔗 ${url}\n\n⚠️ Engagement-Pflicht!`,
-                    threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrlGift }]] } }
                 );
                 if (dmMsg?.message_id) d.superlinks[slId].dmNotifications[String(other.uid)] = dmMsg.message_id;
                 sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u.spitzname||u.name||'User') + ' (Geschenk) — engagen', '/feed').catch(()=>{});
@@ -2545,8 +2539,6 @@ bot.command('superlinkdm', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     if (!d.superlinkDmSent) d.superlinkDmSent = {};
     const force = (ctx.message.text || '').includes('force');
-    const url = getFullEngagementThreadUrl();
-    const linkLine = url ? `\n\n📲 *Hier posten:* ${url}` : '';
     const userIds = Object.keys(d.users || {});
     let sent = 0, skipped = 0, failed = 0;
     await ctx.reply(`📤 Sende Superlink-DM an ${userIds.length} User${force ? ' (force-Mode)' : ''}...`);
@@ -2555,13 +2547,13 @@ bot.command('superlinkdm', async (ctx) => {
         if (!u || !u.started) { skipped++; continue; }
         if (!force && d.superlinkDmSent[uid]) { skipped++; continue; }
         try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement&opensl=1');
             await bot.telegram.sendMessage(Number(uid),
                 '⭐ *Hast du schon deinen Superlink gesendet?*\n\n' +
-                'Jede Woche darfst du *einen* Superlink im Full Engagement Thread posten ' +
-                '(Elite+ darf 2). Wer postet, muss auch die anderen Superlinks engagen ' +
-                '(Liken, Kommentieren, Teilen, Speichern) — sonst gibt es −50 XP am Sonntag.' +
-                linkLine + '\n\nOder direkt im Bot mit /superlink <Instagram-Link>.',
-                { parse_mode: 'Markdown', disable_web_page_preview: true }
+                'Jede Woche darfst du *einen* Superlink posten (Elite+ darf 2). ' +
+                'Wer postet, muss auch alle anderen Superlinks engagen (Liken, Kommentieren, Teilen, Speichern) — sonst gibt es −50 XP am Sonntag.\n\n' +
+                'Klick zum Posten — du bist sofort eingeloggt:',
+                { parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup: { inline_keyboard: [[{ text: '⭐ Superlink posten', url: magicUrl }]] } }
             );
             d.superlinkDmSent[uid] = Date.now();
             sent++;
@@ -5134,20 +5126,20 @@ app.post('/post-superlink-api', async (req, res) => {
                 '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
                 { link: { url: rulesUrl, label: '📖 Superlink-Regeln' } });
         } catch(e) {}
-        // DM an alle anderen Poster dieser Woche
+        // DM an alle anderen Poster dieser Woche → führt direkt in den Engagement-Feed der App
         const posterUser = d.users[String(uid)];
         const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));
-        const threadUrl2 = getFullEngagementThreadUrl();
         const slApi = d.superlinks[slId];
         if (slApi) slApi.dmNotifications = slApi.dmNotifications || {};
         for (const other of otherPosters2) {
             try {
+                const magicUrl2 = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
                 const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
-                    threadUrl2 ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl2 }]] } } : { parse_mode: 'Markdown' }
+                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl2 }]] } }
                 );
                 if (slApi && dmMsg?.message_id) slApi.dmNotifications[String(other.uid)] = dmMsg.message_id;
-                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (posterUser?.spitzname||posterUser?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
+                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (posterUser?.spitzname||posterUser?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
             } catch(e) {}
         }
         res.json({ok:true, slId});

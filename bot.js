@@ -4236,19 +4236,22 @@ app.post('/delete-comment-api', (req, res) => {
 
 
 app.post('/post-link-from-app', async (req, res) => {
+    // Notes: Frühe Returns nutzen jetzt {ok:false, error} (vorher nur {error}).
+    // Caller in App prüfte 'result.ok !== false' — undefined !== false war true →
+    // hat Web-Push auch bei Fehlern abgefeuert + 'success' an User retourniert.
     if (!checkBridgeSecret(req, res)) return;
     const { uid, name, url, caption } = req.body || {};
-    if (!uid || !url) return res.json({error:'Ungültig'});
+    if (!uid || !url) return res.json({ok:false, error:'Ungültig'});
     console.log('[APP-LINK] uid:', uid, 'url:', url?.slice(0,30), 'GROUP_A_ID:', GROUP_A_ID);
 
     const u = d.users[uid];
-    if (!u) return res.json({error:'User nicht gefunden'});
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
 
     // Duplikat Check
     const heute = new Date().toDateString();
     const norm = (t) => t.toLowerCase().replace(/\?.*$/, '').replace(/\/$/, '').trim();
     const isDuplicate = Object.values(d.links).some(l => norm(l.text) === norm(url));
-    if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({error:'Dieser Link wurde bereits gepostet!'}); }
+    if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({ok:false, error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check - Admins haben kein Limit
     let usedBonusLink = false;
@@ -4260,7 +4263,7 @@ app.post('/post-link-from-app', async (req, res) => {
         const bonusAvail = d.bonusLinks?.[uid] || 0;
         const badgeBonus = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
         const maxLinks = 1 + bonusAvail + badgeBonus;
-        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
+        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({ok:false, error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
         if (todayLinks >= 1) {
             if (bonusAvail > 0) usedBonusLink = true;
             else usedBadgeBonus = true;
@@ -4329,7 +4332,7 @@ app.post('/post-link-from-app', async (req, res) => {
         res.json({ok:true, msgId: linkId});
     } catch(e) {
         console.log('post-link-from-app Fehler:', e.message);
-        res.json({error:'Fehler: '+e.message});
+        res.json({ok:false, error:'Fehler: '+e.message});
     }
 });
 

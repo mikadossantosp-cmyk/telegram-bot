@@ -2720,6 +2720,46 @@ bot.command('appreminder', async (ctx) => {
     await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
 });
 
+// /findmysub — sucht in allen Backup-Dateien nach Subs des aufrufenden Admins.
+// Zeigt für jedes Datum: ob ein Sub mit parent_uid = ctx.from.id existierte.
+bot.command('findmysub', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const myUid = String(ctx.from.id);
+    try {
+        const dir = require('path').dirname(DATA_FILE);
+        const base = require('path').basename(DATA_FILE).replace('.json', '');
+        const files = fs.readdirSync(dir).filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json')).sort().reverse();
+        if (!files.length) return ctx.reply('❌ Keine Backups gefunden.');
+        const found = [];
+        for (const f of files) {
+            try {
+                const data = JSON.parse(fs.readFileSync(require('path').join(dir, f), 'utf8'));
+                const subs = Object.entries(data.users || {}).filter(([, u]) => u && String(u.parent_uid||'') === myUid);
+                if (subs.length) {
+                    const dateStr = f.replace(base + '_backup_', '').replace('.json', '');
+                    for (const [sUid, sU] of subs) {
+                        found.push({ date: dateStr, sub_uid: sUid, name: sU.spitzname || sU.name || '?', xp: sU.xp || 0 });
+                    }
+                }
+            } catch(e) {}
+        }
+        if (!found.length) return ctx.reply('❌ Kein Sub-Account von dir in den Backups gefunden. Vielleicht hattest du nie einen, oder die Backups sind älter als der Zeitpunkt des Erstellens.');
+        const aktuellHat = !!Object.entries(d.users || {}).find(([, u]) => u && String(u.parent_uid||'') === myUid);
+        let msg = '🔍 *Deine Sub-Accounts in Backups:*\n\n';
+        // Gruppieren nach sub_uid
+        const groups = {};
+        for (const f of found) {
+            if (!groups[f.sub_uid]) groups[f.sub_uid] = { name: f.name, xp: f.xp, dates: [] };
+            groups[f.sub_uid].dates.push(f.date);
+        }
+        for (const [suid, g] of Object.entries(groups)) {
+            msg += `• *${g.name}* (\`${suid}\`, ${g.xp} XP)\n  Backups: ${g.dates.slice(0, 6).join(', ')}${g.dates.length > 6 ? ' …' : ''}\n\n`;
+        }
+        msg += aktuellHat ? '\n✅ Du hast aktuell schon einen Sub in den Live-Daten.' : '\n⚠️ Aktuell kein Sub in Live-Daten.\n\nWiederherstellen mit:\n`/restoresubs ' + found[0].date + '`';
+        return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch(e) { return ctx.reply('❌ Fehler: ' + e.message); }
+});
+
 // /relinksubs [dry] — Repariert kaputte Parent→Sub-Backlinks.
 // Hintergrund: Sub-Accounts haben d.users[sub].parent_uid gesetzt, aber
 // d.users[parent].subUid kann durch Bug verloren gegangen sein. Switcher

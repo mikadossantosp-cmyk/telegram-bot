@@ -3973,6 +3973,16 @@ app.post('/update-profile-api', (req, res) => {
         if (req.body.youtube !== undefined) d.users[uid].youtube = req.body.youtube.replace('@','').slice(0,50);
         if (req.body.twitter !== undefined) d.users[uid].twitter = req.body.twitter.replace('@','').slice(0,50);
         if (req.body.instagram !== undefined) d.users[uid].instagram = String(req.body.instagram||'').replace(/^@/,'').replace(/[^a-zA-Z0-9._]/g,'').slice(0,50);
+        if (req.body.email !== undefined) {
+            const newEmail = String(req.body.email||'').toLowerCase().trim();
+            if (newEmail === '') {
+                delete d.users[uid].email;
+            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) && newEmail.length <= 200) {
+                // Eindeutigkeit prüfen — eine Email darf nur einem Account gehören.
+                const taken = Object.entries(d.users || {}).find(([oid, x]) => String(oid) !== String(uid) && String(x.email||'').toLowerCase() === newEmail);
+                if (!taken) d.users[uid].email = newEmail;
+            }
+        }
         // Bilder separat speichern
         if (banner !== undefined) {
             if (banner.startsWith('data:image')) {

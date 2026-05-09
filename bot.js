@@ -2213,7 +2213,7 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         const u = d.users[uid];
         sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
         addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!', String(uid));
-        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
+        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
         await ctx.answerCbQuery('❤️ Geliked!');
         if (ctx.callbackQuery?.message?.chat?.type === 'private') {
             try { await ctx.deleteMessage(); } catch(e) {}
@@ -2339,7 +2339,7 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
             '📲 So gehts: schreib hier `/superlink <dein-Instagram-Link>` oder posts den Link einfach in den Full-Engagement-Thread.\n\n' +
             '✅ Verbleibende Slots: ' + u.superlinkCredits,
             { parse_mode: 'Markdown' }); } catch(e) {}
-        sendAppPush(targetUid, '🎁 Superlink-Slot!', 'Admin hat dir einen Superlink-Slot gegeben — nutze /superlink', '/feed').catch(()=>{});
+        sendAppPush(targetUid, '🎁 Superlink-Slot!', 'Admin hat dir einen Superlink-Slot gegeben — nutze /superlink', '/feed?tab=engagement&opensl=1').catch(()=>{});
         return ctx.reply('✅ ' + (u.spitzname||u.name||targetUid) + ' hat jetzt *' + u.superlinkCredits + '* Superlink-Slot(s)\n\nDer User kann mit `/superlink <Instagram-Link>` einen Extra-Superlink posten.', { parse_mode:'Markdown' });
     }
     let url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
@@ -2393,7 +2393,7 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
                     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrlGift }]] } }
                 );
                 if (dmMsg?.message_id) d.superlinks[slId].dmNotifications[String(other.uid)] = dmMsg.message_id;
-                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u.spitzname||u.name||'User') + ' (Geschenk) — engagen', '/feed').catch(()=>{});
+                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u.spitzname||u.name||'User') + ' (Geschenk) — engagen', '/feed?tab=engagement').catch(()=>{});
             } catch(e) {}
         }
         speichern();
@@ -5162,7 +5162,7 @@ app.post('/like-superlink-api', async (req, res) => {
         const u = d.users[String(uid)];
         sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';
         addNotification(String(sl.uid), '❤️', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked!');
-        sendAppPush(String(sl.uid), '⭐ Superlink geliked!', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
+        sendAppPush(String(sl.uid), '⭐ Superlink geliked!', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
         // Reminder-DM in Liker-Chat löschen
         if (sl.dmNotifications && sl.dmNotifications[String(uid)]) {
             bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[String(uid)]).catch(()=>{});

@@ -3985,8 +3985,9 @@ app.get('/like-from-app', async (req, res) => {
         // Bereits geliked - kein Unlike möglich
         return res.json({ok:true, liked:true, likes: lnk.likes.size});
     } else {
-        // Like
-        if (String(uidNum) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
+        // Like — Sub-Account-safe: String(uid) statt String(uidNum) damit
+        // non-numeric IDs (Number → NaN) nicht den Self-Check umgehen.
+        if (String(uid) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
         if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) return res.json({ok:false, error:'Kein Self-Like (eigener Account)'});
         lnk.likes.add(String(uid));
         const u = d.users[uid];

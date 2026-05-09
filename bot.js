@@ -294,12 +294,15 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     if (sl) sl.dmNotifications = sl.dmNotifications || {};
     for (const other of otherPosters) {
         try {
+            const magicUrl = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
+            const buttons = [[{ text: '📲 Im App-Feed engagen', url: magicUrl }]];
+            if (threadUrl) buttons.push([{ text: '✈️ Telegram-Thread', url: threadUrl }]);
             const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
-                threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
+                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
             );
             if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
-            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
+            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
         } catch(e) {}
     }
 }
@@ -316,18 +319,19 @@ async function runEngagementCheck(isReminder = false) {
         const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
         if (!likedAll) {
             warned++;
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
             if (isReminder) {
                 const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
-                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
-                try { sendCreatorBoostDM(uid, reminderText); } catch(e) {}
+                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
+                try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
                 const u = d.users[uid];
                 if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
                 const warnCount = u?.warnings || 1;
                 const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
                 addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
-                try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2' }); } catch(e) {}
-                try { sendCreatorBoostDM(uid, violationText); } catch(e) {}
+                try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
+                try { sendCreatorBoostDM(uid, violationText, { link: { url: magicUrl, label: '📲 In der App ansehen' } }); } catch(e) {}
             }
         }
     }
@@ -335,9 +339,11 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
-function buildAppReminderMessage() {
+function buildAppReminderMessage(uid = null) {
     const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
     const apkUrl = appUrl + '/download-app';
+    // Wenn uid bekannt → Magic-Link für 1-Klick-Login. Sonst nackter App-URL als Fallback.
+    const openUrl = uid ? buildMagicLinkUrl(uid, '/feed') : appUrl;
     const text =
         '📱 *Hast du schon die CreatorX-App?*\n\n' +
         'Die App ist deine Zentrale für die Community:\n' +
@@ -345,15 +351,15 @@ function buildAppReminderMessage() {
         '• Direktnachrichten\n' +
         '• Profile, Stats & Diamanten-Shop\n' +
         '• Push-Benachrichtigungen über Engagement\n\n' +
-        '🔗 *Direkt öffnen:* ' + appUrl + '\n\n' +
         '📲 *Auf dem Handy installieren:*\n' +
         '• iPhone: Safari → Teilen → "Zum Home-Bildschirm"\n' +
         '• Android (PWA): Chrome → Menü → "App installieren"\n' +
         '• Android (APK): ' + apkUrl + '\n\n' +
-        '🔐 *Login-Code holen:*\n' +
-        'Schick mir hier den Befehl /mycode — du bekommst einen persönlichen Login-Code, mit dem du dich in der App einloggst.';
+        (uid
+            ? '🔐 Klick einfach auf den Button — du bist sofort eingeloggt, kein Code nötig.'
+            : '🔐 *Login-Code holen:*\nSchick mir hier den Befehl /mycode — du bekommst einen persönlichen Login-Code.');
     const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
-        [{ text: '📲 App öffnen', url: appUrl }],
+        [{ text: '📲 App öffnen (auto-login)', url: openUrl }],
         [{ text: '⬇️ APK Download (Android)', url: apkUrl }]
     ] } };
     return { text, opts };
@@ -362,7 +368,6 @@ function buildAppReminderMessage() {
 async function appReminderForNonUsers() {
     const APP_REMINDER_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
     const now = Date.now();
-    const { text, opts } = buildAppReminderMessage();
     let sent = 0, skipped = 0;
     for (const uid of Object.keys(d.users || {})) {
         const u = d.users[uid];
@@ -372,6 +377,7 @@ async function appReminderForNonUsers() {
         if (d.appActivity?.[uid]) { skipped++; continue; }
         if (u.lastAppReminder && (now - u.lastAppReminder) < APP_REMINDER_COOLDOWN_MS) { skipped++; continue; }
         try {
+            const { text, opts } = buildAppReminderMessage(uid);
             await bot.telegram.sendMessage(Number(uid), text, opts);
             u.lastAppReminder = now;
             sent++;
@@ -384,6 +390,47 @@ async function appReminderForNonUsers() {
     return { sent, skipped };
 }
 
+// 30-Min Feed-Batch: sammelt neue Gruppen-Links seit letztem Batch und schickt
+// jedem Bot-User eine zusammengefasste DM mit Magic-Link zum Feed.
+async function feedBatchDM() {
+    const now = Date.now();
+    const lastBatch = d.lastFeedBatchAt || (now - 30*60*1000);
+    const newLinks = Object.values(d.links||{}).filter(l =>
+        l.timestamp && l.timestamp > lastBatch && l.timestamp <= now &&
+        l.text && l.text.includes('instagram.com')
+    );
+    if (!newLinks.length) {
+        d.lastFeedBatchAt = now;
+        return { sent: 0, links: 0 };
+    }
+    const topNames = newLinks.slice(0, 5).map(l => {
+        const u = d.users[l.user_id];
+        return '• ' + (u?.spitzname || u?.name || l.user_name || 'User');
+    }).join('\n');
+    const more = newLinks.length > 5 ? `\n• +${newLinks.length - 5} weitere` : '';
+    let sent = 0;
+    for (const uid of Object.keys(d.users||{})) {
+        const u = d.users[uid];
+        if (!u?.started) continue;
+        if (uid === CREATORBOOST_UID) continue;
+        if (!/^\d+$/.test(String(uid))) continue;
+        // Skip wenn ALLE Links von genau diesem User sind (sonst absurd 'du hast was gepostet')
+        if (newLinks.every(l => String(l.user_id) === String(uid))) continue;
+        try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+            const text = `🔗 *${newLinks.length} neue${newLinks.length===1?'r':''} Link${newLinks.length===1?'':'s'} im Feed*\n\n${topNames}${more}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
+            const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } };
+            await bot.telegram.sendMessage(Number(uid), text, opts);
+            sent++;
+            await new Promise(r => setTimeout(r, 50));
+        } catch(e) {}
+    }
+    d.lastFeedBatchAt = now;
+    speichern();
+    console.log(`📨 Feed-Batch: ${newLinks.length} Links → ${sent} DMs gesendet`);
+    return { sent, links: newLinks.length };
+}
+
 async function superlinkDailyReminder() {
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
@@ -394,9 +441,10 @@ async function superlinkDailyReminder() {
         const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
         if (offen === 0) continue;
         const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-        const opts = threadUrl
-            ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt engagen', url: threadUrl }]] } }
-            : { parse_mode: 'Markdown' };
+        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+        const buttons = [[{ text: '📲 Im App-Feed engagen', url: magicUrl }]];
+        if (threadUrl) buttons.push([{ text: '✈️ Telegram-Thread', url: threadUrl }]);
+        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } };
         try {
             await bot.telegram.sendMessage(Number(uid), tgText, opts);
             sent++;
@@ -2589,9 +2637,17 @@ bot.command('appreminder', async (ctx) => {
     await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
 });
 
+bot.command('feedbatch', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende Feed-Batch DM an alle gestarteten Bot-User...');
+    const result = await feedBatchDM();
+    await ctx.reply(`✅ ${result.links} neue Links → ${result.sent} DMs gesendet`);
+});
+
 bot.command('dmappreminder', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
-    const { text, opts } = buildAppReminderMessage();
+    user(ctx.from.id, ctx.from.first_name);
+    const { text, opts } = buildAppReminderMessage(ctx.from.id);
     try { await bot.telegram.sendMessage(ctx.from.id, text, opts); } catch(e) {}
     await ctx.reply('✅ App-Reminder Vorschau hier in deinem Telegram-Chat (siehe oben).');
 });
@@ -3076,6 +3132,31 @@ function updateStreak(uid) {
 
 // System-User "CreatorBoost" für In-App DMs (z.B. Superlink-Pflicht-Reminder)
 const CREATORBOOST_UID = 'creatorboost';
+
+// Stellt sicher dass user u einen appCode hat — generiert einen wenn nicht.
+// Wiederverwendet die Logik von /mycode (Hex-Random + Namen-Prefix + Kollisionscheck).
+function ensureAppCode(uid, u) {
+    if (!u) return null;
+    if (u.appCode) return u.appCode;
+    const taken = new Set(Object.values(d.users||{}).map(x => x.appCode).filter(Boolean));
+    const namePart = (u.name||'user').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8) || 'user';
+    let candidate;
+    do {
+        const rand = crypto.randomBytes(4).toString('hex');
+        candidate = namePart + rand;
+    } while (taken.has(candidate));
+    u.appCode = candidate;
+    return candidate;
+}
+
+// Baut Magic-Link URL: /auth/auto?code=X&redirect=Y → User klickt → instant Session.
+function buildMagicLinkUrl(uid, redirect = '/feed') {
+    const u = d.users[String(uid)];
+    if (!u) return (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    const code = ensureAppCode(String(uid), u);
+    const baseUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    return baseUrl + '/auth/auto?code=' + encodeURIComponent(code) + '&redirect=' + encodeURIComponent(redirect);
+}
 function ensureCreatorBoostUser() {
     if (!d.users) d.users = {};
     if (!d.users[CREATORBOOST_UID]) {
@@ -3170,6 +3251,7 @@ async function zeitCheck() {
         if (h === 19 && m < 5)  taeglich('bonusReminder',() => bonusLinkErinnerung());
         if (h === 11 && m < 5)  taeglich('welcomeFunnel',() => welcomeFunnelCheck());
         if (jetzt.getDay() === 3 && h === 18 && m < 5) taeglich('appReminder', () => appReminderForNonUsers());
+        if (m === 0 || m === 30) einmalig('feedBatch_'+h+'_'+m, () => feedBatchDM().catch(e => console.log('feedBatchDM Fehler:', e.message)));
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());

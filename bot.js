@@ -1071,8 +1071,8 @@ async function sendWelcomeBriefing(ctx, uid, opts = {}) {
         'Jeder postet täglich seinen Reel-Link. Andere Creator liken zurück. Bot trackt alles.\n\n' +
         '💬 *Chat-Gruppe* — _hier wird gequatscht_\n' +
         'Community-Chat, Tipps, Fragen, Engagement-Pflicht-Threads.\n\n' +
-        '📱 *Die App* — _dein Creator-Hub_\n' +
-        'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen.\n' +
+        '📱 *Die App* — _vereinfacht alles, nutze am besten die_ ⭐\n' +
+        'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen — alles an einem Ort.\n' +
         '━━━━━━━━━━━━━━\n\n' +
         '⚠️ *Wichtig:* Setz unten deinen Instagram-Username — sonst kannst du in der App nicht posten/liken.';
     const buttons = [];

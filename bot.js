@@ -326,6 +326,29 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
+async function superlinkDailyReminder() {
+    const weekKey = getBerlinWeekKey();
+    const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
+    if (weekSuperlinks.length < 2) return { sent: 0 };
+    const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
+    const threadUrl = getFullEngagementThreadUrl();
+    let sent = 0;
+    for (const uid of posters) {
+        const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
+        if (offen === 0) continue;
+        const txt = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+        const opts = threadUrl
+            ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt engagen', url: threadUrl }]] } }
+            : { parse_mode: 'Markdown' };
+        try {
+            await bot.telegram.sendMessage(Number(uid), txt, opts);
+            sent++;
+        } catch(e) {}
+    }
+    if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
+    return { sent };
+}
+
 async function cleanupOldSuperlinks() {
     const currentWeek = getBerlinWeekKey();
     const all = d.superlinks || {};
@@ -447,6 +470,13 @@ setInterval(async () => {
                 );
             }
         } catch(e) { console.log('Engagement Ankündigung Fehler:', e.message); }
+    }
+
+    // Mo-Sa 20:00 → Tägliche Erinnerung an Poster mit noch offenen Superlinks
+    if (day !== 0 && h === 20 && m === 0 && !d._seenEngagementJobs[wk+'_dr_'+day]) {
+        d._seenEngagementJobs[wk+'_dr_'+day] = true;
+        speichern();
+        await superlinkDailyReminder().catch(()=>{});
     }
 
     // Sonntag 21:00 → Erinnerung
@@ -2450,6 +2480,13 @@ bot.command('runengagementcheck', async (ctx) => {
     await ctx.reply('⏳ Führe Engagement-Check durch...');
     const result = await runEngagementCheck(false);
     await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
+});
+
+bot.command('superlinkreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende Reminder an alle Poster mit offenen Superlinks...');
+    const result = await superlinkDailyReminder();
+    await ctx.reply(`✅ ${result.sent} Reminder-DMs gesendet`);
 });
 
 bot.command('fethread', async (ctx) => {

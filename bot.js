@@ -775,6 +775,14 @@ function istInstagramLink(text) {
     const t = text.toLowerCase();
     return t.includes('instagram.com') || t.includes('instagr.am');
 }
+// Extrahiert die erste Instagram-URL aus einem freien Text (z.B. Telegram-Group-Message
+// 'Schaut mein neues Reel https://www.instagram.com/p/ABC'). Gibt null zurück wenn keine
+// URL gefunden wurde. Caption ist text ohne die URL.
+function extractInstagramUrl(text) {
+    if (!text) return null;
+    const m = String(text).match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+/i);
+    return m ? m[0] : null;
+}
 function linkUrl(text) {
     if (!text || typeof text !== 'string') return null;
     const t = text.trim();
@@ -1182,7 +1190,8 @@ bot.command('fixlink', async (ctx) => {
     const reply = ctx.message.reply_to_message;
     if (!reply) return ctx.reply('❌ Antworte auf eine Link-Nachricht mit /fixlink');
     const text = reply.text || reply.caption || '';
-    const url = linkUrl(text);
+    // URL aus dem Reply-Text sauber extrahieren (Insta first, sonst linkUrl-Fallback).
+    const url = extractInstagramUrl(text) || linkUrl(text);
     if (!url) return ctx.reply('❌ Kein Link in der Nachricht gefunden.');
     const userId = reply.from?.id;
     const userName = reply.from?.first_name || 'User';
@@ -1924,9 +1933,11 @@ bot.on('message', async (ctx, next) => {
             speichern(); return;
         }
 
-        const url = linkUrl(text);
-        const urlNorm = normalisiereUrl(url);
-        if (url && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {
+        // Prefer Instagram-URL-Extraktion (sauber), fallback auf linkUrl (whole-text Validator).
+        const cleanUrl = extractInstagramUrl(text) || linkUrl(text);
+        const url = cleanUrl;
+        const urlNorm = normalisiereUrl(cleanUrl);
+        if (cleanUrl && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {
             if (!admin) {
                 try { await ctx.deleteMessage(); } catch (e) {}
                 const msg = await ctx.reply('❌ Duplikat! Dieser Link wurde bereits gepostet.');
@@ -1976,11 +1987,17 @@ bot.on('message', async (ctx, next) => {
             // App-Feed und wird in der nächsten 30-Min-Batch-DM angekündigt.
             try { await ctx.deleteMessage(); } catch (e) {}
 
+            // URL extrahieren + Caption-Text trennen → konsistent mit App-Post-Pfad.
+            // Vorher: text=fullMessage (z.B. 'Schaut mein Reel <URL>') → window.open() bricht.
+            const extractedUrl = extractInstagramUrl(text) || text;
+            const captionText = (text === extractedUrl) ? '' : text.replace(extractedUrl, '').trim();
+
             const linkId = generateSyntheticLinkId();
             const mapKey = linkId;
             d.links[mapKey] = {
                 chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
-                text: text, likes: new Set(), likerNames: {},
+                text: extractedUrl, caption: captionText,
+                likes: new Set(), likerNames: {},
                 counter_msg_id: linkId, timestamp: Date.now(),
                 origin: 'telegram', appOnly: true,
                 likeSource: { app: 0, telegram: 0 }

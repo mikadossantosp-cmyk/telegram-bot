@@ -401,6 +401,7 @@ async function appReminderForNonUsers() {
 async function feedBatchDM() {
     const now = Date.now();
     const lastBatch = d.lastFeedBatchAt || (now - 30*60*1000);
+    // Trigger: gibt es überhaupt was Neues seit dem letzten Batch?
     const newLinks = Object.values(d.links||{}).filter(l =>
         l.timestamp && l.timestamp > lastBatch && l.timestamp <= now &&
         l.text && l.text.includes('instagram.com')
@@ -409,29 +410,40 @@ async function feedBatchDM() {
         d.lastFeedBatchAt = now;
         return { sent: 0, links: 0 };
     }
-    const topNames = newLinks.slice(0, 5).map(l => {
-        const u = d.users[l.user_id];
-        return '• ' + (u?.spitzname || u?.name || l.user_name || 'User');
-    }).join('\n');
-    const more = newLinks.length > 5 ? `\n• +${newLinks.length - 5} weitere` : '';
+    // Inhalt: alle Insta-Links von HEUTE — User sieht immer den aktuellen Stand
+    // (offene Links insgesamt), nicht nur die vom letzten 30min-Slot.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todaysLinks = Object.values(d.links||{}).filter(l =>
+        l.timestamp && l.timestamp >= startOfToday.getTime() && l.timestamp <= now &&
+        l.text && l.text.includes('instagram.com')
+    );
     let sent = 0;
     for (const uid of Object.keys(d.users||{})) {
         const u = d.users[uid];
         if (!u?.started) continue;
         if (uid === CREATORBOOST_UID || u.isSystem) continue;
         if (!/^\d+$/.test(String(uid))) continue;
-        // Skip wenn ALLE Links von diesem User selbst sind ('du hast was gepostet').
-        if (newLinks.every(l => String(l.user_id) === String(uid))) continue;
-        // Skip wenn User ALLE neuen Links bereits geliked hat (kein 'erinnerns'-Spam).
-        // Likes sind Set für d.links → has(String(uid)) Check.
-        const stillToEngage = newLinks.filter(l => {
+        const stillToEngage = todaysLinks.filter(l => {
             if (String(l.user_id) === String(uid)) return false; // eigener Post
             return !(l.likes instanceof Set ? l.likes.has(String(uid)) : (Array.isArray(l.likes) && l.likes.includes(String(uid))));
         });
-        if (!stillToEngage.length) continue;
+        if (!stillToEngage.length) {
+            // Keine offenen Links mehr → alte Reminder-Nachricht löschen, kein neuer Send.
+            if (u._lastFeedBatchMsgId) {
+                try { await bot.telegram.deleteMessage(Number(uid), u._lastFeedBatchMsgId); } catch(e) {}
+                delete u._lastFeedBatchMsgId;
+            }
+            continue;
+        }
+        // Anti-Spam: alte 'offene Links'-Nachricht löschen BEVOR die neue gesendet wird —
+        // der User sieht so immer nur EINE aktuelle Reminder-Nachricht im Chat.
+        if (u._lastFeedBatchMsgId) {
+            try { await bot.telegram.deleteMessage(Number(uid), u._lastFeedBatchMsgId); } catch(e) {}
+            delete u._lastFeedBatchMsgId;
+        }
         try {
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
-            // Anzahl + Top-Namen jetzt gefiltert nach was-noch-zu-tun-ist (statt total).
             const todoNames = stillToEngage.slice(0, 5).map(l => {
                 const lu = d.users[l.user_id];
                 return '• ' + (lu?.spitzname || lu?.name || l.user_name || 'User');
@@ -439,14 +451,15 @@ async function feedBatchDM() {
             const todoMore = stillToEngage.length > 5 ? `\n• +${stillToEngage.length - 5} weitere` : '';
             const text = `🔗 *${stillToEngage.length} offene${stillToEngage.length===1?'r':''} Link${stillToEngage.length===1?'':'s'} im Feed*\n\n${todoNames}${todoMore}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
             const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Heute-Feed öffnen', url: magicUrl }]] } };
-            await bot.telegram.sendMessage(Number(uid), text, opts);
+            const msg = await bot.telegram.sendMessage(Number(uid), text, opts);
+            if (msg?.message_id) u._lastFeedBatchMsgId = msg.message_id;
             sent++;
             await new Promise(r => setTimeout(r, 50));
         } catch(e) {}
     }
     d.lastFeedBatchAt = now;
     speichern();
-    console.log(`📨 Feed-Batch: ${newLinks.length} Links → ${sent} DMs gesendet`);
+    console.log(`📨 Feed-Batch: ${newLinks.length} neue Links (Trigger), ${todaysLinks.length} heute total → ${sent} DMs gesendet/aktualisiert`);
     return { sent, links: newLinks.length };
 }
 

@@ -161,8 +161,11 @@ function getBerlinWeekKey() {
 }
 
 function isSuperLinkPostingAllowed() {
-    const day = new Date().getDay();
-    return day >= 1 && day <= 6; // Mon–Sat
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0) return false;                               // Sonntag komplett geschlossen
+    if (day === 6 && (now.getHours() === 23 && now.getMinutes() >= 59)) return false; // Sa 23:59 cutoff
+    return day >= 1 && day <= 6;                               // Mo bis Sa 23:58
 }
 
 function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerNames) {
@@ -203,7 +206,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     }
     if (!isSuperLinkPostingAllowed()) {
         try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks sind nur Montag bis Samstag möglich!'); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks können nur Montag bis Samstag (bis 23:58 Uhr) gepostet werden! Sonntag ist Auswertungstag.'); } catch(e) {}
         return;
     }
     const week = getBerlinWeekKey();
@@ -324,6 +327,30 @@ async function runEngagementCheck(isReminder = false) {
     }
     if (!isReminder) speichern();
     return { checked: posters.length, warned };
+}
+
+async function superlinkDailyReminder() {
+    const weekKey = getBerlinWeekKey();
+    const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
+    if (weekSuperlinks.length < 2) return { sent: 0 };
+    const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
+    const threadUrl = getFullEngagementThreadUrl();
+    let sent = 0;
+    for (const uid of posters) {
+        const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
+        if (offen === 0) continue;
+        const txt = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+        const opts = threadUrl
+            ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt engagen', url: threadUrl }]] } }
+            : { parse_mode: 'Markdown' };
+        try {
+            await bot.telegram.sendMessage(Number(uid), txt, opts);
+            sent++;
+        } catch(e) {}
+        sendAppPush(String(uid), '⭐ Superlink-Erinnerung', `Du hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche — jetzt engagen!`, '/feed?tab=engagement').catch(()=>{});
+    }
+    if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
+    return { sent };
 }
 
 async function cleanupOldSuperlinks() {
@@ -447,6 +474,13 @@ setInterval(async () => {
                 );
             }
         } catch(e) { console.log('Engagement Ankündigung Fehler:', e.message); }
+    }
+
+    // Mo-Sa 20:00 → Tägliche Erinnerung an Poster mit noch offenen Superlinks
+    if (day !== 0 && h === 20 && m === 0 && !d._seenEngagementJobs[wk+'_dr_'+day]) {
+        d._seenEngagementJobs[wk+'_dr_'+day] = true;
+        speichern();
+        await superlinkDailyReminder().catch(()=>{});
     }
 
     // Sonntag 21:00 → Erinnerung
@@ -2450,6 +2484,13 @@ bot.command('runengagementcheck', async (ctx) => {
     await ctx.reply('⏳ Führe Engagement-Check durch...');
     const result = await runEngagementCheck(false);
     await ctx.reply(`✅ Check abgeschlossen: ${result.checked} geprüft, ${result.warned} verwarnt`);
+});
+
+bot.command('superlinkreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende Reminder an alle Poster mit offenen Superlinks...');
+    const result = await superlinkDailyReminder();
+    await ctx.reply(`✅ ${result.sent} Reminder-DMs gesendet`);
 });
 
 bot.command('fethread', async (ctx) => {
@@ -4796,7 +4837,7 @@ app.post('/post-superlink-api', async (req, res) => {
     const u = d.users[String(uid)];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     if (!u.instagram) return res.json({ok:false, error:'Bitte zuerst /setinsta im Bot setzen'});
-    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa gepostet werden'});
+    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa (bis 23:58) gepostet werden — Sonntag ist Auswertung'});
     const week = getBerlinWeekKey();
     const isElitePlusSL = u.role === '🌟 Elite+';
     const maxSL = isElitePlusSL ? 2 : 1;

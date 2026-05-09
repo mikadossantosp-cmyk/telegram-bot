@@ -629,6 +629,7 @@ async function ensureFullEngagementThread() {
 async function checkInstagramForAllUsers() {
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || (u.instagram && u.instagram.trim() !== '') || d.instaWarte[uid]) continue;
+        if (uid === CREATORBOOST_UID || u.isSystem) continue;
         try {
             await bot.telegram.sendMessage(Number(uid), '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)', { reply_markup: { inline_keyboard: [[{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]] } });
             d.instaWarte[uid] = true;
@@ -1081,7 +1082,7 @@ bot.command('setinsta', async (ctx) => {
 });
 
 bot.command('ranking', async (ctx) => {
-    const sorted = Object.entries(d.users).filter(([uid]) => !istAdminId(uid)).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
+    const sorted = Object.entries(d.users).filter(([uid, u]) => !istAdminId(uid) && !u?.isSystem && uid !== CREATORBOOST_UID).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
     if (!sorted.length) return ctx.reply('Noch keine Daten.');
     const b = ['🥇', '🥈', '🥉'];
     let text = '🏆 *GESAMT RANKING*\n━━━━━━━━━━━━━━\n\n';
@@ -1136,7 +1137,8 @@ bot.command(['bonuslinks','bonus','bonuslink'], async (ctx) => {
 bot.command('stats', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const alleChats = Object.values(d.chats);
-    await ctx.reply('📊 *Stats*\n\n👥 User: ' + Object.keys(d.users).length + '\n💬 Chats: ' + alleChats.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
+    const userCount = Object.keys(d.users).filter(uid => uid !== CREATORBOOST_UID && !d.users[uid]?.isSystem).length;
+    await ctx.reply('📊 *Stats*\n\n👥 User: ' + userCount + '\n💬 Chats: ' + alleChats.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
 });
 
 bot.command('dashboard', async (ctx) => {
@@ -1167,6 +1169,7 @@ bot.command('dm', async (ctx) => {
     await ctx.reply('📨 Sende...');
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || u.parent_uid) continue; // Subs haben keine Telegram-UID
+        if (uid === CREATORBOOST_UID || u.isSystem) continue; // System-User keine TG-DM
         try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*\n\n' + nachricht, { parse_mode: 'Markdown' }); ok++; await new Promise(r => setTimeout(r, 200)); }
         catch (e) { err++; }
     }

@@ -279,12 +279,12 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     const feThr = (d.threads||[]).find(t => String(t.id) === feThreadKey);
     if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
     speichern();
-    // DM an Poster
+    // DM an Poster — Pflicht-Reminder mit Regel-Link
     try {
-        const maxMsg = isElitePlus ? 2 : 1;
+        const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
         await bot.telegram.sendMessage(Number(senderUid),
-            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können ' + maxMsg + '× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
-            { parse_mode: 'Markdown' });
+            '⭐ *Dein Superlink wurde gepostet!*\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst *alle Superlinks dieser Woche engagieren* (Liken, Kommentieren, Teilen, Speichern) bis *Sonntag 23:59 Uhr*.\n\n📖 [Regeln hier](' + rulesUrl + ')',
+            { parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch(e) {}
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
     const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
@@ -4864,8 +4864,13 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks[slId] = newSL;
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
         speichern();
-        // DM an Poster
-        try { await bot.telegram.sendMessage(Number(uid), '⭐ *Dein Superlink wurde gepostet!*\n\nVergiss nicht: Du bist verpflichtet, *alle anderen Superlinks diese Woche* zu liken, kommentieren, teilen & speichern.', { parse_mode: 'Markdown' }); } catch(e) {}
+        // DM an Poster — Pflicht-Reminder mit Regel-Link
+        try {
+            const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
+            await bot.telegram.sendMessage(Number(uid),
+                '⭐ *Dein Superlink wurde gepostet!*\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst *alle Superlinks dieser Woche engagieren* (Liken, Kommentieren, Teilen, Speichern) bis *Sonntag 23:59 Uhr*.\n\n📖 [Regeln hier](' + rulesUrl + ')',
+                { parse_mode: 'Markdown', disable_web_page_preview: true });
+        } catch(e) {}
         // DM an alle anderen Poster dieser Woche
         const posterUser = d.users[String(uid)];
         const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));

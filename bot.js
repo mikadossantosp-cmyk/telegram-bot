@@ -161,8 +161,11 @@ function getBerlinWeekKey() {
 }
 
 function isSuperLinkPostingAllowed() {
-    const day = new Date().getDay();
-    return day >= 1 && day <= 6; // Mon–Sat
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0) return false;                               // Sonntag komplett geschlossen
+    if (day === 6 && (now.getHours() === 23 && now.getMinutes() >= 59)) return false; // Sa 23:59 cutoff
+    return day >= 1 && day <= 6;                               // Mo bis Sa 23:58
 }
 
 function buildSuperLinkKarte(userName, insta, url, caption, likeCount, likerNames) {
@@ -203,7 +206,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     }
     if (!isSuperLinkPostingAllowed()) {
         try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks sind nur Montag bis Samstag möglich!'); } catch(e) {}
+        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks können nur Montag bis Samstag (bis 23:58 Uhr) gepostet werden! Sonntag ist Auswertungstag.'); } catch(e) {}
         return;
     }
     const week = getBerlinWeekKey();
@@ -344,6 +347,7 @@ async function superlinkDailyReminder() {
             await bot.telegram.sendMessage(Number(uid), txt, opts);
             sent++;
         } catch(e) {}
+        sendAppPush(String(uid), '⭐ Superlink-Erinnerung', `Du hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche — jetzt engagen!`, '/feed?tab=engagement').catch(()=>{});
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
     return { sent };
@@ -4833,7 +4837,7 @@ app.post('/post-superlink-api', async (req, res) => {
     const u = d.users[String(uid)];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
     if (!u.instagram) return res.json({ok:false, error:'Bitte zuerst /setinsta im Bot setzen'});
-    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa gepostet werden'});
+    if (!isSuperLinkPostingAllowed()) return res.json({ok:false, error:'Superlinks können nur Mo–Sa (bis 23:58) gepostet werden — Sonntag ist Auswertung'});
     const week = getBerlinWeekKey();
     const isElitePlusSL = u.role === '🌟 Elite+';
     const maxSL = isElitePlusSL ? 2 : 1;

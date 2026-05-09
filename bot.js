@@ -775,13 +775,19 @@ function istInstagramLink(text) {
     const t = text.toLowerCase();
     return t.includes('instagram.com') || t.includes('instagr.am');
 }
-// Extrahiert die erste Instagram-URL aus einem freien Text (z.B. Telegram-Group-Message
-// 'Schaut mein neues Reel https://www.instagram.com/p/ABC'). Gibt null zurück wenn keine
-// URL gefunden wurde. Caption ist text ohne die URL.
+// Extrahiert die erste Instagram-URL aus einem freien Text. Toleriert auch
+// schemenlose URLs ('www.instagram.com/p/ABC' oder 'instagram.com/p/ABC') und
+// trimmt typische trailing-Punktuation ('.', ',', ')', etc.) ab.
 function extractInstagramUrl(text) {
     if (!text) return null;
-    const m = String(text).match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+/i);
-    return m ? m[0] : null;
+    const s = String(text);
+    const trim = (u) => u.replace(/[.,;)\]!?]+$/, '');
+    const m = s.match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+/i);
+    if (m) return trim(m[0]);
+    // Schemen-lose Version → https:// vorschieben.
+    const m2 = s.match(/(?:^|\s)((?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+)/i);
+    if (m2) return 'https://' + trim(m2[1]);
+    return null;
 }
 function linkUrl(text) {
     if (!text || typeof text !== 'string') return null;

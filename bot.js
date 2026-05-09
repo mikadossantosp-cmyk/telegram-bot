@@ -1058,6 +1058,34 @@ bot.use(async (ctx, next) => {
     } catch (e) { console.log('Middleware Fehler:', e.message); return next(); }
 });
 
+// Welcome-Briefing — wird beim /start (Erst- + Re-) und über /welcome wieder aufgerufen.
+async function sendWelcomeBriefing(ctx, uid, opts = {}) {
+    const wasNew = !!opts.wasNew;
+    const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
+    const greeting = wasNew ? `👋 *Willkommen, ${ctx.from.first_name || 'Creator'}!*` : `👋 *Hi ${ctx.from.first_name || 'Creator'}!*`;
+    const briefing = greeting + '\n\n' +
+        'Schön dass du dabei bist 🚀\n\n' +
+        'Hier ist wie *CreatorX* funktioniert — wir haben *2 Gruppen* + *eine App*:\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        '🔗 *Link-Gruppe* — _hier postest du deine Insta-Reels_\n' +
+        'Jeder postet täglich seinen Reel-Link. Andere Creator liken zurück. Bot trackt alles.\n\n' +
+        '💬 *Chat-Gruppe* — _hier wird gequatscht_\n' +
+        'Community-Chat, Tipps, Fragen, Engagement-Pflicht-Threads.\n\n' +
+        '📱 *Die App* — _dein Creator-Hub_\n' +
+        'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen.\n' +
+        '━━━━━━━━━━━━━━\n\n' +
+        '⚠️ *Wichtig:* Setz unten deinen Instagram-Username — sonst kannst du in der App nicht posten/liken.';
+    const buttons = [];
+    if (GROUP_A_INVITE) buttons.push([{ text: '🔗 Zur Link-Gruppe', url: GROUP_A_INVITE }]);
+    if (GROUP_B_INVITE) buttons.push([{ text: '💬 Zur Chat-Gruppe', url: GROUP_B_INVITE }]);
+    buttons.push([{ text: '📱 App öffnen (1-Klick-Login)', url: magicAppUrl }]);
+    try {
+        await ctx.reply(briefing, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+    } catch (e) {
+        await ctx.reply(briefing.replace(/\*/g,'').replace(/_/g,''), { reply_markup: { inline_keyboard: buttons } });
+    }
+}
+
 bot.start(async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
@@ -1072,38 +1100,23 @@ bot.start(async (ctx) => {
         const payload = ctx.startPayload;
         if (payload === 'melden') return startMeldenFlow(ctx, uid);
         if (payload === 'shop') return sendShopNachricht(ctx, uid);
-        // ─── Großes Welcome-Briefing (immer beim /start, auch wenn schon gestartet) ───
-        const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
-        const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
-        const greeting = wasNew ? `👋 *Willkommen, ${ctx.from.first_name || 'Creator'}!*` : `👋 *Hi ${ctx.from.first_name || 'Creator'}!*`;
-        const briefing = greeting + '\n\n' +
-            'Schön dass du dabei bist 🚀\n\n' +
-            'Hier ist wie *CreatorX* funktioniert — wir haben *2 Gruppen* + *eine App*:\n\n' +
-            '━━━━━━━━━━━━━━\n' +
-            '🔗 *Link-Gruppe* — _hier postest du deine Insta-Reels_\n' +
-            'Jeder postet täglich seinen Reel-Link. Andere Creator liken zurück. Bot trackt alles.\n\n' +
-            '💬 *Chat-Gruppe* — _hier wird gequatscht_\n' +
-            'Community-Chat, Tipps, Fragen, Engagement-Pflicht-Threads.\n\n' +
-            '📱 *Die App* — _dein Creator-Hub_\n' +
-            'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen.\n' +
-            '━━━━━━━━━━━━━━\n\n' +
-            '⚠️ *Wichtig:* Setz unten deinen Instagram-Username — sonst kannst du in der App nicht posten/liken.';
-        const buttons = [];
-        if (GROUP_A_INVITE) buttons.push([{ text: '🔗 Zur Link-Gruppe', url: GROUP_A_INVITE }]);
-        if (GROUP_B_INVITE) buttons.push([{ text: '💬 Zur Chat-Gruppe', url: GROUP_B_INVITE }]);
-        buttons.push([{ text: '📱 App öffnen (1-Klick-Login)', url: magicAppUrl }]);
-        try {
-            await ctx.reply(briefing, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
-        } catch (e) {
-            // Markdown-Parsing fail safety
-            await ctx.reply(briefing.replace(/\*/g,'').replace(/_/g,''), { reply_markup: { inline_keyboard: buttons } });
-        }
-        // Wenn noch kein Insta → den Insta-Wait-Flow triggern (zweite Nachricht).
+        await sendWelcomeBriefing(ctx, uid, { wasNew });
         if (!u.instagram) {
             d.instaWarte[uid] = true; speichern();
             return ctx.reply('📸 Bevor du loslegst — wie heißt dein Instagram?\n\n(z.B. max123 — nur der Username, ohne @)');
         }
     }
+});
+
+// /welcome — zum Re-Anzeigen des Welcome-Briefings (Test + jederzeit verfügbar).
+bot.command('welcome', async (ctx) => {
+    if (!istPrivat(ctx.chat.type)) {
+        const info = await ctx.telegram.getMe();
+        return ctx.reply('📩 Bitte im DM mit dem Bot tippen.', { reply_markup: { inline_keyboard: [[{ text: '📩 Bot DM öffnen', url: 'https://t.me/' + info.username + '?start=welcome' }]] } });
+    }
+    const uid = ctx.from.id;
+    user(uid, ctx.from.first_name);
+    await sendWelcomeBriefing(ctx, uid, { wasNew: false });
 });
 
 bot.command('help', async (ctx) => {

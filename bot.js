@@ -336,6 +336,7 @@ async function runEngagementCheck(isReminder = false) {
 
 function buildAppReminderMessage() {
     const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
+    const apkUrl = appUrl + '/download-app';
     const text =
         '📱 *Hast du schon die CreatorX-App?*\n\n' +
         'Die App ist deine Zentrale für die Community:\n' +
@@ -346,9 +347,14 @@ function buildAppReminderMessage() {
         '🔗 *Direkt öffnen:* ' + appUrl + '\n\n' +
         '📲 *Auf dem Handy installieren:*\n' +
         '• iPhone: Safari → Teilen → "Zum Home-Bildschirm"\n' +
-        '• Android: Chrome → Menü → "App installieren"\n\n' +
-        'Komplett kostenlos, kein Login mit Passwort.';
-    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 App öffnen', url: appUrl }]] } };
+        '• Android (PWA): Chrome → Menü → "App installieren"\n' +
+        '• Android (APK): ' + apkUrl + '\n\n' +
+        '🔐 *Login-Code holen:*\n' +
+        'Schick mir hier den Befehl /mycode — du bekommst einen persönlichen Login-Code, mit dem du dich in der App einloggst.';
+    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '📲 App öffnen', url: appUrl }],
+        [{ text: '⬇️ APK Download (Android)', url: apkUrl }]
+    ] } };
     return { text, opts };
 }
 
@@ -396,8 +402,8 @@ async function superlinkDailyReminder() {
         } catch(e) {}
         try {
             const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-            const linkOpt = threadUrl ? { link: { url: threadUrl, label: '📲 Jetzt engagen' } } : undefined;
-            sendCreatorBoostDM(uid, inappText, linkOpt);
+            const engageUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/feed?tab=engagement';
+            sendCreatorBoostDM(uid, inappText, { link: { url: engageUrl, label: '📲 Jetzt engagen' } });
         } catch(e) {}
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
@@ -2561,8 +2567,9 @@ bot.command('dmappreminder', async (ctx) => {
 bot.command('dmpreview', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     const uid = String(ctx.from.id);
-    const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
-    const threadUrl = getFullEngagementThreadUrl();
+    const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    const rulesUrl = appUrl + '/explore?tab=regeln#r-superlinks';
+    const engageUrl = appUrl + '/feed?tab=engagement';
     const previews = [
         {
             label: '1️⃣ App-Post Bestätigung',
@@ -2572,7 +2579,7 @@ bot.command('dmpreview', async (ctx) => {
         {
             label: '2️⃣ Daily Reminder (Mo–Sa 20:00)',
             text: '⭐ Superlink-Erinnerung\n\nDu hast noch 3 offene Superlinks dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.',
-            link: threadUrl ? { url: threadUrl, label: '📲 Jetzt engagen' } : null
+            link: { url: engageUrl, label: '📲 Jetzt engagen' }
         },
         {
             label: '3️⃣ Sonntag 21:00 Reminder',

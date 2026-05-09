@@ -2980,18 +2980,16 @@ async function likeErinnerung() {
         if (!nichtGeliked.length) continue;
 
         let text = '👋 *Hey ' + u.name + '!*\n\n━━━━━━━━━━━━━━\n⬜ Noch nicht geliked:\n\n';
-        const buttons = [];
-
         for (const [, l] of nichtGeliked) {
             const insta = l.user_id ? (d.users[String(l.user_id)]?.instagram ? ' · 📸 @' + d.users[String(l.user_id)].instagram : '') : '';
             text += '👤 ' + l.user_name + insta + '\n';
-            if (l.counter_msg_id && l.chat_id) {
-                const url = 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + l.counter_msg_id;
-                buttons.push([{ text: '👍 ' + l.user_name + ' liken', url: url }]);
-            }
         }
-
         text += '\n━━━━━━━━━━━━━━\n⏳ Missionen schließen um 12:00 Uhr!';
+
+        // App-only Flow: t.me/c/.../{counter_msg_id} würde bei synthetischen App-IDs 404'en.
+        // Stattdessen ein Magic-Link zum App-Feed wo der User alles engagen kann.
+        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+        const buttons = [[{ text: '📲 Im Heute-Feed engagen', url: magicUrl }]];
 
         try {
             await bot.telegram.sendMessage(Number(uid), text, {

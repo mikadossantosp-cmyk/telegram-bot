@@ -2720,6 +2720,58 @@ bot.command('appreminder', async (ctx) => {
     await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
 });
 
+// /restoresubs [YYYY-MM-DD] [dry] — Sub-Accounts aus einem Backup wiederherstellen.
+// Default: heutiges Datum. 'dry' an zweiter Stelle = Trockenlauf ohne Speichern.
+bot.command('restoresubs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const args = (ctx.message?.text||'').split(/\s+/).slice(1);
+    const today = new Date().toISOString().slice(0, 10);
+    let date = today, dry = false;
+    for (const a of args) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(a)) date = a;
+        else if (a.toLowerCase() === 'dry' || a.toLowerCase() === 'trocken') dry = true;
+    }
+    const backupFile = DATA_FILE.replace('.json', '_backup_' + date + '.json');
+    if (!fs.existsSync(backupFile)) {
+        // Liste verfügbare Backups zeigen falls Datum daneben liegt.
+        try {
+            const dir = require('path').dirname(DATA_FILE);
+            const base = require('path').basename(DATA_FILE).replace('.json', '');
+            const files = fs.readdirSync(dir).filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json')).sort().reverse().slice(0, 7);
+            return ctx.reply('❌ Backup nicht gefunden für `' + date + '`.\n\nVerfügbar:\n' + (files.length ? files.map(f => '• `'+f.replace(base+'_backup_','').replace('.json','')+'`').join('\n') : '_keine_'), { parse_mode: 'Markdown' });
+        } catch { return ctx.reply('❌ Backup nicht gefunden: ' + backupFile); }
+    }
+    try {
+        const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+        const restored = [], skipped = [], orphaned = [];
+        for (const [uid, u] of Object.entries(backup.users || {})) {
+            if (!u || !u.parent_uid) continue;
+            if (d.users[uid]) { skipped.push(uid); continue; }
+            const parentUid = String(u.parent_uid);
+            if (!d.users[parentUid]) { orphaned.push({uid, parentUid}); continue; }
+            if (!dry) {
+                d.users[uid] = u;
+                d.users[parentUid].subUid = uid;
+            }
+            restored.push({ uid, parent: parentUid, name: u.spitzname || u.name || '?', xp: u.xp || 0 });
+        }
+        if (!dry && restored.length) speichern();
+        const head = dry ? '🧪 *Dry-Run* — nichts gespeichert' : '✅ *Restore ausgeführt*';
+        let msg = head + '\n\nQuelle: `' + backupFile.split('/').pop() + '`\n\n';
+        msg += `🔄 Wiederhergestellt: *${restored.length}*\n⏭️ Schon vorhanden (skip): *${skipped.length}*\n⚠️ Verwaist (parent fehlt): *${orphaned.length}*`;
+        if (restored.length) {
+            msg += '\n\n*Wiederhergestellt:*\n' + restored.slice(0, 15).map(r => '• ' + r.name + ' (Parent ' + r.parent + ', ' + r.xp + ' XP)').join('\n');
+            if (restored.length > 15) msg += '\n• … +' + (restored.length - 15) + ' weitere';
+        }
+        if (orphaned.length) {
+            msg += '\n\n*Verwaist (Parent fehlt):*\n' + orphaned.slice(0, 5).map(o => '• `'+o.uid+'`').join('\n');
+        }
+        return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch(e) {
+        return ctx.reply('❌ Fehler: ' + e.message);
+    }
+});
+
 bot.command('feedbatch', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     await ctx.reply('⏳ Sende Feed-Batch DM an alle gestarteten Bot-User...');

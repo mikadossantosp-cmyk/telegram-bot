@@ -418,13 +418,26 @@ async function feedBatchDM() {
     for (const uid of Object.keys(d.users||{})) {
         const u = d.users[uid];
         if (!u?.started) continue;
-        if (uid === CREATORBOOST_UID) continue;
+        if (uid === CREATORBOOST_UID || u.isSystem) continue;
         if (!/^\d+$/.test(String(uid))) continue;
-        // Skip wenn ALLE Links von genau diesem User sind (sonst absurd 'du hast was gepostet')
+        // Skip wenn ALLE Links von diesem User selbst sind ('du hast was gepostet').
         if (newLinks.every(l => String(l.user_id) === String(uid))) continue;
+        // Skip wenn User ALLE neuen Links bereits geliked hat (kein 'erinnerns'-Spam).
+        // Likes sind Set für d.links → has(String(uid)) Check.
+        const stillToEngage = newLinks.filter(l => {
+            if (String(l.user_id) === String(uid)) return false; // eigener Post
+            return !(l.likes instanceof Set ? l.likes.has(String(uid)) : (Array.isArray(l.likes) && l.likes.includes(String(uid))));
+        });
+        if (!stillToEngage.length) continue;
         try {
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
-            const text = `🔗 *${newLinks.length} neue${newLinks.length===1?'r':''} Link${newLinks.length===1?'':'s'} im Feed*\n\n${topNames}${more}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
+            // Anzahl + Top-Namen jetzt gefiltert nach was-noch-zu-tun-ist (statt total).
+            const todoNames = stillToEngage.slice(0, 5).map(l => {
+                const lu = d.users[l.user_id];
+                return '• ' + (lu?.spitzname || lu?.name || l.user_name || 'User');
+            }).join('\n');
+            const todoMore = stillToEngage.length > 5 ? `\n• +${stillToEngage.length - 5} weitere` : '';
+            const text = `🔗 *${stillToEngage.length} offene${stillToEngage.length===1?'r':''} Link${stillToEngage.length===1?'':'s'} im Feed*\n\n${todoNames}${todoMore}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
             const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Heute-Feed öffnen', url: magicUrl }]] } };
             await bot.telegram.sendMessage(Number(uid), text, opts);
             sent++;

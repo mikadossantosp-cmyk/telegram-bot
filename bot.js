@@ -4270,6 +4270,10 @@ app.post('/update-profile-api', (req, res) => {
                 if (!taken) d.users[uid].email = newEmail;
             }
         }
+        // Welcome-Briefing dismiss-flag (App-Modal beim ersten Login).
+        if (req.body.appBriefingSeen !== undefined) {
+            d.users[uid].appBriefingSeen = !!req.body.appBriefingSeen;
+        }
         // Bilder separat speichern
         if (banner !== undefined) {
             if (banner.startsWith('data:image')) {

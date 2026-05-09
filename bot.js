@@ -4049,6 +4049,39 @@ app.get('/delete-link', async (req, res) => {
     const msgId = req.query.id;
     if (d.links[msgId]) {
         const link = d.links[msgId];
+        const heuteStr = new Date().toDateString();
+        const isToday = link.timestamp && new Date(link.timestamp).toDateString() === heuteStr;
+
+        // 0. XP/Daily-Counter zurückrechnen (Like = 5 XP, Post = 1 XP).
+        try {
+            const likers = Array.from(link.likes instanceof Set ? link.likes : (Array.isArray(link.likes) ? link.likes : []));
+            for (const lUid of likers) {
+                if (!lUid || lUid === CREATORBOOST_UID || istAdminId(lUid)) continue;
+                const lu = d.users[lUid];
+                if (!lu) continue;
+                lu.xp = Math.max(0, (lu.xp||0) - 5);
+                lu.level = level(lu.xp); lu.role = badge(lu.xp);
+                lu.totalLikes = Math.max(0, (lu.totalLikes||0) - 1);
+                if (isToday) {
+                    if (d.dailyXP) d.dailyXP[lUid] = Math.max(0, (d.dailyXP[lUid]||0) - 5);
+                    if (d.missionen?.[lUid]?.date === heuteStr) {
+                        d.missionen[lUid].likesGegeben = Math.max(0, (d.missionen[lUid].likesGegeben||0) - 1);
+                    }
+                }
+                if (d.weeklyXP) d.weeklyXP[lUid] = Math.max(0, (d.weeklyXP[lUid]||0) - 5);
+            }
+            // Poster: -1 XP + -1 Link-Count (war beim Posten via xpAddMitDaily(uid, 1) gegeben).
+            const posterUid = String(link.user_id||'');
+            if (posterUid && d.users[posterUid] && !istAdminId(posterUid)) {
+                const pu = d.users[posterUid];
+                pu.xp = Math.max(0, (pu.xp||0) - 1);
+                pu.level = level(pu.xp); pu.role = badge(pu.xp);
+                pu.links = Math.max(0, (pu.links||0) - 1);
+                if (isToday && d.dailyXP) d.dailyXP[posterUid] = Math.max(0, (d.dailyXP[posterUid]||0) - 1);
+                if (d.weeklyXP) d.weeklyXP[posterUid] = Math.max(0, (d.weeklyXP[posterUid]||0) - 1);
+            }
+        } catch(e) { console.log('[DELETE-LINK] XP-Rollback Fehler:', e.message); }
+
         // 1. Telegram-Nachricht in der Link-Gruppe löschen (sowohl Original-Msg als auch Counter-Msg).
         try { if (link.chat_id && link.counter_msg_id) await bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{}); } catch(e){}
         try { if (link.chat_id && msgId && /^\d+$/.test(String(msgId))) await bot.telegram.deleteMessage(link.chat_id, Number(msgId)).catch(()=>{}); } catch(e){}
@@ -4070,7 +4103,7 @@ app.get('/delete-link', async (req, res) => {
         // 6. Den Link selbst löschen.
         delete d.links[msgId];
         speichern();
-        console.log('[DELETE-LINK] Link', msgId, 'komplett gelöscht (TG + Comments + DMs)');
+        console.log('[DELETE-LINK] Link', msgId, 'komplett gelöscht (TG + Comments + DMs + XP-Rollback)');
     }
     res.json({ ok: true });
 });

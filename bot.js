@@ -4298,28 +4298,12 @@ app.post('/post-link-from-app', async (req, res) => {
         if (istInstagramLink(url)) mission.linksGepostet++;
         await checkMissionen(uid, u.name||name);
 
-        // DM an alle User senden
-        await sendeLinkAnAlle(linkData);
-
-        // Bridge Bot informieren
-        try {
-            const burl = BRIDGE_BOT_URL;
-            const lib2 = burl.startsWith('https') ? https : http;
-            const bdata = JSON.stringify({
-                fromGroup: 'A', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
-                chatId: GROUP_A_ID, linkText: url,
-                userName: u.spitzname||u.name||name, userId: Number(uid), username: u.username||null
-            });
-            const urlObj2 = new URL(burl);
-            const req2 = lib2.request({
-                hostname: urlObj2.hostname, path: urlObj2.pathname, method: 'POST',
-                headers: {'Content-Type':'application/json','x-bridge-secret':BRIDGE_SECRET,'Content-Length':Buffer.byteLength(bdata)}
-            }, r=>{r.on('data',()=>{});r.on('end',()=>{});});
-            req2.on('error',()=>{}); req2.write(bdata); req2.end();
-        } catch(e) { console.log('Bridge Fehler:', e.message); }
+        // App-only Flow: kein sendeLinkAnAlle (replaced durch 30-Min Feed-Batch)
+        // und kein Bridge-Notify (Bridge erwartet einen echten Group-Post den
+        // wir hier nicht mehr machen).
 
         speichern();
-        res.json({ok:true, msgId: botMsg.message_id});
+        res.json({ok:true, msgId: linkId});
     } catch(e) {
         console.log('post-link-from-app Fehler:', e.message);
         res.json({error:'Fehler: '+e.message});

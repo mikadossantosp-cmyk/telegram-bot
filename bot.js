@@ -3447,11 +3447,16 @@ function updateStreak(uid) {
 // Holt das Instagram-OG-Image (Thumbnail/Deckblatt) für eine URL.
 // Returns die Bild-URL oder null. Fail-soft: bei Block/Timeout/Parse-Fehler → null.
 // Instagram blockt Bots aggressiv, ~80% Success-Rate mit Browser-Headers.
-async function fetchInstagramThumbnail(url) {
-    if (!url || typeof url !== 'string' || !url.includes('instagram.com')) return null;
+// Instagram-Reel-URL → robuste Embed-URL (öffentlich, weniger restriktiv beim Scraping).
+function buildInstaEmbedUrl(url) {
+    const m = String(url||'').match(/instagram\.com\/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/);
+    if (!m) return null;
+    return `https://www.instagram.com/p/${m[1]}/embed/captioned/`;
+}
+async function _scrapeOgImage(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5000);
         const r = await fetch(url, {
             signal: controller.signal,
             redirect: 'follow',
@@ -3465,13 +3470,25 @@ async function fetchInstagramThumbnail(url) {
         clearTimeout(timer);
         if (!r.ok) return null;
         const html = await r.text();
+        // Mehrere OG-Image-Patterns abdecken (Embed-Page liefert manchmal andere Reihenfolge).
         const m = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/i)
-              || html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"/i);
+              || html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"/i)
+              || html.match(/"display_url":"([^"]+)"/)
+              || html.match(/"thumbnail_src":"([^"]+)"/);
         if (!m) return null;
-        return m[1].replace(/&amp;/g,'&').slice(0, 800);
-    } catch(e) {
-        return null;
+        return m[1].replace(/&amp;/g,'&').replace(/\\u0026/g,'&').replace(/\\\//g,'/').slice(0, 800);
+    } catch(e) { clearTimeout(timer); return null; }
+}
+async function fetchInstagramThumbnail(url) {
+    if (!url || typeof url !== 'string' || !url.includes('instagram.com')) return null;
+    // Erst Embed-URL versuchen (öffentlich, robuster gegen Login-Wall).
+    const embedUrl = buildInstaEmbedUrl(url);
+    if (embedUrl) {
+        const t1 = await _scrapeOgImage(embedUrl);
+        if (t1) return t1;
     }
+    // Fallback: original URL scrapen.
+    return await _scrapeOgImage(url);
 }
 
 // Synthetischer Link-ID-Generator für App-only Posts (kein Telegram-Message dahinter).

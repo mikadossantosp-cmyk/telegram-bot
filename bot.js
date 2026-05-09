@@ -3122,6 +3122,9 @@ async function gruppenMitgliederPruefen() {
     let aktiv = 0, geloescht = 0;
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || istAdminId(uid)) continue;
+        // Sub-Accounts haben keine Telegram-Identität → wären immer 'left/kicked'
+        // und würden gelöscht. Plus wasted Telegram-API-Call pro Sub pro Tag.
+        if (u.parent_uid) continue;
         try {
             const member = await bot.telegram.getChatMember(GROUP_A_ID, Number(uid));
             if (['left', 'kicked', 'banned'].includes(member.status)) {

@@ -321,25 +321,31 @@ async function runEngagementCheck(isReminder = false) {
     let warned = 0;
     for (const uid of posters) {
         const u = d.users[uid];
-        // Sub-Accounts skippen — keine eigenen Reminder/Strafen, läuft alles über den Parent.
-        if (u && u.parent_uid) continue;
         if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
-        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
+        // Family-Filter: eigene Family (Parent ↔ Sub) zählt nicht als 'andere Links'.
+        const fam = new Set(familyUids(uid));
+        const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
         if (!otherLinks.length) continue;
         const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
         if (!likedAll) {
             warned++;
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+            const isNumericUid = /^\d+$/.test(String(uid));
             if (isReminder) {
                 const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
-                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
+                if (isNumericUid) {
+                    try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
+                }
                 try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
-                if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
-                const warnCount = u?.warnings || 1;
+                u.xp = Math.max(0, (u.xp||0) - 50);
+                u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1;
+                const warnCount = u.warnings;
                 const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
                 addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
-                try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
+                if (isNumericUid) {
+                    try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
+                }
                 try { sendCreatorBoostDM(uid, violationText, { link: { url: magicUrl, label: '📲 In der App ansehen' } }); } catch(e) {}
             }
         }
@@ -473,20 +479,25 @@ async function superlinkDailyReminder() {
     let sent = 0;
     for (const uid of posters) {
         const u = d.users[uid];
-        // Sub-Accounts skippen: kein eigenes Telegram + keine eigenen DMs erwünscht.
-        // Wenn ein Sub einen Superlink gepostet hat, bekommt der Parent die Reminder
-        // (separat über seine Parent-UID — falls er auch posten sollte).
-        if (u && u.parent_uid) continue;
         if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
-        const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
+        // Family-Filter: nicht für ungelinkte Posts der eigenen Family (Parent ↔ Sub) erinnern.
+        const fam = new Set(familyUids(uid));
+        const offen = weekSuperlinks.filter(s =>
+            !fam.has(String(s.uid)) &&
+            !(Array.isArray(s.likes) && s.likes.includes(uid))
+        ).length;
         if (offen === 0) continue;
         const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
         const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
         const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } };
-        try {
-            await bot.telegram.sendMessage(Number(uid), tgText, opts);
-            sent++;
-        } catch(e) {}
+        // Telegram-DM nur an numerische UIDs (Sub-Accounts haben keine TG-Identität).
+        if (/^\d+$/.test(String(uid))) {
+            try {
+                await bot.telegram.sendMessage(Number(uid), tgText, opts);
+                sent++;
+            } catch(e) {}
+        }
+        // App-DM auch für Subs OK.
         try {
             const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
             const engageUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/feed?tab=engagement';
@@ -785,6 +796,23 @@ function user(uid, name) {
 // Sub-Account: nur in der App lebende Persona. parent_uid zeigt auf den Telegram-User.
 function isSubAccount(uid) { return !!(d.users[uid] && d.users[uid].parent_uid); }
 function getRootUid(uid) { return d.users[uid]?.parent_uid ? String(d.users[uid].parent_uid) : String(uid); }
+// Liefert alle UIDs der Account-Family (Parent + Sub) — nützlich um zu vermeiden
+// dass jemand für ungelinkte Posts der eigenen Family erinnert/bestraft wird.
+function familyUids(uid) {
+    const u = d.users[uid];
+    const set = new Set([String(uid)]);
+    if (!u) return [...set];
+    if (u.parent_uid) {
+        // Sub: Family = Sub + Parent
+        set.add(String(u.parent_uid));
+        const p = d.users[u.parent_uid];
+        if (p && p.subUid) set.add(String(p.subUid));
+    } else {
+        // Parent: Family = Parent + sein Sub
+        if (u.subUid) set.add(String(u.subUid));
+    }
+    return [...set];
+}
 // DM-Send-Wrapper: Sub-Accounts haben keine Telegram-UID, sendMessage würde "chat not found" werfen.
 async function dmUser(uid, text, opts) {
     if (isSubAccount(uid)) return;

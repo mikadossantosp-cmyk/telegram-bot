@@ -1971,45 +1971,35 @@ bot.on('message', async (ctx, next) => {
         const istInsta = istInstagramLink(text);
 
         if (istInsta) {
+            // App-only Flow: Bot löscht User-Message, postet KEINE Karte in der Gruppe.
+            // Link wird mit synthetischer ID in d.links gespeichert → erscheint im
+            // App-Feed und wird in der nächsten 30-Min-Batch-DM angekündigt.
             try { await ctx.deleteMessage(); } catch (e) {}
-            const isAdmin = istAdminId(uid);
-            let botMsg;
-            try {
-                botMsg = await bot.telegram.sendMessage(ctx.chat.id,
-                    buildLinkKarte(ctx.from.first_name, u.role, text, 0, u.xp, isAdmin),
-                    { reply_markup: buildLinkButtons(msgId, 0) }
-                );
-            } catch (e) { console.log('Fehler beim Posten:', e.message); speichern(); return; }
 
-            const mapKey = MEINE_GRUPPE + '_' + msgId;
-            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+            const linkId = generateSyntheticLinkId();
+            const mapKey = linkId;
+            d.links[mapKey] = {
+                chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
+                text: text, likes: new Set(), likerNames: {},
+                counter_msg_id: linkId, timestamp: Date.now(),
+                origin: 'telegram', appOnly: true,
+                likeSource: { app: 0, telegram: 0 }
+            };
             tryFetchThumbnail(d.links[mapKey], 'text');
 
-            if (!istAdminId(uid)) {
-                try {
-                    const erin = await bot.telegram.sendMessage(ctx.chat.id, '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!', { reply_to_message_id: botMsg.message_id });
-                    setTimeout(async () => { try { await bot.telegram.deleteMessage(ctx.chat.id, erin.message_id); } catch (e) {} }, 10000);
-                } catch (e) {}
-            }
+            // Confirmation-DM an Poster mit Magic-Link in den App-Feed.
+            try {
+                const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+                await bot.telegram.sendMessage(Number(uid),
+                    '✅ *Dein Link ist im Feed!*\n\nDein Instagram-Link wurde aus der Gruppe in den App-Feed übernommen. Andere User werden in der nächsten 30-Min-DM-Welle benachrichtigt.\n\n💡 *Vergiss nicht*: andere Links liken & mit 2 Wörtern kommentieren — Pflicht!',
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } }
+                );
+            } catch (e) {}
 
             const linkKeys = Object.keys(d.links);
             if (linkKeys.length > 500) {
                 const oldest = linkKeys.sort((a, b) => d.links[a].timestamp - d.links[b].timestamp)[0];
                 delete d.links[oldest];
-            }
-            await sendeLinkAnAlle(d.links[mapKey]);
-
-            if (BRIDGE_BOT_URL) {
-                try {
-                    await fetch(BRIDGE_BOT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
-                        body: JSON.stringify({ fromGroup: MEINE_GRUPPE, msgId: msgId, chatId: ctx.chat.id, botMsgId: botMsg.message_id, linkText: text, userName: ctx.from.first_name, userId: uid, username: ctx.from.username || null })
-                    });
-                    const updateUrl = BRIDGE_BOT_URL.replace('/new-link-from-group', '/update-msg-id');
-                    fetch(updateUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET }, body: JSON.stringify({ fromGroup: MEINE_GRUPPE, mapKey: MEINE_GRUPPE + '_' + msgId, realBotMsgId: botMsg.message_id }) }).catch(e => {});
-                    console.log('Bridge Meldung: msgId=' + msgId + ' botMsgId=' + botMsg.message_id);
-                } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
             }
         } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
@@ -3165,6 +3155,11 @@ async function fetchInstagramThumbnail(url) {
     }
 }
 
+// Synthetischer Link-ID-Generator für App-only Posts (kein Telegram-Message dahinter).
+function generateSyntheticLinkId() {
+    return 'app_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+}
+
 // Async-Hook: nicht blockierend ein Thumbnail für eine link/superlink Entry holen.
 function tryFetchThumbnail(entry, urlField = 'text') {
     if (!entry) return;
@@ -3349,7 +3344,7 @@ async function zeitCheck() {
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
             if (Date.now() - l.timestamp > zweiTage) {
-                bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id).catch(() => {});
+                if (!l.appOnly) bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id).catch(() => {});
                 const mk = String(l.counter_msg_id);
                 if (d.dmNachrichten?.[mk]) {
                     for (const [uid2, dmId] of Object.entries(d.dmNachrichten[mk])) bot.telegram.deleteMessage(Number(uid2), dmId).catch(() => {});
@@ -3377,6 +3372,8 @@ async function cleanupDeletedLinks() {
     for (const key of batch) {
         const link = d.links[key];
         if (!link?.chat_id || !link?.counter_msg_id) { delete d.links[key]; changed = true; continue; }
+        // App-only Links haben kein Telegram-Message → Cleanup würde sie sonst löschen.
+        if (link.appOnly) continue;
         try {
             await bot.telegram.editMessageReplyMarkup(
                 link.chat_id, link.counter_msg_id, null,
@@ -4005,6 +4002,9 @@ app.get('/like-from-app', async (req, res) => {
     const liked = !wasLiked;
     res.json({ok:true, liked, likes: lnk.likes.size});
 
+    // App-only Links haben keine Telegram-Message → Sync-Updates überspringen.
+    if (lnk.appOnly) return;
+
     // Telegram Counter + Feedback asynchron (kein await → blockiert Response nicht)
     const anz = lnk.likes.size;
     const poster = d.users[String(lnk.user_id)] || {};
@@ -4246,34 +4246,10 @@ app.post('/post-link-from-app', async (req, res) => {
     console.log('[APP-LINK] Checks OK - sende Link...');
 
     try {
-        // Link in Gruppe senden (gleiche Formatierung wie Telegram-Post)
-        console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
-        const isAdmin = istAdminId(uid);
-        const botMsg = await bot.telegram.sendMessage(
-            GROUP_A_ID,
-            buildLinkKarte(u.spitzname||u.name||name, u.role||'🆕 New', url, 0, u.xp||0, isAdmin) + (caption ? '\n💬 ' + caption : ''),
-            { reply_markup: buildLinkButtons(0, 0) }
-        );
-        console.log('[APP-LINK] Gesendet an Gruppe A, msgId:', botMsg.message_id);
-
-        // Button mit echter msgId updaten
-        const mapKey = 'A_' + botMsg.message_id;
-        await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
-            buildLinkButtons(botMsg.message_id, 0)
-        );
-
-        // Warnung als Reply auf Link senden - nur wenn nicht Admin
-        if (!istAdminId(uid)) {
-            try {
-                const warnMsg = await bot.telegram.sendMessage(GROUP_A_ID,
-                    '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
-                    { reply_to_message_id: botMsg.message_id }
-                );
-                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_A_ID, warnMsg.message_id); } catch(e) {} }, 10000);
-            } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
-        }
-
-        // Link speichern
+        // App-only Flow: kein Telegram-Group-Post, nur d.links + Confirmation-DM.
+        // Link erscheint im App-Feed und wird via 30-Min-Batch-DM angekündigt.
+        const linkId = generateSyntheticLinkId();
+        const mapKey = linkId;
         const linkData = {
             chat_id: GROUP_A_ID,
             user_id: Number(uid),
@@ -4282,14 +4258,24 @@ app.post('/post-link-from-app', async (req, res) => {
             caption: caption||'',
             likes: new Set(),
             likerNames: {},
-            counter_msg_id: botMsg.message_id,
+            counter_msg_id: linkId,
             timestamp: Date.now(),
             origin: 'app',
+            appOnly: true,
             likeSource: { app: 0, telegram: 0 }
         };
         d.links[mapKey] = linkData;
         tryFetchThumbnail(linkData, 'text');
-        console.log('[APP-LINK] Link gespeichert als:', mapKey);
+        console.log('[APP-LINK] Link gespeichert als:', mapKey, '(app-only)');
+
+        // Confirmation-DM an Poster mit Magic-Link in den App-Feed.
+        try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+            await bot.telegram.sendMessage(Number(uid),
+                '✅ *Dein Link ist im Feed!*\n\nDein Instagram-Link ist jetzt im App-Feed sichtbar. Andere User werden in der nächsten 30-Min-DM-Welle benachrichtigt.\n\n💡 *Vergiss nicht*: andere Links liken & mit 2 Wörtern kommentieren — Pflicht!',
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } }
+            );
+        } catch (e) { console.log('[APP-LINK] DM-Bestätigung Fehler:', e.message); }
 
         // Bonus-Link verbrauchen falls verwendet
         if (usedBonusLink && d.bonusLinks?.[uid] > 0) {

@@ -35,7 +35,7 @@ app.use((req, res, next) => {
         // /app-presence ist nur ein Marker für "User existiert in App" — soll NICHT
         // als echte Aktivität für Dashboard-Online-Status zählen, sonst zeigt
         // Dashboard nach App-Restart alle Sessions als "🟢 online".
-        if (req.path === '/app-presence') return next();
+        if (req.path === '/app-presence' || req.path === '/track-funnel') return next();
         const uid = String(req.query?.uid || req.body?.uid || req.body?.user_id || req.query?.user_id || '');
         if (!uid || !/^\d+$/.test(uid)) return next();
         if (!d.appActivity) d.appActivity = {};
@@ -5804,6 +5804,66 @@ app.post('/app-chat-react', (req, res) => {
     if (d.users[uid]) d.users[uid].appLastSeen = Date.now();
     speichernDebounced();
     res.json({ ok: true, reactions: m.reactions });
+});
+
+// ─── Funnel-Tracking (Landing → Login → Telegram → Email-Login) ─────────────
+// Speichert Events als rolling 60-Tage-Liste in d.funnel.events
+// + aggregierte Counter pro Tag in d.funnel.daily[YYYY-MM-DD]
+// Plus Email-Login-Audit-Log in d.emailLoginLog (welche Email wann eingeloggt)
+function ensureFunnelStore() {
+    if (!d.funnel) d.funnel = { events: [], daily: {} };
+    if (!d.emailLoginLog) d.emailLoginLog = [];
+}
+function trackFunnel(event, meta) {
+    ensureFunnelStore();
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    d.funnel.events.push({ event: String(event||'').slice(0,40), ts: now, meta: meta || {} });
+    // Rolling 60 Tage
+    const cutoff = now - 60 * 24 * 60 * 60 * 1000;
+    if (d.funnel.events.length > 5000 || d.funnel.events.length % 100 === 0) {
+        d.funnel.events = d.funnel.events.filter(e => (e.ts||0) >= cutoff);
+    }
+    if (!d.funnel.daily[day]) d.funnel.daily[day] = {};
+    d.funnel.daily[day][event] = (d.funnel.daily[day][event] || 0) + 1;
+    // Daily-Map auch nach 90 Tagen aufräumen
+    const keepDays = 90;
+    const keepCutoff = new Date(now - keepDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    for (const k of Object.keys(d.funnel.daily)) {
+        if (k < keepCutoff) delete d.funnel.daily[k];
+    }
+}
+app.post('/track-funnel', (req, res) => {
+    const event = String((req.body && req.body.event) || '').trim();
+    if (!event) return res.status(400).json({ ok: false });
+    const meta = (req.body && typeof req.body.meta === 'object') ? req.body.meta : {};
+    // Optional UID — wenn vorhanden + bekannt → mitspeichern (sonst anonym)
+    const uid = String((req.body && req.body.uid) || '');
+    if (uid && d.users[uid]) meta.uid = uid;
+    // Light Sanitization auf häufige Felder
+    if (meta.ua) meta.ua = String(meta.ua).slice(0, 200);
+    if (meta.ref) meta.ref = String(meta.ref).slice(0, 300);
+    if (meta.path) meta.path = String(meta.path).slice(0, 200);
+    trackFunnel(event, meta);
+    speichernDebounced();
+    res.json({ ok: true });
+});
+// Email-Login-Audit: wird vom App-Bridge auf Erfolg/Misserfolg aufgerufen
+app.post('/log-email-login', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    ensureFunnelStore();
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim().slice(0, 200);
+    const success = !!(req.body && req.body.success);
+    const method = String((req.body && req.body.method) || 'magic-link').slice(0, 30);
+    const uid = String((req.body && req.body.uid) || '');
+    const ip = String((req.body && req.body.ip) || '').slice(0, 64);
+    const ua = String((req.body && req.body.ua) || '').slice(0, 200);
+    if (!email) return res.status(400).json({ ok: false });
+    d.emailLoginLog.push({ email, success, method, uid, ip, ua, ts: Date.now() });
+    // Rolling 1000 Einträge
+    if (d.emailLoginLog.length > 1000) d.emailLoginLog = d.emailLoginLog.slice(-1000);
+    speichernDebounced();
+    res.json({ ok: true });
 });
 
 app.post('/track-login', (req, res) => {

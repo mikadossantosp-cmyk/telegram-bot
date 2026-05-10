@@ -5576,14 +5576,16 @@ app.post('/mark-read', (req, res) => {
 // Read-Tracking: d.appChatLastRead[uid] = ts.
 app.get('/app-chat', (req, res) => {
     const uid = String(req.query.uid || '');
+    const since = Number(req.query.since || 0);
     if (!d.appChat) d.appChat = [];
     if (!d.appChatLastRead) d.appChatLastRead = {};
     // User der den Chat aufruft ist garantiert in der App → als Member markieren
     if (uid && d.users[uid]) { d.users[uid].appLastSeen = Date.now(); speichernDebounced(); }
     const limit = Math.min(Number(req.query.limit) || 200, 500);
-    const msgs = d.appChat.slice(-limit);
+    // Lightweight Polling: bei since>0 nur neue Messages zurückgeben (Bandwidth/Speed)
+    let msgs = since > 0 ? d.appChat.filter(m => (m.ts||0) > since) : d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
-    const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
+    const unread = uid ? d.appChat.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
     // Member = User mit Evidenz, dass sie die App schon mal geöffnet haben.
     // appLastSeen ist neu (nach Presence-Heartbeat-Deploy), deshalb auch
     // historische Signale: dailyLogins>0 (irgendwann App-Login getrackt)

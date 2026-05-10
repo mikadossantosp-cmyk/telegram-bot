@@ -4603,7 +4603,7 @@ app.post('/auth-email-password', (req, res) => {
     const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
     if (!found) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
     const [uid, u] = found;
-    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'Für diesen Account ist noch kein Passwort gesetzt — bitte Magic-Link nutzen' });
+    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'noch kein Passwort gesetzt', noPassword: true });
     if (!verifyPasswordPBKDF2(password, u.password_hash)) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
     res.json({ ok: true, uid: String(uid), hasPassword: true });
 });

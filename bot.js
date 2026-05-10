@@ -32,6 +32,10 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use((req, res, next) => {
     try {
         if (req.path === '/data' || req.path.startsWith('/bild/')) return next();
+        // /app-presence ist nur ein Marker für "User existiert in App" — soll NICHT
+        // als echte Aktivität für Dashboard-Online-Status zählen, sonst zeigt
+        // Dashboard nach App-Restart alle Sessions als "🟢 online".
+        if (req.path === '/app-presence') return next();
         const uid = String(req.query?.uid || req.body?.uid || req.body?.user_id || req.query?.user_id || '');
         if (!uid || !/^\d+$/.test(uid)) return next();
         if (!d.appActivity) d.appActivity = {};
@@ -43,6 +47,8 @@ app.use((req, res, next) => {
         const ep = (req.path.replace(/^\/+/, '').split('/')[0] || 'root').slice(0,40);
         e.lastEndpoint = ep;
         e.endpoints[ep] = (e.endpoints[ep]||0) + 1;
+        // Permanent Flag: User war in App. Nie zurückgesetzt. Für Member-Eligibility.
+        if (d.users[uid]) d.users[uid].appUser = true;
     } catch(_) {}
     next();
 });
@@ -5586,17 +5592,16 @@ app.get('/app-chat', (req, res) => {
     let msgs = since > 0 ? d.appChat.filter(m => (m.ts||0) > since) : d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
     const unread = uid ? d.appChat.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
-    // Member = User mit Evidenz, dass sie die App schon mal geöffnet haben.
-    // appLastSeen ist neu (nach Presence-Heartbeat-Deploy), deshalb auch
-    // historische Signale: dailyLogins>0 (irgendwann App-Login getrackt)
-    // oder password_hash (Passwort-Setup ist App-only).
-    // Sub-Accounts werden nicht doppelt gezählt.
+    // Member = User mit u.appUser-Flag (permanent gesetzt sobald User irgendeinen
+    // App-Endpoint hittet). Sub-Accounts werden nicht doppelt gezählt.
+    // Fallback für alte Daten: appLastSeen / password_hash / d.appActivity-Eintrag.
     const memberCount = Object.entries(d.users || {}).filter(([uid, u]) => {
         if (!u) return false;
         if (u.parent_uid) return false;
+        if (u.appUser) return true;
         if (u.appLastSeen) return true;
         if (u.password_hash) return true;
-        if ((d.dailyLogins || {})[uid] > 0) return true;
+        if (d.appActivity && d.appActivity[uid]) return true;
         return false;
     }).length;
     res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
@@ -5928,6 +5933,18 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch().then(() => {
+    // One-time Backfill: u.appUser=true für alle User mit historischer App-Aktivität
+    try {
+        let backfilled = 0;
+        for (const [uid, e] of Object.entries(d.appActivity || {})) {
+            if (d.users[uid] && !d.users[uid].appUser) { d.users[uid].appUser = true; backfilled++; }
+        }
+        for (const [uid, u] of Object.entries(d.users || {})) {
+            if (!u || u.appUser) continue;
+            if (u.password_hash || u.appLastSeen) { u.appUser = true; backfilled++; }
+        }
+        if (backfilled > 0) { speichern(); console.log('📡 appUser-Flag Backfill: ' + backfilled + ' User markiert'); }
+    } catch(e) { console.log('appUser-Backfill Fehler:', e.message); }
     setTimeout(async () => {
         if (!GROUP_B_ID) { console.log('⚠️ GROUP_B_ID nicht gesetzt – Full Engagement Thread übersprungen'); return; }
         try {

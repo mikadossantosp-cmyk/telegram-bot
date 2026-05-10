@@ -3736,16 +3736,13 @@ async function zeitCheck() {
         if (h === 4  && m < 5)  taeglich('memberCheck', () => gruppenMitgliederPruefen());
         if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
             d.wochenMissionen = {};
-            // Fallback: falls /gewinnspiel-abschluss vom Announcer nicht durchlief, hier resetten
-            const lastReset = d.weeklyReset || 0;
-            const sechsTage = 6*24*3600*1000;
-            if (Date.now() - lastReset > sechsTage) {
-                if (archiveWeeklyXP('fallback-monday')) console.log('💾 weeklyXP archiviert (fallback)');
-                d.weeklyXP = {};
-                d.weeklyReset = Date.now();
-                console.log('✅ weeklyXP resettet (fallback)');
-            }
-            console.log('✅ Wochenmissionen resettet');
+            // Wochen-Reset findet IMMER Mo 00:05 statt. Die Woche läuft Mo 00:00 - So 23:59
+            // (Berlin TZ). Vorher wurde das fälschlicherweise Sonntag 20:00 via /gewinnspiel-abschluss
+            // gemacht — dadurch zeigte das Wochen-Ranking ab So 20:00 schon eine "neue Woche".
+            if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
+            d.weeklyXP = {};
+            d.weeklyReset = Date.now();
+            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05)');
             speichern();
         });
         if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
@@ -4054,8 +4051,8 @@ app.post('/gewinnspiel-abschluss', async (req, res) => {
             }
         }
     } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
-    archiveWeeklyXP('gewinnspiel');
-    d.weeklyXP = {}; d.weeklyReset = Date.now();
+    // weeklyXP wird hier NICHT resettet — Sonntag 20:00 ist zu früh, die Woche läuft bis So 23:59.
+    // Der echte Reset passiert Montag 00:05 (siehe wochenReset weiter unten).
     speichern();
     await weeklyRankingDM();
     res.json({ ok: true });

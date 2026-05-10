@@ -6081,6 +6081,26 @@ app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); 
 bot.launch().then(() => {
     // App-Chat Auto-Restore: zerstörte Messages aus letztem Backup wiederherstellen
     try { autoRestoreAppChatFromBackup(); } catch(e) {}
+    // One-time Cleanup: User die mehrere Reactions auf gleicher Message haben →
+    // nur die ERSTE behalten (Migration zur 1-Reaction-pro-User-Regel)
+    try {
+        let cleanedMsgs = 0, removed = 0;
+        for (const m of (d.appChat || [])) {
+            if (!m.reactions) continue;
+            const seen = new Set();
+            let touched = false;
+            for (const e of Object.keys(m.reactions)) {
+                m.reactions[e] = m.reactions[e].filter(uid => {
+                    if (seen.has(String(uid))) { removed++; touched = true; return false; }
+                    seen.add(String(uid));
+                    return true;
+                });
+                if (m.reactions[e].length === 0) { delete m.reactions[e]; touched = true; }
+            }
+            if (touched) cleanedMsgs++;
+        }
+        if (cleanedMsgs > 0) { speichern(); console.log('🧹 Reaction-Cleanup: ' + cleanedMsgs + ' Messages, ' + removed + ' Mehrfach-Reactions entfernt'); }
+    } catch(e) { console.log('Reaction-Cleanup Fehler:', e.message); }
     // One-time Backfill: u.appUser=true für alle User mit historischer App-Aktivität
     try {
         let backfilled = 0;

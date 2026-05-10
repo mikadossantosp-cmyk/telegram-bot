@@ -4023,39 +4023,67 @@ app.post('/xp-event-announced', (req, res) => {
     speichern(); res.json({ ok: true });
 });
 
-app.post('/gewinnspiel-abschluss', async (req, res) => {
+// Wochen-Gewinnspiel: Vollständige Auswertung in EINEM Endpoint.
+// Trigger: creatorboost-app cron (Sonntag 20:00 Berlin TZ) ruft das via fetch auf.
+// Vorher: Announcer-Bot pickte den Gewinner und rief /gewinnspiel-abschluss.
+// Der Announcer ist abgeschaltet — die Logik (inkl. Random-Winner-Wahl) lebt jetzt hier.
+app.post('/run-wochen-gewinnspiel-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { winnerId, winnerName } = req.body || {};
-    if (winnerId) {
-        const uid = String(winnerId);
-        if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
-        d.bonusLinks[uid] += 1;
-        d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid, datum: new Date().toLocaleDateString() });
-        d.wochenGewinnspiel.letzteAuslosung = Date.now();
-    }
-    // 💎 Wochen-Superlink-Engagement: wer ALLE Superlinks dieser Woche geliked hat → +1 Diamant.
-    // Auswertung am Wochenreset, weil dann der Zeitraum klar abgeschlossen ist.
     try {
-        const woche = Object.values(d.superlinks||{}).filter(sl => sl && sl.likes !== undefined);
-        if (woche.length >= 2) {
-            const slLikersPerSl = woche.map(sl => new Set((Array.isArray(sl.likes)?sl.likes:[]).map(String)));
-            const slPosters = new Set(woche.map(sl => String(sl.uid||sl.user_id||'')));
-            for (const [uid, u] of Object.entries(d.users||{})) {
-                if (!u || istAdminId(uid) || u.parent_uid || u.inGruppe===false || !u.started) continue;
-                if (slPosters.has(String(uid))) continue; // Eigene zählen nicht
-                const allEngaged = slLikersPerSl.every(set => set.has(String(uid)));
-                if (allEngaged) {
-                    addDiamond(uid, 1);
-                    dmUser(uid, '💎 *Wochenengagement-Bonus!*\n\nDu hast diese Woche ALLE Superlinks engagiert. +1 Diamant 🙏\nAktuell: ' + (d.users[uid].diamonds||0) + ' 💎', { parse_mode: 'Markdown' });
+        // 1) Random-Winner aus weeklyXP (gefiltert wie früher im Announcer)
+        const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+        const isBot = (u) => !!(u && (u.is_bot === true || (u.username && /bot$/i.test(u.username))));
+        const teilnehmer = Object.entries(d.weeklyXP || {})
+            .filter(([uid]) => {
+                const u = d.users[uid];
+                if (!u || !u.started || u.inGruppe === false) return false;
+                if (adminIds.includes(Number(uid)) || istAdminId(uid)) return false;
+                if (isBot(u)) return false;
+                return d.weeklyXP[uid] > 0;
+            })
+            .map(([uid]) => uid);
+        let winnerId = null, winnerName = null;
+        if (teilnehmer.length) {
+            winnerId = teilnehmer[Math.floor(Math.random() * teilnehmer.length)];
+            const winner = d.users[winnerId];
+            winnerName = winner ? winner.name : '?';
+            if (!d.bonusLinks[winnerId]) d.bonusLinks[winnerId] = 0;
+            d.bonusLinks[winnerId] += 1;
+            if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { gewinner: [] };
+            if (!Array.isArray(d.wochenGewinnspiel.gewinner)) d.wochenGewinnspiel.gewinner = [];
+            d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid: winnerId, datum: new Date().toLocaleDateString() });
+            d.wochenGewinnspiel.letzteAuslosung = Date.now();
+            try { await dmUser(winnerId, '🎉 *Du hast das Wochen-Gewinnspiel gewonnen!*\n\n🎁 1 Extra Link nächste Woche!', { parse_mode: 'Markdown' }); } catch (e) {}
+        } else {
+            console.log('❌ Wochen-Gewinnspiel: keine Teilnehmer');
+        }
+
+        // 2) Wochen-Superlink-Engagement-Diamanten (wer alle Superlinks der Woche engagiert hat → +1 💎)
+        try {
+            const woche = Object.values(d.superlinks||{}).filter(sl => sl && sl.likes !== undefined);
+            if (woche.length >= 2) {
+                const slLikersPerSl = woche.map(sl => new Set((Array.isArray(sl.likes)?sl.likes:[]).map(String)));
+                const slPosters = new Set(woche.map(sl => String(sl.uid||sl.user_id||'')));
+                for (const [uid, u] of Object.entries(d.users||{})) {
+                    if (!u || istAdminId(uid) || u.parent_uid || u.inGruppe===false || !u.started) continue;
+                    if (slPosters.has(String(uid))) continue;
+                    const allEngaged = slLikersPerSl.every(set => set.has(String(uid)));
+                    if (allEngaged) {
+                        addDiamond(uid, 1);
+                        dmUser(uid, '💎 *Wochenengagement-Bonus!*\n\nDu hast diese Woche ALLE Superlinks engagiert. +1 Diamant 🙏\nAktuell: ' + (d.users[uid].diamonds||0) + ' 💎', { parse_mode: 'Markdown' });
+                    }
                 }
             }
-        }
-    } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
-    // weeklyXP wird hier NICHT resettet — Sonntag 20:00 ist zu früh, die Woche läuft bis So 23:59.
-    // Der echte Reset passiert Montag 00:05 (siehe wochenReset weiter unten).
-    speichern();
-    await weeklyRankingDM();
-    res.json({ ok: true });
+        } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
+
+        // weeklyXP wird hier NICHT resettet — Reset läuft Montag 00:05 (wochenReset).
+        speichern();
+        await weeklyRankingDM();
+        res.json({ ok: true, winnerId, winnerName, teilnehmer: teilnehmer.length });
+    } catch (e) {
+        console.log('Wochen-Gewinnspiel Fehler:', e.message);
+        res.status(500).json({ ok: false, error: e.message });
+    }
 });
 
 function archiveWeeklyXP(reason='auto') {

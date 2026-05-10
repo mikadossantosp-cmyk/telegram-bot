@@ -4549,6 +4549,43 @@ app.post('/set-app-code-api', (req, res) => {
     res.json({ ok: true, code: raw });
 });
 
+// Email-Only Signup: erstellt einen neuen User-Account mit nur Email als Identifier.
+// Wird vom App-Magic-Link-Flow aufgerufen wenn Email noch nicht existiert.
+app.post('/create-email-user-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
+        return res.status(400).json({ ok: false, error: 'Ungültige Email' });
+    }
+    // Doppelte Email blockieren — auch in pendingEmail
+    const existing = Object.entries(d.users || {}).find(([, u]) =>
+        String(u.email || '').toLowerCase() === email ||
+        String(u.pendingEmail || '').toLowerCase() === email
+    );
+    if (existing) return res.json({ ok: true, uid: String(existing[0]), existed: true });
+    // Neue UID generieren — synthetisch (Date.now()), kollisionssicher
+    let uid = String(Date.now());
+    let attempts = 0;
+    while (d.users[uid] && attempts++ < 50) uid = String(Date.now()) + Math.floor(Math.random() * 1000);
+    if (d.users[uid]) return res.status(500).json({ ok: false, error: 'UID-Kollision' });
+    d.users[uid] = {
+        name: email.split('@')[0].slice(0, 30),
+        username: null, instagram: null, bio: null, nische: null, spitzname: null,
+        email: email,
+        emailConfirmedAt: Date.now(),
+        trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0,
+        role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(),
+        inGruppe: false, diamonds: 0, projects: [], profileCompletionRewarded: false,
+        inventory: [], activeRing: null, followers: [], following: [],
+        appUser: true,
+        appLastSeen: Date.now(),
+        signupSource: 'email'
+    };
+    speichern();
+    console.log('✅ Neuer Email-Only User erstellt:', email, '→ uid:', uid);
+    res.json({ ok: true, uid, existed: false });
+});
+
 // Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.
 app.post('/auth-email-password', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

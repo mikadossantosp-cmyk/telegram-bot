@@ -168,6 +168,26 @@ function speichernDebounced() {
 setInterval(speichern, 30000);
 laden();
 
+// ── MIGRATION: Email-User auf started:true + inGruppe:true backfillen ──
+// Vor diesem Fix wurden Email-User mit started:false + inGruppe:false angelegt,
+// dadurch wurden sie aus allen Ranking-/Mission-/Daily-Filtern rausgefiltert.
+(function backfillEmailUsers() {
+    let fixed = 0;
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || typeof u !== 'object') continue;
+        const isEmailUser = u.signupSource === 'email' || (u.email && u.appUser);
+        if (!isEmailUser) continue;
+        let changed = false;
+        if (u.started !== true) { u.started = true; changed = true; }
+        if (u.inGruppe === false) { u.inGruppe = true; changed = true; }
+        if (changed) fixed++;
+    }
+    if (fixed > 0) {
+        console.log(`✅ Email-User Backfill: ${fixed} User auf started:true + inGruppe:true gesetzt`);
+        speichern();
+    }
+})();
+
 // ── FULL ENGAGEMENT / SUPERLINK SYSTEM ──
 
 function getBerlinWeekKey() {
@@ -4578,9 +4598,9 @@ app.post('/create-email-user-api', (req, res) => {
         username: null, instagram: null, bio: null, nische: null, spitzname: null,
         email: email,
         emailConfirmedAt: Date.now(),
-        trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0,
+        trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,
         role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(),
-        inGruppe: false, diamonds: 0, projects: [], profileCompletionRewarded: false,
+        inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false,
         inventory: [], activeRing: null, followers: [], following: [],
         appUser: true,
         appLastSeen: Date.now(),

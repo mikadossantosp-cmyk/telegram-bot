@@ -11,7 +11,7 @@ if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
-const APP_URL        = process.env.APP_URL || 'https://site--creatorboost-app--899dydmn7d7v.code.run';
+const APP_URL        = process.env.APP_URL || 'https://web-production-7981d.up.railway.app';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
@@ -364,7 +364,7 @@ async function runEngagementCheck(isReminder = false) {
 }
 
 function buildAppReminderMessage(uid = null) {
-    const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/, '');
+    const appUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/, '');
     const apkUrl = appUrl + '/download-app';
     // Wenn uid bekannt → Magic-Link für 1-Klick-Login. Sonst nackter App-URL als Fallback.
     const openUrl = uid ? buildMagicLinkUrl(uid, '/feed') : appUrl;
@@ -509,7 +509,7 @@ async function superlinkDailyReminder() {
         // App-DM auch für Subs OK.
         try {
             const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-            const engageUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/feed?tab=engagement';
+            const engageUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/feed?tab=engagement';
             sendCreatorBoostDM(uid, inappText, { link: { url: engageUrl, label: '📲 Jetzt engagen' } });
         } catch(e) {}
     }
@@ -1856,7 +1856,7 @@ bot.command('mycode', async (ctx) => {
         speichern();
     }
 
-    const appLink = APP_URL || 'https://creatorx.app';
+    const appLink = APP_URL || 'https://web-production-7981d.up.railway.app';
     await ctx.reply(
         '🔐 *Dein CreatorX Login Code*\n\n' +
         '`' + u.appCode + '`\n\n' +
@@ -3035,7 +3035,7 @@ bot.command('dmappreminder', async (ctx) => {
 bot.command('dmpreview', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     const uid = String(ctx.from.id);
-    const appUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    const appUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
     const rulesUrl = appUrl + '/explore?tab=regeln#r-superlinks';
     const engageUrl = appUrl + '/feed?tab=engagement';
     const previews = [
@@ -3173,7 +3173,7 @@ bot.command('superlink', async (ctx) => {
     }
 
     const buttons = [];
-    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://creatorx.app' }]);
+    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://web-production-7981d.up.railway.app' }]);
 
     await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
 });
@@ -3636,9 +3636,9 @@ function ensureAppCode(uid, u) {
 // Baut Magic-Link URL: /auth/auto?code=X&redirect=Y → User klickt → instant Session.
 function buildMagicLinkUrl(uid, redirect = '/feed') {
     const u = d.users[String(uid)];
-    if (!u) return (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    if (!u) return (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
     const code = ensureAppCode(String(uid), u);
-    const baseUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'');
+    const baseUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
     return baseUrl + '/auth/auto?code=' + encodeURIComponent(code) + '&redirect=' + encodeURIComponent(redirect);
 }
 function ensureCreatorBoostUser() {
@@ -4903,7 +4903,7 @@ app.post('/post-link-from-app', async (req, res) => {
 
         // App-DM (CreatorBoost) mit Link-Regeln — User sieht das auch wenn er kein Telegram offen hat.
         try {
-            const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-links';
+            const rulesUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/explore?tab=regeln#r-links';
             const linkRules = '✅ Dein Link ist gepostet!\n\n' +
                 '📋 *Link-Regeln (kurz):*\n' +
                 '• 1 Link pro Tag (Bonus-Links optional)\n' +
@@ -6095,7 +6095,7 @@ app.post('/post-superlink-api', async (req, res) => {
         // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).
         // Telegram-DM bewusst weggelassen — Telegram-Bot deckt seinen Flow selbst ab.
         try {
-            const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
+            const rulesUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
             sendCreatorBoostDM(uid,
                 '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
                 { link: { url: rulesUrl, label: '📖 Superlink-Regeln' } });

@@ -5578,18 +5578,23 @@ app.get('/app-chat', (req, res) => {
     const uid = String(req.query.uid || '');
     if (!d.appChat) d.appChat = [];
     if (!d.appChatLastRead) d.appChatLastRead = {};
+    // User der den Chat aufruft ist garantiert in der App → als Member markieren
+    if (uid && d.users[uid]) { d.users[uid].appLastSeen = Date.now(); speichernDebounced(); }
     const limit = Math.min(Number(req.query.limit) || 200, 500);
     const msgs = d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
     const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
-    // Member = User die wirklich die App benutzen: hat appCode (Telegram-User die /mycode
-    // gemacht haben → in App eingeloggt) ODER hat appLastSeen (jeder Login pingt das).
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 Tage aktiv
-    const memberCount = Object.values(d.users || {}).filter(u => {
+    // Member = User mit Evidenz, dass sie die App schon mal geöffnet haben.
+    // appLastSeen ist neu (nach Presence-Heartbeat-Deploy), deshalb auch
+    // historische Signale: dailyLogins>0 (irgendwann App-Login getrackt)
+    // oder password_hash (Passwort-Setup ist App-only).
+    // Sub-Accounts werden nicht doppelt gezählt.
+    const memberCount = Object.entries(d.users || {}).filter(([uid, u]) => {
         if (!u) return false;
-        if (u.parent_uid) return false; // Sub-Accounts nicht doppelt zählen
-        if (u.appLastSeen && u.appLastSeen > cutoff) return true;
-        if (u.appCode && (u.dailyLogins || u.password_hash)) return true;
+        if (u.parent_uid) return false;
+        if (u.appLastSeen) return true;
+        if (u.password_hash) return true;
+        if ((d.dailyLogins || {})[uid] > 0) return true;
         return false;
     }).length;
     res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
@@ -5604,6 +5609,8 @@ app.post('/app-chat-send', (req, res) => {
     if (!text && !image) return res.status(400).json({ ok: false, error: 'Leer' });
     if (!d.appChat) d.appChat = [];
     const u = d.users[uid];
+    // Wer schreibt, ist garantiert ein aktiver App-User → markieren für Member-Count
+    u.appLastSeen = Date.now();
     const msg = {
         uid,
         name: u.spitzname || u.name || 'User',

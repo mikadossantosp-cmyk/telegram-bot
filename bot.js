@@ -4829,6 +4829,19 @@ app.post('/post-link-from-app', async (req, res) => {
             );
         } catch (e) { console.log('[APP-LINK] DM-Bestätigung Fehler:', e.message); }
 
+        // App-DM (CreatorBoost) mit Link-Regeln — User sieht das auch wenn er kein Telegram offen hat.
+        try {
+            const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-links';
+            const linkRules = '✅ Dein Link ist gepostet!\n\n' +
+                '📋 *Link-Regeln (kurz):*\n' +
+                '• 1 Link pro Tag (Bonus-Links optional)\n' +
+                '• Andere Links musst du liken (Mission M1: 5 Likes/Tag)\n' +
+                '• Erst Insta-Reel öffnen, dann liken (Visit-before-Like)\n' +
+                '• 2-Wort-Kommentar = Pflicht (M2/M3 Missionen)\n' +
+                '• Mission-Auswertung 12:00 — sonst Verwarnung';
+            sendCreatorBoostDM(uid, linkRules, { link: { url: rulesUrl, label: '📖 Alle Link-Regeln' } });
+        } catch(e) {}
+
         // Bonus-Link verbrauchen falls verwendet
         if (usedBonusLink && d.bonusLinks?.[uid] > 0) {
             d.bonusLinks[uid]--;

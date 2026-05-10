@@ -5660,6 +5660,31 @@ app.post('/app-chat-delete', (req, res) => {
     res.json({ ok: true });
 });
 
+// Reaction toggle: User klickt Emoji unter Message → add/remove
+app.post('/app-chat-react', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    const emoji = String((req.body && req.body.emoji) || '').slice(0, 8);
+    if (!uid || !ts || !emoji) return res.status(400).json({ ok: false });
+    if (!/[\p{Emoji}‍]+/u.test(emoji)) return res.status(400).json({ ok: false, error: 'Kein Emoji' });
+    if (!d.appChat) d.appChat = [];
+    const m = d.appChat.find(x => Number(x.ts) === ts);
+    if (!m) return res.status(404).json({ ok: false, error: 'Nicht gefunden' });
+    if (!m.reactions) m.reactions = {};
+    if (!m.reactions[emoji]) m.reactions[emoji] = [];
+    const idx = m.reactions[emoji].indexOf(uid);
+    if (idx >= 0) {
+        m.reactions[emoji].splice(idx, 1);
+        if (m.reactions[emoji].length === 0) delete m.reactions[emoji];
+    } else {
+        m.reactions[emoji].push(uid);
+    }
+    if (d.users[uid]) d.users[uid].appLastSeen = Date.now();
+    speichernDebounced();
+    res.json({ ok: true, reactions: m.reactions });
+});
+
 app.post('/track-login', (req, res) => {
     const { uid } = req.body || {};
     if (!uid || !d.users[String(uid)]) return res.json({ ok: false });

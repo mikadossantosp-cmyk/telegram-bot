@@ -1100,6 +1100,15 @@ bot.start(async (ctx) => {
         const payload = ctx.startPayload;
         if (payload === 'melden') return startMeldenFlow(ctx, uid);
         if (payload === 'shop') return sendShopNachricht(ctx, uid);
+        // Group-Link Payload: User klickt einen geteilten Link → bot sendet sofort
+        // Magic-Login-Button ohne Welcome-Briefing.
+        if (payload === 'app' || payload === 'login') {
+            const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
+            return ctx.reply('🚀 *Hi ' + (ctx.from.first_name || 'Creator') + '!*\n\nKlick den Button und du bist sofort in der CreatorX-App eingeloggt — kein Code-Tippen nötig.', {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: [[{ text: '📱 In die App einloggen', url: magicAppUrl }]] }
+            });
+        }
         await sendWelcomeBriefing(ctx, uid, { wasNew });
         if (!u.instagram) {
             d.instaWarte[uid] = true; speichern();
@@ -1109,6 +1118,21 @@ bot.start(async (ctx) => {
 });
 
 // /welcome — zum Re-Anzeigen des Welcome-Briefings (Test + jederzeit verfügbar).
+// /grouplink — generiert den shareable Link für die Telegram-Gruppe.
+// Jeder der drauf klickt bekommt im DM den 1-Klick-App-Login-Button.
+bot.command('grouplink', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const info = await ctx.telegram.getMe();
+    const link = 'https://t.me/' + info.username + '?start=app';
+    await ctx.reply(
+        '🚀 *Group-Login-Link*\n\n' +
+        'Teile diesen Link in der Gruppe — jeder der drauf klickt bekommt vom Bot einen 1-Klick-Login-Button:\n\n' +
+        '`' + link + '`\n\n' +
+        'Tippe auf den Link um ihn zu kopieren.',
+        { parse_mode: 'Markdown' }
+    );
+});
+
 bot.command('welcome', async (ctx) => {
     if (!istPrivat(ctx.chat.type)) {
         const info = await ctx.telegram.getMe();

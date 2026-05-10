@@ -5584,14 +5584,18 @@ app.get('/app-chat', (req, res) => {
     const msgs = d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
     const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
-    // STRIKT: Member = nur User die mindestens einmal wirklich die App geöffnet haben.
-    // appLastSeen wird auf jedem App-Request (Presence-Heartbeat) gesetzt.
-    // User die nur Telegram-Bot nutzen aber nie die App geöffnet haben → kein Member.
+    // Member = User mit Evidenz, dass sie die App schon mal geöffnet haben.
+    // appLastSeen ist neu (nach Presence-Heartbeat-Deploy), deshalb auch
+    // historische Signale: dailyLogins>0 (irgendwann App-Login getrackt)
+    // oder password_hash (Passwort-Setup ist App-only).
     // Sub-Accounts werden nicht doppelt gezählt.
-    const memberCount = Object.values(d.users || {}).filter(u => {
+    const memberCount = Object.entries(d.users || {}).filter(([uid, u]) => {
         if (!u) return false;
         if (u.parent_uid) return false;
-        return !!u.appLastSeen;
+        if (u.appLastSeen) return true;
+        if (u.password_hash) return true;
+        if ((d.dailyLogins || {})[uid] > 0) return true;
+        return false;
     }).length;
     res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
 });

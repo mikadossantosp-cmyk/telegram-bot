@@ -4403,11 +4403,29 @@ app.post('/update-profile-api', (req, res) => {
             const newEmail = String(req.body.email||'').toLowerCase().trim();
             if (newEmail === '') {
                 delete d.users[uid].email;
+                delete d.users[uid].pendingEmail;
             } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) && newEmail.length <= 200) {
-                // Eindeutigkeit prüfen — eine Email darf nur einem Account gehören.
-                const taken = Object.entries(d.users || {}).find(([oid, x]) => String(oid) !== String(uid) && String(x.email||'').toLowerCase() === newEmail);
-                if (!taken) d.users[uid].email = newEmail;
+                // Wenn unverändert → no-op
+                if (String(d.users[uid].email||'').toLowerCase() === newEmail) {
+                    delete d.users[uid].pendingEmail;
+                } else {
+                    // Eindeutigkeit prüfen — eine Email darf nur einem Account gehören.
+                    const taken = Object.entries(d.users || {}).find(([oid, x]) =>
+                        String(oid) !== String(uid) &&
+                        (String(x.email||'').toLowerCase() === newEmail || String(x.pendingEmail||'').toLowerCase() === newEmail));
+                    if (!taken) {
+                        // Speichern als PENDING — wird erst nach Confirm zur echten email
+                        d.users[uid].pendingEmail = newEmail;
+                    }
+                }
             }
+        }
+        // Direktes Setzen der bestätigten email (nach Confirm-Click — nur intern via Bridge)
+        if (req.body.confirmEmail !== undefined && req.body.confirmEmail) {
+            const conf = String(req.body.confirmEmail).toLowerCase().trim();
+            d.users[uid].email = conf;
+            d.users[uid].emailConfirmedAt = Date.now();
+            delete d.users[uid].pendingEmail;
         }
         // Welcome-Briefing dismiss-flag (App-Modal beim ersten Login).
         if (req.body.appBriefingSeenV2 !== undefined) {

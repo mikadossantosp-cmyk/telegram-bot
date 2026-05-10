@@ -4554,6 +4554,7 @@ app.post('/set-app-code-api', (req, res) => {
 app.post('/create-email-user-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    const password = String((req.body && req.body.password) || '');
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
         return res.status(400).json({ ok: false, error: 'Ungültige Email' });
     }
@@ -4563,6 +4564,10 @@ app.post('/create-email-user-api', (req, res) => {
         String(u.pendingEmail || '').toLowerCase() === email
     );
     if (existing) return res.json({ ok: true, uid: String(existing[0]), existed: true });
+    // Passwort-Validierung wenn übergeben
+    if (password && (password.length < 6 || password.length > 200)) {
+        return res.status(400).json({ ok: false, error: 'Passwort muss 6–200 Zeichen lang sein' });
+    }
     // Neue UID generieren — synthetisch (Date.now()), kollisionssicher
     let uid = String(Date.now());
     let attempts = 0;
@@ -4581,8 +4586,11 @@ app.post('/create-email-user-api', (req, res) => {
         appLastSeen: Date.now(),
         signupSource: 'email'
     };
+    if (password) {
+        d.users[uid].password_hash = hashPasswordPBKDF2(password);
+    }
     speichern();
-    console.log('✅ Neuer Email-Only User erstellt:', email, '→ uid:', uid);
+    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)');
     res.json({ ok: true, uid, existed: false });
 });
 

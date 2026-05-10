@@ -110,6 +110,7 @@ function laden() {
             gesternDailyXP: {}, badgeTracker: {}, m1Streak: {}, missionAuswertungErledigt: {},
             _lastEvents: {},
             threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {}, superlinks: {}, fullEngagementThreadId: null,
+            appChat: [], appChatLastRead: {},
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
             newsletter: [], pinnedEngages: {},
@@ -5567,6 +5568,72 @@ app.post('/mark-read', (req, res) => {
     if (!d.threadLastRead[uid]) d.threadLastRead[uid] = {};
     d.threadLastRead[uid][thread_id] = Date.now();
     speichern();
+    res.json({ ok: true });
+});
+
+// ─── App-Community-Chat: globale Chat-Gruppe für alle App-User ────────────
+// Storage: d.appChat = [{uid, name, text, image?, ts, deleted?}], FIFO max 1000.
+// Read-Tracking: d.appChatLastRead[uid] = ts.
+app.get('/app-chat', (req, res) => {
+    const uid = String(req.query.uid || '');
+    if (!d.appChat) d.appChat = [];
+    if (!d.appChatLastRead) d.appChatLastRead = {};
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    const msgs = d.appChat.slice(-limit);
+    const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
+    const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
+    const memberCount = Object.values(d.users || {}).filter(u => u.started || u.email).length;
+    res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
+});
+
+app.post('/app-chat-send', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const text = String((req.body && req.body.text) || '').trim().slice(0, 2000);
+    const image = (req.body && req.body.image) ? String(req.body.image).slice(0, 500000) : null;
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!text && !image) return res.status(400).json({ ok: false, error: 'Leer' });
+    if (!d.appChat) d.appChat = [];
+    const u = d.users[uid];
+    const msg = {
+        uid,
+        name: u.spitzname || u.name || 'User',
+        text,
+        image: image || null,
+        ts: Date.now()
+    };
+    d.appChat.push(msg);
+    if (d.appChat.length > 1000) d.appChat = d.appChat.slice(-1000);
+    speichernDebounced();
+    res.json({ ok: true, message: msg });
+});
+
+app.post('/app-chat-mark-read', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid) return res.status(400).json({ ok: false });
+    if (!d.appChatLastRead) d.appChatLastRead = {};
+    d.appChatLastRead[uid] = Date.now();
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
+app.post('/app-chat-delete', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    if (!uid || !ts) return res.status(400).json({ ok: false });
+    if (!d.appChat) d.appChat = [];
+    const idx = d.appChat.findIndex(m => Number(m.ts) === ts);
+    if (idx < 0) return res.status(404).json({ ok: false, error: 'Nicht gefunden' });
+    const m = d.appChat[idx];
+    const isOwner = String(m.uid) === uid;
+    const isAdmin = istAdminId(Number(uid));
+    if (!isOwner && !isAdmin) return res.status(403).json({ ok: false, error: 'Kein Zugriff' });
+    m.deleted = true;
+    m.text = '';
+    m.image = null;
+    speichernDebounced();
     res.json({ ok: true });
 });
 

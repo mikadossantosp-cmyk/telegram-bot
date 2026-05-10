@@ -4413,6 +4413,11 @@ app.post('/update-profile-api', (req, res) => {
         if (req.body.appBriefingSeenV2 !== undefined) {
             d.users[uid].appBriefingSeenV2 = !!req.body.appBriefingSeenV2;
         }
+        // Regeln-Akzeptanz-Timestamp (von Tour-Ende → Pflicht-Bestätigung)
+        if (req.body.rulesAcceptedAt !== undefined) {
+            const ts = Number(req.body.rulesAcceptedAt) || 0;
+            if (ts > 0) d.users[uid].rulesAcceptedAt = ts;
+        }
         // Bilder separat speichern
         if (banner !== undefined) {
             if (banner.startsWith('data:image')) {

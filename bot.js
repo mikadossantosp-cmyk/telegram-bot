@@ -1127,6 +1127,35 @@ bot.start(async (ctx) => {
 // /welcome — zum Re-Anzeigen des Welcome-Briefings (Test + jederzeit verfügbar).
 // /grouplink — generiert den shareable Link für die Telegram-Gruppe.
 // Jeder der drauf klickt bekommt im DM den 1-Klick-App-Login-Button.
+// Admin-Command: stellt soft-deleted App-Chat-Messages wieder her.
+// /restoremsg              → alle löschbaren wiederherstellen
+// /restoremsg minutes 30   → alle deleted in den letzten 30 Min
+bot.command('restoremsg', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    if (!d.appChat) d.appChat = [];
+    const args = (ctx.message.text||'').split(/\s+/).slice(1);
+    let sinceTs = 0;
+    if (args[0] === 'minutes' && Number(args[1]) > 0) sinceTs = Date.now() - Number(args[1]) * 60 * 1000;
+    let restored = 0;
+    for (const m of d.appChat) {
+        if (!m.deleted) continue;
+        if (sinceTs && (m.deletedAt || 0) < sinceTs) continue;
+        if (!m.text && !m.image) continue;
+        delete m.deleted;
+        delete m.deletedAt;
+        delete m.deletedBy;
+        restored++;
+    }
+    if (restored > 0) speichern();
+    const recoverable = d.appChat.filter(m => m.deleted && (m.text || m.image)).length;
+    const lost = d.appChat.filter(m => m.deleted && !m.text && !m.image).length;
+    let msg = '🔄 *App-Chat Restore*\n\n';
+    msg += '✅ Wiederhergestellt: *' + restored + '*\n';
+    if (recoverable > 0) msg += '⏳ Noch wiederherstellbar (soft-deleted): ' + recoverable + '\n';
+    if (lost > 0) msg += '❌ Hart-zerstört (vor Soft-Delete-Fix): ' + lost + ' — nur Backup-Restore möglich (passiert beim Bot-Restart).';
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
 bot.command('grouplink', async (ctx) => {
     if (!istAdminId(ctx.from.id)) return;
     const info = await ctx.telegram.getMe();
@@ -5653,12 +5682,83 @@ app.post('/app-chat-delete', (req, res) => {
     const isOwner = String(m.uid) === uid;
     const isAdmin = istAdminId(Number(uid));
     if (!isOwner && !isAdmin) return res.status(403).json({ ok: false, error: 'Kein Zugriff' });
+    // Soft-Delete: NUR Flag setzen, Text + Image bleiben erhalten (Recovery möglich).
     m.deleted = true;
-    m.text = '';
-    m.image = null;
+    m.deletedAt = Date.now();
+    m.deletedBy = uid;
     speichernDebounced();
     res.json({ ok: true });
 });
+
+// Admin-Endpoint: Soft-deleted Messages wiederherstellen.
+// body: { uid, ts? (einzelne), all? (alle deleted), sinceTs? (alle deleted seit) }
+app.post('/app-chat-restore', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    const sinceTs = Number((req.body && req.body.sinceTs) || 0);
+    if (!uid || !istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Nur Admin' });
+    if (!d.appChat) d.appChat = [];
+    let restored = 0;
+    for (const m of d.appChat) {
+        if (!m.deleted) continue;
+        if (ts && Number(m.ts) !== ts) continue;
+        if (sinceTs && (m.deletedAt || 0) < sinceTs) continue;
+        if (!m.text && !m.image) continue; // Hart-zerstörte können nicht über diesen Pfad
+        delete m.deleted;
+        delete m.deletedAt;
+        delete m.deletedBy;
+        restored++;
+    }
+    if (restored > 0) speichernDebounced();
+    const recoverable = d.appChat.filter(m => m.deleted && (m.text || m.image)).length;
+    const lost = d.appChat.filter(m => m.deleted && !m.text && !m.image).length;
+    res.json({ ok: true, restored, recoverable, lost });
+});
+
+// Auto-Restore beim Bot-Start: stellt Messages wieder her die durch das alte
+// destruktive Delete (text='', image=null) zerstört wurden — sucht im letzten
+// Backup nach den Originalen.
+function autoRestoreAppChatFromBackup() {
+    try {
+        if (!d.appChat || !d.appChat.length) return;
+        const lostMsgs = d.appChat.filter(m => m.deleted && !m.text && !m.image);
+        if (!lostMsgs.length) { console.log('🔄 App-Chat Auto-Restore: keine zerstörten Messages'); return; }
+        console.log('🔄 App-Chat Auto-Restore: ' + lostMsgs.length + ' zerstörte Messages — suche Backup…');
+        const path = require('path');
+        const dataDir = path.dirname(DATA_FILE);
+        const baseName = path.basename(DATA_FILE, '.json');
+        let files = [];
+        try { files = fs.readdirSync(dataDir).filter(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json')).sort().reverse(); } catch(e) {}
+        if (!files.length) { console.log('  → kein Backup gefunden'); return; }
+        let totalRestored = 0;
+        for (const f of files) {
+            try {
+                const bk = JSON.parse(fs.readFileSync(path.join(dataDir, f), 'utf8'));
+                const bkChat = bk.appChat || [];
+                const bkMap = new Map(bkChat.map(m => [Number(m.ts), m]));
+                let restoredFromThis = 0;
+                for (const m of d.appChat) {
+                    if (!m.deleted || m.text || m.image) continue;
+                    const orig = bkMap.get(Number(m.ts));
+                    if (orig && (orig.text || orig.image) && !orig.deleted) {
+                        m.text = orig.text || '';
+                        m.image = orig.image || null;
+                        delete m.deleted;
+                        delete m.deletedAt;
+                        delete m.deletedBy;
+                        restoredFromThis++;
+                        totalRestored++;
+                    }
+                }
+                if (restoredFromThis > 0) console.log('  ✅ ' + restoredFromThis + ' aus ' + f);
+                if (!d.appChat.find(m => m.deleted && !m.text && !m.image)) break;
+            } catch (e) { console.log('  Backup-Parse-Fehler ' + f + ':', e.message); }
+        }
+        if (totalRestored > 0) { speichern(); console.log('🎉 Total: ' + totalRestored + ' App-Chat-Messages wiederhergestellt'); }
+        else console.log('  → kein passender Eintrag im Backup (Backup älter als Messages)');
+    } catch(e) { console.log('Auto-Restore Fehler:', e.message); }
+}
 
 // Reaction toggle: User klickt Emoji unter Message → add/remove
 app.post('/app-chat-react', (req, res) => {
@@ -5958,6 +6058,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch().then(() => {
+    // App-Chat Auto-Restore: zerstörte Messages aus letztem Backup wiederherstellen
+    try { autoRestoreAppChatFromBackup(); } catch(e) {}
     // One-time Backfill: u.appUser=true für alle User mit historischer App-Aktivität
     try {
         let backfilled = 0;

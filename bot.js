@@ -1842,6 +1842,14 @@ bot.on('left_chat_member', async (ctx) => {
         if (!m || m.is_bot) return;
         const uid = String(m.id);
         if (d.users[uid] && !istAdminId(Number(uid))) {
+            // Email-User: NICHT löschen — App-Zugang bleibt erhalten, nur als 'nicht in Gruppe' markieren.
+            if (d.users[uid].email) {
+                d.users[uid].inGruppe = false;
+                d.users[uid].leftGroupAt = Date.now();
+                speichern();
+                console.log('Email-User behalten (left group):', m.first_name, uid);
+                return;
+            }
             delete d.users[uid];
             delete d.dailyXP[uid];
             delete d.weeklyXP[uid];
@@ -3423,6 +3431,12 @@ async function gruppenMitgliederPruefen() {
         try {
             const member = await bot.telegram.getChatMember(GROUP_A_ID, Number(uid));
             if (['left', 'kicked', 'banned'].includes(member.status)) {
+                // Email-User: NICHT löschen — App-Zugang bleibt erhalten.
+                if (u.email) {
+                    u.inGruppe = false;
+                    if (!u.leftGroupAt) u.leftGroupAt = Date.now();
+                    continue;
+                }
                 delete d.users[uid];
                 // Auch aus dailyXP, weeklyXP etc. entfernen
                 delete d.dailyXP[uid];
@@ -4452,6 +4466,28 @@ app.post('/set-user-password', (req, res) => {
     d.users[uid].password_hash = hashPasswordPBKDF2(pw);
     speichern();
     res.json({ ok: true });
+});
+
+// Setzt einen vom User selbst gewählten appCode. Bridge-Secret-geschützt.
+// Validiert: lowercase a-z 0-9 _ -, 4–30 chars, eindeutig.
+app.post('/set-app-code-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '').trim();
+    const raw = String((req.body && req.body.code) || '').toLowerCase().trim();
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!/^[a-z0-9_-]{4,30}$/.test(raw)) {
+        return res.status(400).json({ ok: false, error: 'Code: 4–30 Zeichen, nur a–z, 0–9, _ oder -' });
+    }
+    // Reservierte Wörter blockieren (typische Routen / Verwechslungsgefahr).
+    const reserved = new Set(['admin','root','system','api','login','logout','feed','auth','signup','register','help','test']);
+    if (reserved.has(raw)) return res.status(400).json({ ok: false, error: 'Code reserviert — bitte anderen wählen' });
+    // Eindeutigkeit
+    const taken = Object.entries(d.users || {}).find(([oid, x]) => String(oid) !== uid && String(x.appCode||'').toLowerCase() === raw);
+    if (taken) return res.status(409).json({ ok: false, error: 'Code schon vergeben — bitte anderen wählen' });
+    d.users[uid].appCode = raw;
+    d.users[uid].appCodeChosenAt = Date.now();
+    speichern();
+    res.json({ ok: true, code: raw });
 });
 
 // Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.

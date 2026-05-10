@@ -5641,11 +5641,11 @@ app.post('/app-chat-send', (req, res) => {
     const uid = String((req.body && req.body.uid) || '');
     const text = String((req.body && req.body.text) || '').trim().slice(0, 2000);
     const image = (req.body && req.body.image) ? String(req.body.image).slice(0, 500000) : null;
+    const replyToTs = Number((req.body && req.body.replyToTs) || 0);
     if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
     if (!text && !image) return res.status(400).json({ ok: false, error: 'Leer' });
     if (!d.appChat) d.appChat = [];
     const u = d.users[uid];
-    // Wer schreibt, ist garantiert ein aktiver App-User → markieren für Member-Count
     u.appLastSeen = Date.now();
     const msg = {
         uid,
@@ -5654,6 +5654,20 @@ app.post('/app-chat-send', (req, res) => {
         image: image || null,
         ts: Date.now()
     };
+    // Reply-Snapshot: wir speichern die Original-Werte direkt mit, damit ein
+    // späteres Delete des Parents den Quote nicht zerstört.
+    if (replyToTs) {
+        const parent = d.appChat.find(x => Number(x.ts) === replyToTs);
+        if (parent) {
+            msg.replyTo = {
+                ts: Number(parent.ts),
+                uid: String(parent.uid),
+                name: parent.name || 'User',
+                text: (parent.text || '').slice(0, 200),
+                hasImage: !!parent.image
+            };
+        }
+    }
     d.appChat.push(msg);
     if (d.appChat.length > 1000) d.appChat = d.appChat.slice(-1000);
     speichernDebounced();
@@ -5772,12 +5786,19 @@ app.post('/app-chat-react', (req, res) => {
     const m = d.appChat.find(x => Number(x.ts) === ts);
     if (!m) return res.status(404).json({ ok: false, error: 'Nicht gefunden' });
     if (!m.reactions) m.reactions = {};
-    if (!m.reactions[emoji]) m.reactions[emoji] = [];
-    const idx = m.reactions[emoji].indexOf(uid);
-    if (idx >= 0) {
-        m.reactions[emoji].splice(idx, 1);
-        if (m.reactions[emoji].length === 0) delete m.reactions[emoji];
-    } else {
+    // 1 User = 1 Reaction pro Message: User aus ALLEN anderen Emojis entfernen.
+    let hadSameEmoji = false;
+    for (const e of Object.keys(m.reactions)) {
+        const i = m.reactions[e].indexOf(uid);
+        if (i >= 0) {
+            m.reactions[e].splice(i, 1);
+            if (e === emoji) hadSameEmoji = true;
+            if (m.reactions[e].length === 0) delete m.reactions[e];
+        }
+    }
+    // Wenn User dasselbe Emoji nochmal antippt → Toggle (entfernt). Sonst → neues setzen.
+    if (!hadSameEmoji) {
+        if (!m.reactions[emoji]) m.reactions[emoji] = [];
         m.reactions[emoji].push(uid);
     }
     if (d.users[uid]) d.users[uid].appLastSeen = Date.now();

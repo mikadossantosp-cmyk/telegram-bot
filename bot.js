@@ -4336,8 +4336,8 @@ app.post('/update-profile-api', (req, res) => {
             }
         }
         // Welcome-Briefing dismiss-flag (App-Modal beim ersten Login).
-        if (req.body.appBriefingSeen !== undefined) {
-            d.users[uid].appBriefingSeen = !!req.body.appBriefingSeen;
+        if (req.body.appBriefingSeenV2 !== undefined) {
+            d.users[uid].appBriefingSeenV2 = !!req.body.appBriefingSeenV2;
         }
         // Bilder separat speichern
         if (banner !== undefined) {

@@ -5582,7 +5582,16 @@ app.get('/app-chat', (req, res) => {
     const msgs = d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
     const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
-    const memberCount = Object.values(d.users || {}).filter(u => u.started || u.email).length;
+    // Member = User die wirklich die App benutzen: hat appCode (Telegram-User die /mycode
+    // gemacht haben → in App eingeloggt) ODER hat appLastSeen (jeder Login pingt das).
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 Tage aktiv
+    const memberCount = Object.values(d.users || {}).filter(u => {
+        if (!u) return false;
+        if (u.parent_uid) return false; // Sub-Accounts nicht doppelt zählen
+        if (u.appLastSeen && u.appLastSeen > cutoff) return true;
+        if (u.appCode && (u.dailyLogins || u.password_hash)) return true;
+        return false;
+    }).length;
     res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
 });
 
@@ -5642,6 +5651,17 @@ app.post('/track-login', (req, res) => {
     if (!uid || !d.users[String(uid)]) return res.json({ ok: false });
     if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
     d.dailyLogins[uid]++;
+    d.users[String(uid)].appLastSeen = Date.now();
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
+// Leichtgewichtiges Heartbeat: App pingt das alle paar Minuten — markiert User als aktiv.
+app.post('/app-presence', (req, res) => {
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid || !d.users[uid]) return res.json({ ok: false });
+    d.users[uid].appLastSeen = Date.now();
+    speichernDebounced();
     res.json({ ok: true });
 });
 

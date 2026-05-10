@@ -5578,19 +5578,20 @@ app.get('/app-chat', (req, res) => {
     const uid = String(req.query.uid || '');
     if (!d.appChat) d.appChat = [];
     if (!d.appChatLastRead) d.appChatLastRead = {};
+    // User der den Chat aufruft ist garantiert in der App → als Member markieren
+    if (uid && d.users[uid]) { d.users[uid].appLastSeen = Date.now(); speichernDebounced(); }
     const limit = Math.min(Number(req.query.limit) || 200, 500);
     const msgs = d.appChat.slice(-limit);
     const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
     const unread = uid ? msgs.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
-    // Member = User die wirklich die App benutzen: hat appCode (Telegram-User die /mycode
-    // gemacht haben → in App eingeloggt) ODER hat appLastSeen (jeder Login pingt das).
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 Tage aktiv
+    // STRIKT: Member = nur User die mindestens einmal wirklich die App geöffnet haben.
+    // appLastSeen wird auf jedem App-Request (Presence-Heartbeat) gesetzt.
+    // User die nur Telegram-Bot nutzen aber nie die App geöffnet haben → kein Member.
+    // Sub-Accounts werden nicht doppelt gezählt.
     const memberCount = Object.values(d.users || {}).filter(u => {
         if (!u) return false;
-        if (u.parent_uid) return false; // Sub-Accounts nicht doppelt zählen
-        if (u.appLastSeen && u.appLastSeen > cutoff) return true;
-        if (u.appCode && (u.dailyLogins || u.password_hash)) return true;
-        return false;
+        if (u.parent_uid) return false;
+        return !!u.appLastSeen;
     }).length;
     res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
 });
@@ -5604,6 +5605,8 @@ app.post('/app-chat-send', (req, res) => {
     if (!text && !image) return res.status(400).json({ ok: false, error: 'Leer' });
     if (!d.appChat) d.appChat = [];
     const u = d.users[uid];
+    // Wer schreibt, ist garantiert ein aktiver App-User → markieren für Member-Count
+    u.appLastSeen = Date.now();
     const msg = {
         uid,
         name: u.spitzname || u.name || 'User',

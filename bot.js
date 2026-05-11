@@ -4160,6 +4160,12 @@ app.post('/mindset-admin-restore-api', (req, res) => {
     if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
     const targetUid = String(req.body.targetUid || '');
     if (!d.mindsetStories.done[targetUid]) return res.json({ ok:false, error:'User nicht in Erledigt-Liste' });
+    // Falls Restore-Target diese Woche der Pick ist: auch weeklyState zurücksetzen, sonst
+    // bleibt das pickedUid stale und UI zeigt "DIESE WOCHE" auf einen User der jetzt
+    // wieder auf der Warteliste steht.
+    if (d.mindsetStories.weeklyState?.pickedUid === targetUid) {
+        d.mindsetStories.weeklyState = { week: d.mindsetStories.weeklyState.week, pickedUid: null, pickedAt: null, locked: false };
+    }
     delete d.mindsetStories.done[targetUid];
     d.mindsetStories.waitlist[targetUid] = { joinedAt: Date.now(), lastChangedAt: Date.now() };
     speichern();

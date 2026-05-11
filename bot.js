@@ -1437,8 +1437,7 @@ async function _adminAddXp(ctx) {
     u.xp = Math.max(0, (u.xp || 0) + finalXP);
     u.level = level(u.xp);
     u.role = badge(u.xp);
-    if (!d.weeklyXP[targetId]) d.weeklyXP[targetId] = 0;
-    d.weeklyXP[targetId] += finalXP;
+    // Admin-XP deliberately excluded from weekly/daily rankings
     speichern();
     const sign = finalXP >= 0 ? '+' : '';
     await ctx.reply('✅ ' + sign + finalXP + ' XP an *' + u.name + '*\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role + (alteBadge !== u.role ? '\n🎉 Badge: ' + alteBadge + ' → ' + u.role : ''), { parse_mode: 'Markdown' });
@@ -5067,10 +5066,15 @@ app.get('/add-xp', async (req, res) => {
     const uid = req.query.id;
     const amount = parseInt(req.query.amount)||0;
     if (d.users[uid] && amount > 0) {
-        xpAddMitDaily(uid, amount, d.users[uid].name);
+        // Admin-XP: add to total only, not to daily/weekly rankings
+        const u = d.users[uid];
+        let finalAmount = amount;
+        if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalAmount = Math.round(amount * d.xpEvent.multiplier);
+        u.xp = (u.xp || 0) + finalAmount;
+        u.level = level(u.xp);
+        u.role = badge(u.xp);
         speichern();
-        // xpAddMitDaily sendet schon Badge-Aufstieg-DM bei Level-Up; zusätzlich kurz quittieren.
-        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' });
+        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${finalAmount} XP gutgeschrieben.\n⭐ Aktuell: ${u.xp} XP`, { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });
@@ -5080,6 +5084,23 @@ app.get('/reset-daily-api', (req, res) => {
     d.dailyXP={}; d.tracker={}; d.counter={}; d.badgeTracker={};
     speichern();
     res.json({ ok: true });
+});
+
+app.post('/admin/fix-weekly-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = req.body && req.body.uid ? String(req.body.uid) : '';
+    const value = req.body && req.body.value !== undefined ? Number(req.body.value) : null;
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    if (value === null || isNaN(value)) return res.status(400).json({ ok: false, error: 'value erforderlich (Zahl)' });
+    const oldVal = (d.weeklyXP && d.weeklyXP[uid]) || 0;
+    if (!d.weeklyXP) d.weeklyXP = {};
+    d.weeklyXP[uid] = Math.max(0, value);
+    speichern();
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || uid;
+    console.log('[FIX-WEEKLY-XP] ' + name + ' (' + uid + '): ' + oldVal + ' → ' + d.weeklyXP[uid]);
+    res.json({ ok: true, uid, name, oldWeeklyXP: oldVal, newWeeklyXP: d.weeklyXP[uid], totalXP: d.users[uid]?.xp });
 });
 
 

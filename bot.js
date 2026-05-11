@@ -1988,43 +1988,53 @@ function _findUser(query) {
 }
 
 bot.command('mergeuser', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
-    const args = (ctx.message.text || '').split(/\s+/).slice(1);
-    if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell> <ziel>\n\nDu kannst UID, Username, Instagram oder Name verwenden.\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell> <ziel>\n\nDu kannst UID, Username, Instagram oder Name verwenden.\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
 
-    const sourceUid = _findUser(args[0]);
-    const targetUid = _findUser(args[1]);
+        const sourceUid = _findUser(args[0]);
+        const targetUid = _findUser(args[1]);
 
-    if (!sourceUid) return ctx.reply('❌ Quell-User nicht gefunden: ' + args[0]);
-    if (!targetUid) return ctx.reply('❌ Ziel-User nicht gefunden: ' + args[1]);
-    if (sourceUid === targetUid) return ctx.reply('❌ Quell und Ziel sind der gleiche User (' + sourceUid + ').');
+        if (!sourceUid) return ctx.reply('❌ Quell-User nicht gefunden: ' + args[0]);
+        if (!targetUid) return ctx.reply('❌ Ziel-User nicht gefunden: ' + args[1]);
+        if (sourceUid === targetUid) return ctx.reply('❌ Quell und Ziel sind der gleiche User (' + sourceUid + ').');
 
-    const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
-    const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+        const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
+        const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
 
-    const result = _mergeUserData(sourceUid, targetUid);
-    if (!result.ok) return ctx.reply('❌ Merge fehlgeschlagen: ' + result.error);
+        const result = _mergeUserData(sourceUid, targetUid);
+        if (!result.ok) return ctx.reply('❌ Merge fehlgeschlagen: ' + result.error);
 
-    const logText = result.log.length > 0 ? '\n\n📋 Details:\n' + result.log.map(l => '• ' + l).join('\n') : '';
-    await ctx.reply('✅ *Merge abgeschlossen!*\n\n👤 ' + srcName + ' (' + sourceUid + ') → ' + tgtName + ' (' + targetUid + ')\n🗑 Quell-User gelöscht.' + logText, { parse_mode: 'Markdown' });
-    console.log('[MERGE] ' + sourceUid + ' → ' + targetUid + ' von Admin ' + ctx.from.id + ': ' + result.log.join(', '));
+        const logText = result.log.length > 0 ? '\n\n📋 Details:\n' + result.log.map(l => '• ' + l).join('\n') : '';
+        await ctx.reply('✅ Merge abgeschlossen!\n\n👤 ' + srcName + ' (' + sourceUid + ') → ' + tgtName + ' (' + targetUid + ')\n🗑 Quell-User gelöscht.' + logText);
+        console.log('[MERGE] ' + sourceUid + ' → ' + targetUid + ' von Admin ' + ctx.from.id + ': ' + result.log.join(', '));
+    } catch (e) {
+        console.log('[MERGE] Fehler:', e.message, e.stack);
+        try { await ctx.reply('❌ Fehler beim Merge: ' + e.message); } catch(_) {}
+    }
 });
 
 bot.command('deleteuser', async (ctx) => {
-    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
-    const args = (ctx.message.text || '').split(/\s+/).slice(1);
-    if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid oder name>\n\nDu kannst UID, Username, Instagram oder Name verwenden.');
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid oder name>\n\nDu kannst UID, Username, Instagram oder Name verwenden.');
 
-    const uid = _findUser(args[0]);
-    if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
-    if (istAdminId(Number(uid))) return ctx.reply('❌ Admin-Accounts können nicht gelöscht werden.');
+        const uid = _findUser(args[0]);
+        if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
+        if (istAdminId(Number(uid))) return ctx.reply('❌ Admin-Accounts können nicht gelöscht werden.');
 
-    const userName = d.users[uid].spitzname || d.users[uid].name || uid;
-    const result = _deleteUser(uid);
-    if (!result.ok) return ctx.reply('❌ Fehler: ' + result.error);
+        const userName = d.users[uid].spitzname || d.users[uid].name || uid;
+        const result = _deleteUser(uid);
+        if (!result.ok) return ctx.reply('❌ Fehler: ' + result.error);
 
-    await ctx.reply('✅ *User gelöscht!*\n\n👤 ' + userName + ' (' + uid + ')\n📋 Backup im _deleteLog gespeichert.', { parse_mode: 'Markdown' });
-    console.log('[DELETE] User ' + uid + ' (' + userName + ') gelöscht von Admin ' + ctx.from.id);
+        await ctx.reply('✅ User gelöscht!\n\n👤 ' + userName + ' (' + uid + ')\n📋 Backup im _deleteLog gespeichert.');
+        console.log('[DELETE] User ' + uid + ' (' + userName + ') gelöscht von Admin ' + ctx.from.id);
+    } catch (e) {
+        console.log('[DELETE] Fehler:', e.message, e.stack);
+        try { await ctx.reply('❌ Fehler beim Löschen: ' + e.message); } catch(_) {}
+    }
 });
 
 bot.command('dellink', async (ctx) => {

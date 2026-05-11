@@ -1970,17 +1970,34 @@ function _deleteUser(uid) {
     return { ok: true, name: u.name || u.email || id };
 }
 
+function _findUser(query) {
+    const q = String(query).trim().toLowerCase().replace(/^@/, '');
+    if (!q) return null;
+    // Direct UID match
+    if (d.users[q]) return q;
+    if (d.users[query]) return query;
+    // Search by username, instagram, name, spitzname, email
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (String(u.username || '').toLowerCase() === q) return uid;
+        if (String(u.instagram || '').toLowerCase() === q) return uid;
+        if (String(u.name || '').toLowerCase() === q) return uid;
+        if (String(u.spitzname || '').toLowerCase() === q) return uid;
+        if (String(u.email || '').toLowerCase() === q) return uid;
+    }
+    return null;
+}
+
 bot.command('mergeuser', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const args = (ctx.message.text || '').split(/\s+/).slice(1);
-    if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell-uid> <ziel-uid>\n\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
+    if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell> <ziel>\n\nDu kannst UID, Username, Instagram oder Name verwenden.\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
 
-    const sourceUid = args[0];
-    const targetUid = args[1];
+    const sourceUid = _findUser(args[0]);
+    const targetUid = _findUser(args[1]);
 
-    if (sourceUid === targetUid) return ctx.reply('❌ Quell-UID und Ziel-UID dürfen nicht gleich sein.');
-    if (!d.users[sourceUid]) return ctx.reply('❌ Quell-User (' + sourceUid + ') nicht gefunden.');
-    if (!d.users[targetUid]) return ctx.reply('❌ Ziel-User (' + targetUid + ') nicht gefunden.');
+    if (!sourceUid) return ctx.reply('❌ Quell-User nicht gefunden: ' + args[0]);
+    if (!targetUid) return ctx.reply('❌ Ziel-User nicht gefunden: ' + args[1]);
+    if (sourceUid === targetUid) return ctx.reply('❌ Quell und Ziel sind der gleiche User (' + sourceUid + ').');
 
     const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
     const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
@@ -1996,10 +2013,10 @@ bot.command('mergeuser', async (ctx) => {
 bot.command('deleteuser', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const args = (ctx.message.text || '').split(/\s+/).slice(1);
-    if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid>\n\nLöscht einen User und alle Referenzen komplett.');
+    if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid oder name>\n\nDu kannst UID, Username, Instagram oder Name verwenden.');
 
-    const uid = args[0];
-    if (!d.users[uid]) return ctx.reply('❌ User (' + uid + ') nicht gefunden.');
+    const uid = _findUser(args[0]);
+    if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
     if (istAdminId(Number(uid))) return ctx.reply('❌ Admin-Accounts können nicht gelöscht werden.');
 
     const userName = d.users[uid].spitzname || d.users[uid].name || uid;
@@ -6916,12 +6933,14 @@ app.post('/report-nonengager-api', async (req, res) => {
 
 app.post('/admin/merge-users', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const sourceUid = req.body && req.body.source_uid ? String(req.body.source_uid) : '';
-    const targetUid = req.body && req.body.target_uid ? String(req.body.target_uid) : '';
-    if (!sourceUid || !targetUid) return res.status(400).json({ ok: false, error: 'source_uid und target_uid erforderlich' });
-    if (sourceUid === targetUid) return res.status(400).json({ ok: false, error: 'source_uid und target_uid dürfen nicht gleich sein' });
-    if (!d.users[sourceUid]) return res.status(404).json({ ok: false, error: 'Quell-User nicht gefunden: ' + sourceUid });
-    if (!d.users[targetUid]) return res.status(404).json({ ok: false, error: 'Ziel-User nicht gefunden: ' + targetUid });
+    const srcInput = req.body && req.body.source_uid ? String(req.body.source_uid) : '';
+    const tgtInput = req.body && req.body.target_uid ? String(req.body.target_uid) : '';
+    if (!srcInput || !tgtInput) return res.status(400).json({ ok: false, error: 'source_uid und target_uid erforderlich' });
+    const sourceUid = _findUser(srcInput);
+    const targetUid = _findUser(tgtInput);
+    if (!sourceUid) return res.status(404).json({ ok: false, error: 'Quell-User nicht gefunden: ' + srcInput });
+    if (!targetUid) return res.status(404).json({ ok: false, error: 'Ziel-User nicht gefunden: ' + tgtInput });
+    if (sourceUid === targetUid) return res.status(400).json({ ok: false, error: 'Quell und Ziel sind der gleiche User (' + sourceUid + ')' });
 
     const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
     const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
@@ -6934,9 +6953,10 @@ app.post('/admin/merge-users', (req, res) => {
 
 app.post('/admin/delete-user', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const uid = req.body && req.body.uid ? String(req.body.uid) : '';
-    if (!uid) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
-    if (!d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + uid });
+    const input = req.body && req.body.uid ? String(req.body.uid) : '';
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
     if (istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Admin-Accounts können nicht gelöscht werden' });
 
     const userName = d.users[uid].spitzname || d.users[uid].name || uid;

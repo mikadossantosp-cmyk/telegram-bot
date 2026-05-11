@@ -115,6 +115,12 @@ function laden() {
             if (!link.likerNames) link.likerNames = {};
             if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
         }
+        // Gleiche String-Normalisierung für sl.likes — legacy Number-Einträge würden sonst
+        // beim Engagement-Check via .includes(stringUid) silent failen.
+        for (const k of Object.keys(d.superlinks||{})) {
+            const sl = d.superlinks[k];
+            if (sl && Array.isArray(sl.likes)) sl.likes = sl.likes.map(String);
+        }
         const defaults = {
             dailyXP: {}, weeklyXP: {}, bonusLinks: {}, missionen: {}, wochenMissionen: {},
             warteNachricht: {}, dmNachrichten: {}, instaWarte: {}, missionQueue: {},
@@ -4001,8 +4007,12 @@ app.get('/mindset-state-api', (req, res) => {
     const ms = d.mindsetStories;
     const uid = String(req.query.uid || '');
     const isAdmin = uid && (istAdminId(uid) || String(d.users[uid]?.role||'').includes('Admin'));
+    const currentWeek = getBerlinWeekKey();
+    // weeklyState ist nur "aktuell" wenn week === currentWeek. Sonst stale Daten der letzten Woche.
+    const stateIsCurrent = ms.weeklyState?.week === currentWeek;
+    const currentPickedUid = stateIsCurrent ? ms.weeklyState.pickedUid : null;
     const myStatus = uid ? (
-        ms.weeklyState.pickedUid === uid ? 'picked' :
+        currentPickedUid === uid ? 'picked' :
         ms.done[uid] ? 'done' :
         ms.waitlist[uid] ? 'yes' :
         ms.rejected[uid] ? 'no' :
@@ -4010,9 +4020,10 @@ app.get('/mindset-state-api', (req, res) => {
     ) : 'none';
     const out = {
         ok: true,
-        week: ms.weeklyState.week,
-        pickedUid: ms.weeklyState.pickedUid,
-        pickedName: ms.weeklyState.pickedUid ? (d.users[ms.weeklyState.pickedUid]?.spitzname || d.users[ms.weeklyState.pickedUid]?.name || '?') : null,
+        week: currentWeek,
+        pickedUid: currentPickedUid,
+        pickedName: currentPickedUid ? (d.users[currentPickedUid]?.spitzname || d.users[currentPickedUid]?.name || '?') : null,
+        skipped: stateIsCurrent ? !!ms.weeklyState?.skipped : false,
         locked: isMindsetLocked(),
         myStatus,
         myDoneWeek: ms.done[uid]?.week || null,

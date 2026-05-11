@@ -72,6 +72,11 @@ let d = {
     _lastEvents: {},
     _seenEngagementJobs: {},
     xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
+    // Mindset Stories: 1 zufälliger User pro Woche wird auf @mindset.stories_ vorgestellt.
+    // weeklyState: aktuelle Woche + gepickter User. waitlist: User die "Ja" gesagt haben.
+    // rejected: User die "Nein" gesagt haben (kriegen keine erneuten Einlade-DMs).
+    // done: alle bisher gefeaturten User (kommen nicht zurück auf waitlist außer admin restored).
+    mindsetStories: { weeklyState: { week: null, pickedUid: null, pickedAt: null, locked: false }, waitlist: {}, rejected: {}, done: {} },
 };
 
 function laden() {
@@ -103,6 +108,7 @@ function laden() {
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
             newsletter: [], pinnedEngages: {},
             weeklyHistory: [],
+            mindsetStories: { weeklyState: { week: null, pickedUid: null, pickedAt: null, locked: false }, waitlist: {}, rejected: {}, done: {} },
         };
         for (const [key, val] of Object.entries(defaults)) { if (!d[key]) d[key] = val; }
         const linkKeys = Object.keys(d.links).sort((a, b) => d.links[a].timestamp - d.links[b].timestamp);
@@ -3336,6 +3342,221 @@ function archiveWeeklyXP(reason='auto') {
     return true;
 }
 
+
+// ================================
+// MINDSET STORIES — 1 zufälliger User pro Woche auf @mindset.stories_
+// ================================
+
+// Locked = ab Samstag 23:59 bis nach dem Sonntag-Pick keine Änderungen mehr möglich
+function isMindsetLocked() {
+    const now = new Date();
+    const day = now.getDay();      // 0=Sonntag, 6=Samstag
+    if (day === 0) return true;    // Sonntag komplett gefroren
+    if (day === 6 && now.getHours() >= 23 && now.getMinutes() >= 59) return true;
+    return false;
+}
+
+// In-App-DM: schreibt direkt in d.messages (keine Telegram-Weiterleitung), Absender 'creatorboost'.
+function sendInAppDM(toUid, text) {
+    if (!d.users[String(toUid)]) return false;
+    if (!d.messages) d.messages = {};
+    const chatKey = [CREATORBOOST_UID, String(toUid)].sort().join('_');
+    if (!d.messages[chatKey]) d.messages[chatKey] = [];
+    d.messages[chatKey].push({
+        from: CREATORBOOST_UID, to: String(toUid),
+        text: String(text||'').slice(0, 2000),
+        image: null, audio: null,
+        timestamp: Date.now(), read: false, system: true,
+    });
+    if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
+    addNotification(String(toUid), '💬', 'CreatorX: ' + String(text||'').slice(0,40), CREATORBOOST_UID);
+    return true;
+}
+
+async function sendMindsetWinnerDM(uid) {
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
+    const text = '🎉 Hey ' + name + '!\n\n' +
+        'Du wurdest diese Woche für meine Mindset Stories gepickt! Du erscheinst am Sonntag/Montag auf @mindset.stories_\n\n' +
+        'Damit ich dich gut vorstellen kann, schick mir bitte:\n\n' +
+        '1️⃣ 1-2 Deckblätter (Bilder/Grafiken)\n' +
+        '2️⃣ 1-2 Interessen / Themen die du abdeckst\n' +
+        '3️⃣ Worum geht\'s auf deinem Kanal? Was ist deine Nische?\n' +
+        '4️⃣ Was sollen meine Follower vom Post erwarten?\n' +
+        '5️⃣ Bietest du was an? (Kurs, Beratung, Coaching, etc.)\n' +
+        '6️⃣ Auch auf YouTube oder TikTok aktiv? Gerne Handles dazu!\n\n' +
+        'Schick alles einfach hier zurück, ich bau dir eine komplette Vorstellung 💪\n\n' +
+        'Antworten bis Samstag 23:59 damit ich Zeit zum Bauen habe!';
+    sendInAppDM(uid, text);
+}
+
+async function sendMindsetInviteDM(uid) {
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
+    const text = '👋 Hey ' + name + '!\n\n' +
+        'Jede Woche stelle ich 1 User in meinen Mindset Stories auf @mindset.stories_ vor.\n\n' +
+        'Lust dabei zu sein? Tippe in der App:\nExplore → News → Mindset Stories\n\n' +
+        'Dort kannst du ✅ oder ❌ klicken — pro Woche wird einer zufällig gepickt.';
+    sendInAppDM(uid, text);
+}
+
+// GET state für einen User (oder Admin-View)
+app.get('/mindset-state-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const ms = d.mindsetStories;
+    const uid = String(req.query.uid || '');
+    const isAdmin = uid && (istAdminId(uid) || String(d.users[uid]?.role||'').includes('Admin'));
+    const myStatus = uid ? (
+        ms.weeklyState.pickedUid === uid ? 'picked' :
+        ms.done[uid] ? 'done' :
+        ms.waitlist[uid] ? 'yes' :
+        ms.rejected[uid] ? 'no' :
+        'none'
+    ) : 'none';
+    const out = {
+        ok: true,
+        week: ms.weeklyState.week,
+        pickedUid: ms.weeklyState.pickedUid,
+        pickedName: ms.weeklyState.pickedUid ? (d.users[ms.weeklyState.pickedUid]?.spitzname || d.users[ms.weeklyState.pickedUid]?.name || '?') : null,
+        locked: isMindsetLocked(),
+        myStatus,
+        myDoneWeek: ms.done[uid]?.week || null,
+        counts: {
+            waitlist: Object.keys(ms.waitlist).length,
+            rejected: Object.keys(ms.rejected).length,
+            done: Object.keys(ms.done).length,
+        },
+    };
+    if (isAdmin) {
+        out.waitlist = Object.entries(ms.waitlist)
+            .sort((a,b)=>(a[1].joinedAt||0)-(b[1].joinedAt||0))
+            .map(([u,v])=>({ uid:u, name:d.users[u]?.spitzname||d.users[u]?.name||'?', insta:d.users[u]?.instagram||'', joinedAt:v.joinedAt }));
+        out.done = Object.entries(ms.done)
+            .sort((a,b)=>(b[1].featuredAt||0)-(a[1].featuredAt||0))
+            .map(([u,v])=>({ uid:u, name:v.name||d.users[u]?.spitzname||d.users[u]?.name||'?', week:v.week, featuredAt:v.featuredAt }));
+    }
+    res.json(out);
+});
+
+// POST setzt yes/no für einen User
+app.post('/mindset-set-answer-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String(req.body.uid || '');
+    const answer = String(req.body.answer || ''); // 'yes' oder 'no'
+    if (!uid || !d.users[uid]) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!['yes','no'].includes(answer)) return res.json({ ok:false, error:'Ungültige Antwort' });
+    if (!d.users[uid].instagram) return res.json({ ok:false, error:'Erst Instagram-Username in den Einstellungen setzen' });
+    if (isMindsetLocked()) return res.json({ ok:false, error:'Antworten für diese Woche bereits gefroren' });
+    if (d.mindsetStories.done[uid]) return res.json({ ok:false, error:'Du wurdest bereits vorgestellt' });
+    const now = Date.now();
+    if (answer === 'yes') {
+        delete d.mindsetStories.rejected[uid];
+        const prev = d.mindsetStories.waitlist[uid];
+        d.mindsetStories.waitlist[uid] = { joinedAt: prev?.joinedAt || now, lastChangedAt: now };
+    } else {
+        delete d.mindsetStories.waitlist[uid];
+        d.mindsetStories.rejected[uid] = { rejectedAt: now };
+    }
+    speichern();
+    res.json({ ok:true });
+});
+
+// POST Sonntag 20:00 Cron-Trigger → zufälliger Pick
+app.post('/run-mindset-pick-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const ms = d.mindsetStories;
+    const week = getBerlinWeekKey();
+    // Bereits gepickt diese Woche? Idempotent.
+    if (ms.weeklyState.week === week && ms.weeklyState.pickedUid) {
+        return res.json({ ok:true, already:true, pickedUid: ms.weeklyState.pickedUid });
+    }
+    // Eligible: User in waitlist mit gesetztem Insta, nicht bereits in done, existiert.
+    const eligible = Object.keys(ms.waitlist).filter(uid => {
+        const u = d.users[uid];
+        return u && u.instagram && !ms.done[uid];
+    });
+    if (!eligible.length) {
+        ms.weeklyState = { week, pickedUid: null, pickedAt: Date.now(), locked: true };
+        speichern();
+        return res.json({ ok:true, pickedUid: null, reason:'Niemand auf Warteliste' });
+    }
+    const winner = eligible[Math.floor(Math.random() * eligible.length)];
+    ms.weeklyState = { week, pickedUid: winner, pickedAt: Date.now(), locked: true };
+    // Aus waitlist raus, in done rein
+    delete ms.waitlist[winner];
+    ms.done[winner] = { week, featuredAt: Date.now(), name: d.users[winner]?.spitzname || d.users[winner]?.name || '?' };
+    speichern();
+    try { await sendMindsetWinnerDM(winner); } catch(e) { console.log('Mindset Winner-DM Fehler:', e.message); }
+    res.json({ ok:true, pickedUid: winner, pickedName: d.users[winner]?.name });
+});
+
+// POST Admin überschreibt Pick mit konkreter uid
+app.post('/mindset-admin-pick-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const callerUid = String(req.body.callerUid || '');
+    if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
+    const targetUid = String(req.body.targetUid || '');
+    if (!targetUid || !d.users[targetUid]) return res.json({ ok:false, error:'User nicht gefunden' });
+    const ms = d.mindsetStories;
+    const week = getBerlinWeekKey();
+    // Falls schon jemand gepickt: zurück auf waitlist (wenn er da war)
+    if (ms.weeklyState.pickedUid && ms.weeklyState.pickedUid !== targetUid) {
+        const prev = ms.weeklyState.pickedUid;
+        if (ms.done[prev] && ms.done[prev].week === week) {
+            delete ms.done[prev];
+            ms.waitlist[prev] = { joinedAt: Date.now(), lastChangedAt: Date.now() };
+        }
+    }
+    delete ms.waitlist[targetUid];
+    ms.weeklyState = { week, pickedUid: targetUid, pickedAt: Date.now(), locked: true };
+    ms.done[targetUid] = { week, featuredAt: Date.now(), name: d.users[targetUid]?.spitzname || d.users[targetUid]?.name || '?' };
+    speichern();
+    try { await sendMindsetWinnerDM(targetUid); } catch(e) {}
+    res.json({ ok:true, pickedUid: targetUid });
+});
+
+// POST Admin skipt diese Woche (kein Pick)
+app.post('/mindset-admin-skip-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const callerUid = String(req.body.callerUid || '');
+    if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
+    d.mindsetStories.weeklyState = { week: getBerlinWeekKey(), pickedUid: null, pickedAt: Date.now(), locked: true, skipped: true };
+    speichern();
+    res.json({ ok:true });
+});
+
+// POST Admin: Initial-DM-Blast an alle Insta-User die noch nicht geantwortet haben
+app.post('/mindset-admin-blast-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const callerUid = String(req.body.callerUid || '');
+    if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
+    const ms = d.mindsetStories;
+    const targets = Object.keys(d.users).filter(uid => {
+        const u = d.users[uid];
+        if (!u || !u.instagram || u.isSystem) return false;
+        if (istAdminId(uid)) return false;
+        if (ms.waitlist[uid] || ms.rejected[uid] || ms.done[uid]) return false;
+        return true;
+    });
+    // In-App DMs sind synchron — alle auf einmal pushen.
+    let sent = 0;
+    for (const uid of targets) {
+        try { await sendMindsetInviteDM(uid); sent++; } catch(e) {}
+    }
+    speichern();
+    res.json({ ok:true, queued: targets.length, sent });
+});
+
+// POST Admin: User von done zurück auf waitlist verschieben
+app.post('/mindset-admin-restore-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const callerUid = String(req.body.callerUid || '');
+    if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
+    const targetUid = String(req.body.targetUid || '');
+    if (!d.mindsetStories.done[targetUid]) return res.json({ ok:false, error:'User nicht in Erledigt-Liste' });
+    delete d.mindsetStories.done[targetUid];
+    d.mindsetStories.waitlist[targetUid] = { joinedAt: Date.now(), lastChangedAt: Date.now() };
+    speichern();
+    res.json({ ok:true });
+});
 
 // ================================
 // DASHBOARD API ENDPOINTS

@@ -4347,10 +4347,13 @@ app.get('/data', (req, res) => {
         const url = (v.text||'').trim();
         const merged = likesByUrl[url] || { likes: new Set(), likerNames: {} };
         const likesArr = Array.from(merged.likes);
-        // Auto-include poster in their own likes for display (self-like is blocked,
-        // but own post should count as "done" in feed progress calculations).
-        const posterId = String(v.user_id);
-        if (posterId && !likesArr.includes(posterId)) likesArr.push(posterId);
+        // Auto-include poster AND their family (parent/sub) in likes for display.
+        // Self-like is blocked for the whole family via getRootUid, so all family
+        // members should see this post as "done" in feed progress calculations.
+        const posterFamily = familyUids(String(v.user_id));
+        for (const fUid of posterFamily) {
+            if (!likesArr.includes(fUid)) likesArr.push(fUid);
+        }
         out.links[k] = Object.assign({}, v, {
             likes: likesArr,
             likerNames: merged.likerNames

@@ -4135,27 +4135,35 @@ function sendInAppDM(toUid, text) {
 }
 
 async function sendMindsetWinnerDM(uid) {
-    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
-    const text = '🎉 Hey ' + name + '!\n\n' +
-        'Du wurdest diese Woche für meine Mindset Stories gepickt! Du erscheinst am Sonntag/Montag auf @mindset.stories_\n\n' +
-        'Damit ich dich gut vorstellen kann, schick mir bitte:\n\n' +
-        '1️⃣ 1-2 Deckblätter (Bilder/Grafiken)\n' +
-        '2️⃣ 1-2 Interessen / Themen die du abdeckst\n' +
-        '3️⃣ Worum geht\'s auf deinem Kanal? Was ist deine Nische?\n' +
-        '4️⃣ Was sollen meine Follower vom Post erwarten?\n' +
-        '5️⃣ Bietest du was an? (Kurs, Beratung, Coaching, etc.)\n' +
-        '6️⃣ Auch auf YouTube oder TikTok aktiv? Gerne Handles dazu!\n\n' +
-        'Schick alles einfach hier zurück, ich bau dir eine komplette Vorstellung 💪\n\n' +
-        'Antworten bis Samstag 23:59 damit ich Zeit zum Bauen habe!';
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || '';
+    const greeting = name ? 'Hallo ' + name + ',' : 'Hallo,';
+    const text = greeting + '\n\n' +
+        'du wurdest diese Woche für die Mindset Stories auf @mindset.stories_ ausgewählt — herzlichen Glückwunsch. Du erscheinst am kommenden Sonntag bzw. Montag in den Stories.\n\n' +
+        'Damit ich dich gut vorstellen kann, benötige ich folgende Infos von dir:\n\n' +
+        '1. 1–2 Deckblätter (Bilder oder Grafiken, die zu dir passen)\n' +
+        '2. 1–2 Interessen oder Themen, die du abdeckst\n' +
+        '3. Eine kurze Beschreibung deines Kanals bzw. deiner Nische\n' +
+        '4. Was sollen meine Follower aus deinem Post mitnehmen?\n' +
+        '5. Bietest du etwas an (Kurse, Beratung, Coaching o.ä.)?\n' +
+        '6. Bist du auch auf YouTube oder TikTok aktiv? Falls ja, gerne mit Handles.\n\n' +
+        'Schick mir die Infos einfach hier in der DM zurück — ich erstelle daraus eine ansprechende Vorstellung.\n\n' +
+        'Bitte spätestens bis Samstag 23:59 zurückmelden, damit genug Zeit für die Vorbereitung bleibt.\n\n' +
+        'Viele Grüße';
     sendInAppDM(uid, text);
 }
 
 async function sendMindsetInviteDM(uid) {
-    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
-    const text = '👋 Hey ' + name + '!\n\n' +
-        'Jede Woche stelle ich 1 User in meinen Mindset Stories auf @mindset.stories_ vor.\n\n' +
-        'Lust dabei zu sein? Tippe in der App:\nExplore → News → Mindset Stories\n\n' +
-        'Dort kannst du ✅ oder ❌ klicken — pro Woche wird einer zufällig gepickt.';
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || '';
+    const greeting = name ? 'Hallo ' + name + ',' : 'Hallo,';
+    const text = greeting + '\n\n' +
+        'ich starte einen wöchentlichen Mindset-Stories-Slot auf meinem Instagram-Profil @mindset.stories_, in dem ich Creator aus unserer Community vorstelle.\n\n' +
+        'Wenn du Interesse hast, kannst du dich gerne über die App eintragen. Ich wähle anschließend jede Woche einen User aus der Warteliste aus und stelle ihn am Sonntag/Montag auf @mindset.stories_ vor.\n\n' +
+        'So funktioniert\'s:\n' +
+        '1. App öffnen → Explore → News\n' +
+        '2. Bei "Mindset Stories" auf Ja oder Nein klicken\n' +
+        '3. Bei Ja: du bist auf der Warteliste, ich melde mich sobald du dran bist\n\n' +
+        'Ohne Druck — du kannst deine Antwort bis Samstag 23:59 jederzeit ändern.\n\n' +
+        'Viele Grüße';
     sendInAppDM(uid, text);
 }
 
@@ -4204,6 +4212,7 @@ app.post('/mindset-set-answer-api', (req, res) => {
     const answer = String(req.body.answer || ''); // 'yes' oder 'no'
     if (!uid || !d.users[uid]) return res.json({ ok:false, error:'User nicht gefunden' });
     if (!['yes','no'].includes(answer)) return res.json({ ok:false, error:'Ungültige Antwort' });
+    if (d.users[uid].parent_uid) return res.json({ ok:false, error:'Bitte mit dem Hauptaccount eintragen — Sub-Accounts können sich nicht separat eintragen' });
     if (!d.users[uid].instagram) return res.json({ ok:false, error:'Erst Instagram-Username in den Einstellungen setzen' });
     if (isMindsetLocked()) return res.json({ ok:false, error:'Antworten für diese Woche bereits gefroren' });
     if (d.mindsetStories.done[uid]) return res.json({ ok:false, error:'Du wurdest bereits vorgestellt' });
@@ -4293,6 +4302,7 @@ app.post('/mindset-admin-blast-api', async (req, res) => {
     const targets = Object.keys(d.users).filter(uid => {
         const u = d.users[uid];
         if (!u || !u.instagram || u.isSystem) return false;
+        if (u.parent_uid) return false;                    // Sub-Accounts: nur Parent kriegt die DM
         if (istAdminId(uid)) return false;
         if (ms.waitlist[uid] || ms.rejected[uid] || ms.done[uid]) return false;
         return true;

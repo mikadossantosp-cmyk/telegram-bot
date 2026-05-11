@@ -1437,8 +1437,7 @@ async function _adminAddXp(ctx) {
     u.xp = Math.max(0, (u.xp || 0) + finalXP);
     u.level = level(u.xp);
     u.role = badge(u.xp);
-    if (!d.weeklyXP[targetId]) d.weeklyXP[targetId] = 0;
-    d.weeklyXP[targetId] += finalXP;
+    // Admin-XP deliberately excluded from weekly/daily rankings
     speichern();
     const sign = finalXP >= 0 ? '+' : '';
     await ctx.reply('✅ ' + sign + finalXP + ' XP an *' + u.name + '*\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role + (alteBadge !== u.role ? '\n🎉 Badge: ' + alteBadge + ' → ' + u.role : ''), { parse_mode: 'Markdown' });
@@ -5067,10 +5066,15 @@ app.get('/add-xp', async (req, res) => {
     const uid = req.query.id;
     const amount = parseInt(req.query.amount)||0;
     if (d.users[uid] && amount > 0) {
-        xpAddMitDaily(uid, amount, d.users[uid].name);
+        // Admin-XP: add to total only, not to daily/weekly rankings
+        const u = d.users[uid];
+        let finalAmount = amount;
+        if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalAmount = Math.round(amount * d.xpEvent.multiplier);
+        u.xp = (u.xp || 0) + finalAmount;
+        u.level = level(u.xp);
+        u.role = badge(u.xp);
         speichern();
-        // xpAddMitDaily sendet schon Badge-Aufstieg-DM bei Level-Up; zusätzlich kurz quittieren.
-        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' });
+        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${finalAmount} XP gutgeschrieben.\n⭐ Aktuell: ${u.xp} XP`, { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
 });

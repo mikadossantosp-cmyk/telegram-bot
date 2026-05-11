@@ -1558,6 +1558,11 @@ function _purgeUidFromCollections(uid) {
         }
     }
 
+    // Email login log: remove entries referencing this uid
+    if (Array.isArray(d.emailLoginLog)) {
+        d.emailLoginLog = d.emailLoginLog.filter(e => String(e.uid || '') !== id);
+    }
+
     // Mindset stories
     if (d.mindsetStories) {
         if (d.mindsetStories.waitlist) delete d.mindsetStories.waitlist[id];
@@ -1890,6 +1895,14 @@ function _mergeUserData(sourceUid, targetUid) {
         if (d.mindsetStories.weeklyState && String(d.mindsetStories.weeklyState.pickedUid) === sId) {
             d.mindsetStories.weeklyState.pickedUid = tId;
         }
+    }
+
+    // Re-assign email login log entries from source to target
+    if (Array.isArray(d.emailLoginLog)) {
+        for (const e of d.emailLoginLog) {
+            if (String(e.uid || '') === sId) e.uid = tId;
+        }
+        log.push('EmailLoginLog: UIDs umgeschrieben');
     }
 
     // Clean up remaining source-keyed entries

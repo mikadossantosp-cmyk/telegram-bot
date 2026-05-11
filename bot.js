@@ -5086,6 +5086,23 @@ app.get('/reset-daily-api', (req, res) => {
     res.json({ ok: true });
 });
 
+app.post('/admin/fix-weekly-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = req.body && req.body.uid ? String(req.body.uid) : '';
+    const value = req.body && req.body.value !== undefined ? Number(req.body.value) : null;
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    if (value === null || isNaN(value)) return res.status(400).json({ ok: false, error: 'value erforderlich (Zahl)' });
+    const oldVal = (d.weeklyXP && d.weeklyXP[uid]) || 0;
+    if (!d.weeklyXP) d.weeklyXP = {};
+    d.weeklyXP[uid] = Math.max(0, value);
+    speichern();
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || uid;
+    console.log('[FIX-WEEKLY-XP] ' + name + ' (' + uid + '): ' + oldVal + ' → ' + d.weeklyXP[uid]);
+    res.json({ ok: true, uid, name, oldWeeklyXP: oldVal, newWeeklyXP: d.weeklyXP[uid], totalXP: d.users[uid]?.xp });
+});
+
 
 app.get('/remind-insta-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

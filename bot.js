@@ -5086,10 +5086,10 @@ app.get('/reset-daily-api', (req, res) => {
     res.json({ ok: true });
 });
 
-app.post('/admin/fix-weekly-xp', (req, res) => {
+app.all('/admin/fix-weekly-xp', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const input = req.body && req.body.uid ? String(req.body.uid) : '';
-    const value = req.body && req.body.value !== undefined ? Number(req.body.value) : null;
+    const input = String(req.body?.uid || req.query?.uid || '');
+    const value = req.body?.value !== undefined ? Number(req.body.value) : (req.query?.value !== undefined ? Number(req.query.value) : null);
     if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
     const uid = _findUser(input);
     if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });

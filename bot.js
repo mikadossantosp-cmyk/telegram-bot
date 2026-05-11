@@ -361,7 +361,13 @@ async function runEngagementCheck(isReminder = false) {
         const fam = new Set(familyUids(uid));
         const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
         if (!otherLinks.length) continue;
-        const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
+        // Family-aware Like-Check: zählt wenn IRGENDEIN Family-Mitglied (Parent oder Sub)
+        // den Link geliked hat — sonst wird User penalized obwohl er von seinem Sub aus geliked hat.
+        const likedAll = otherLinks.every(s => {
+            if (!Array.isArray(s.likes)) return false;
+            for (const f of fam) if (s.likes.includes(f)) return true;
+            return false;
+        });
         if (!likedAll) {
             warned++;
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
@@ -517,9 +523,13 @@ async function superlinkDailyReminder() {
         if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
         // Family-Filter: nicht für ungelinkte Posts der eigenen Family (Parent ↔ Sub) erinnern.
         const fam = new Set(familyUids(uid));
+        const familyHasLiked = (likes) => {
+            if (!Array.isArray(likes)) return false;
+            for (const f of fam) if (likes.includes(f)) return true;
+            return false;
+        };
         const offen = weekSuperlinks.filter(s =>
-            !fam.has(String(s.uid)) &&
-            !(Array.isArray(s.likes) && s.likes.includes(uid))
+            !fam.has(String(s.uid)) && !familyHasLiked(s.likes)
         ).length;
         if (offen === 0) continue;
         const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
@@ -546,30 +556,46 @@ async function superlinkDailyReminder() {
 async function cleanupOldSuperlinks() {
     const currentWeek = getBerlinWeekKey();
     const all = d.superlinks || {};
-    const oldIds = Object.keys(all).filter(id => all[id]?.week !== currentWeek);
-    if (!oldIds.length) return { totalOld: 0, removed: 0, tgDeleted: 0, tgFailed: 0, failures: [] };
+    // Behalte die letzten 8 Wochen für /admin/superlinks-debug Analyse (Penalty-Diagnose).
+    // Ältere Wochen: Datenrecord komplett raus.
+    const keepWeeks = new Set();
+    {
+        const now = new Date();
+        for (let i = 0; i < 8; i++) {
+            const d2 = new Date(now);
+            const day = d2.getDay() || 7;
+            d2.setDate(d2.getDate() - (day - 1) - i*7);
+            keepWeeks.add(d2.getFullYear() + '-' + String(d2.getMonth()+1).padStart(2,'0') + '-' + String(d2.getDate()).padStart(2,'0'));
+        }
+    }
+    const allIds = Object.keys(all);
+    const tgDeleteIds = allIds.filter(id => all[id]?.week !== currentWeek && !all[id]?.tgDeleted);   // TG-Message weg, Data bleibt
+    const dataDeleteIds = allIds.filter(id => all[id]?.week && !keepWeeks.has(all[id].week));         // > 8 Wochen alt → ganz weg
+    if (!tgDeleteIds.length && !dataDeleteIds.length) return { totalOld: 0, removed: 0, tgDeleted: 0, tgFailed: 0, failures: [] };
     let removed = 0, tgDeleted = 0, tgFailed = 0;
     const failures = [];
-    for (const id of oldIds) {
+    for (const id of tgDeleteIds) {
         const sl = all[id];
-        let tgOk = !sl?.msg_id; // ohne msg_id direkt aufräumen
         if (sl?.msg_id && GROUP_B_ID) {
             try {
                 await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id);
-                tgOk = true;
+                sl.tgDeleted = true;
                 tgDeleted++;
             } catch(e) {
                 tgFailed++;
                 failures.push(`${id}: ${e.description || e.message}`);
+                sl.tgDeleted = true; // Markieren, sonst Re-Try in jedem Cleanup
             }
-        }
-        if (tgOk) {
-            delete d.superlinks[id];
-            removed++;
+        } else {
+            sl.tgDeleted = true;
         }
     }
+    for (const id of dataDeleteIds) {
+        delete d.superlinks[id];
+        removed++;
+    }
     speichern();
-    console.log(`🧹 Alte Superlinks: ${removed}/${oldIds.length} entfernt, Telegram ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen`);
+    console.log(`🧹 Superlinks-Cleanup: TG ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen, Data-Records ${removed} > 8 Wochen alt entfernt`);
     if (failures.length) console.log('Telegram-Löschfehler:', failures.slice(0,5).join(' | '));
     return { totalOld: oldIds.length, removed, tgDeleted, tgFailed, failures };
 }
@@ -2805,8 +2831,13 @@ bot.command('checkengagement', async (ctx) => {
     for (const uid of posters) {
         const u = d.users[uid];
         const name = u?.spitzname||u?.name||uid;
-        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
-        const likedCount = otherLinks.filter(s => Array.isArray(s.likes) && s.likes.includes(uid)).length;
+        const fam = new Set(familyUids(uid));
+        const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
+        const likedCount = otherLinks.filter(s => {
+            if (!Array.isArray(s.likes)) return false;
+            for (const f of fam) if (s.likes.includes(f)) return true;
+            return false;
+        }).length;
         const status = likedCount >= otherLinks.length ? '✅' : `⚠️ ${likedCount}/${otherLinks.length}`;
         report += `${status} ${name}\n`;
     }

@@ -4157,6 +4157,7 @@ async function sendMindsetInviteDM(uid) {
     const greeting = name ? 'Hallo ' + name + ',' : 'Hallo,';
     const text = greeting + '\n\n' +
         'ich starte einen wöchentlichen Mindset-Stories-Slot auf meinem Instagram-Profil @mindset.stories_, in dem ich Creator aus unserer Community vorstelle.\n\n' +
+        'Ziel ist es, die Community zu pushen und gemeinsam mehr Reichweite zu generieren.\n\n' +
         'Wenn du Interesse hast, kannst du dich gerne über die App eintragen. Ich wähle anschließend jede Woche einen User aus der Warteliste aus und stelle ihn am Sonntag/Montag auf @mindset.stories_ vor.\n\n' +
         'So funktioniert\'s:\n' +
         '1. App öffnen → Explore → News\n' +

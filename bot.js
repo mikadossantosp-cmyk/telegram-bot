@@ -1420,6 +1420,583 @@ bot.command('resetmycode', async (ctx) => {
 });
 bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });
 
+
+async function _adminAddXp(ctx) {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const args = (ctx.message.text || '').split(/\s+/).slice(1);
+    const menge = parseInt(args[0], 10);
+    if (!menge || isNaN(menge)) return ctx.reply('❌ Nutzung: Antworte auf einen User mit /addxp <menge>\nz.B. /addxp 1000\n\nNegative Werte ziehen XP ab.');
+    if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht des Users.');
+    const targetId = ctx.message.reply_to_message.from.id;
+    const targetName = ctx.message.reply_to_message.from.first_name || 'User';
+    if (istAdminId(targetId)) return ctx.reply('❌ Admins haben kein XP-Konto.');
+    const u = user(targetId, targetName);
+    const alteBadge = u.role;
+    let finalXP = menge;
+    if (menge > 0 && d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) finalXP = Math.round(menge * d.xpEvent.multiplier);
+    u.xp = Math.max(0, (u.xp || 0) + finalXP);
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    if (!d.weeklyXP[targetId]) d.weeklyXP[targetId] = 0;
+    d.weeklyXP[targetId] += finalXP;
+    speichern();
+    const sign = finalXP >= 0 ? '+' : '';
+    await ctx.reply('✅ ' + sign + finalXP + ' XP an *' + u.name + '*\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role + (alteBadge !== u.role ? '\n🎉 Badge: ' + alteBadge + ' → ' + u.role : ''), { parse_mode: 'Markdown' });
+    try {
+        const dmText = finalXP >= 0
+            ? '🎁 *Geschenk vom Admin!*\n\n+' + finalXP + ' XP\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role
+            : '⚠️ *XP angepasst*\n\n' + finalXP + ' XP\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role;
+        await bot.telegram.sendMessage(targetId, dmText, { parse_mode: 'Markdown' });
+    } catch (e) {}
+}
+bot.command('addxp', _adminAddXp);
+bot.command('xpadd', _adminAddXp);
+bot.command('givexp', _adminAddXp);
+bot.command('version', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await ctx.reply('🔨 Patch-Build: ' + (process.env.PATCH_TIME || '2026-05-11T18:08:32.896Z') + '\n✅ /addxp + /xpadd + /givexp registriert'); });
+console.log('\n🔨 [PATCHED-BUILD] /addxp + /xpadd + /givexp + /version registriert  (Build: ' + (process.env.PATCH_TIME || '2026-05-11T18:08:32.896Z') + ')\n');
+
+// ── ADMIN: /merge-user + /delete-user ──────────────────────────────────
+
+function _purgeUidFromCollections(uid) {
+    const id = String(uid);
+
+    // Scalar maps keyed by uid
+    for (const key of [
+        'dailyXP','weeklyXP','gesternDailyXP','tracker','counter','badgeTracker',
+        'bonusLinks','missionen','wochenMissionen','missionQueue','m1Streak',
+        'dailyLogins','dailyGroupMsgs','threadLastRead','warteNachricht',
+        'instaWarte','dmNachrichten','appActivity','_smartReminderSent'
+    ]) {
+        if (d[key] && d[key][id] !== undefined) delete d[key][id];
+    }
+
+    if (d.notifications) delete d.notifications[id];
+    if (d.appChatLastRead) delete d.appChatLastRead[id];
+    if (d.posts) delete d.posts[id];
+    if (d.pinnedEngages) delete d.pinnedEngages[id];
+
+    // Remove uid from followers/following of all other users
+    for (const u of Object.values(d.users || {})) {
+        if (Array.isArray(u.followers)) u.followers = u.followers.filter(x => String(x) !== id);
+        if (Array.isArray(u.following)) u.following = u.following.filter(x => String(x) !== id);
+    }
+
+    // Links (object keyed by msgId): remove as poster, remove from likers
+    for (const [k, l] of Object.entries(d.links || {})) {
+        if (String(l.user_id) === id) { delete d.links[k]; continue; }
+        if (l.likes) {
+            if (typeof l.likes.delete === 'function') l.likes.delete(id);
+            else if (Array.isArray(l.likes)) l.likes = l.likes.filter(x => String(x) !== id);
+        }
+        if (l.likerNames && l.likerNames[id]) delete l.likerNames[id];
+    }
+
+    // Superlinks (object keyed by slId): remove as poster, remove from likers
+    for (const [k, sl] of Object.entries(d.superlinks || {})) {
+        if (String(sl.uid) === id) { delete d.superlinks[k]; continue; }
+        if (Array.isArray(sl.likes)) sl.likes = sl.likes.filter(x => String(x) !== id);
+        if (sl.likerNames && sl.likerNames[id]) delete sl.likerNames[id];
+    }
+
+    // Comments (object keyed by linkId): remove comments authored by uid
+    if (d.comments && typeof d.comments === 'object') {
+        for (const cKey of Object.keys(d.comments)) {
+            if (Array.isArray(d.comments[cKey])) {
+                d.comments[cKey] = d.comments[cKey].filter(c => String(c.uid) !== id);
+            }
+        }
+    }
+
+    // App chat messages: mark as deleted (preserve history)
+    if (Array.isArray(d.appChat)) {
+        for (const m of d.appChat) {
+            if (String(m.uid) === id) { m.deleted = true; m.deletedAt = Date.now(); }
+            if (m.reactions) {
+                for (const emoji of Object.keys(m.reactions)) {
+                    if (Array.isArray(m.reactions[emoji])) {
+                        m.reactions[emoji] = m.reactions[emoji].filter(x => String(x) !== id);
+                        if (m.reactions[emoji].length === 0) delete m.reactions[emoji];
+                    }
+                }
+            }
+        }
+    }
+
+    // Thread messages: remove authored messages
+    if (d.threadMessages && typeof d.threadMessages === 'object') {
+        for (const tk of Object.keys(d.threadMessages)) {
+            if (Array.isArray(d.threadMessages[tk])) {
+                d.threadMessages[tk] = d.threadMessages[tk].filter(m => String(m.uid) !== id);
+            }
+        }
+    }
+
+    // DMs (d.messages): remove chats where uid is participant
+    if (d.messages && typeof d.messages === 'object') {
+        for (const chatKey of Object.keys(d.messages)) {
+            if (chatKey.split('_').includes(id)) {
+                delete d.messages[chatKey];
+            }
+        }
+    }
+
+    // Notifications: remove uid as actorUid from other users' notifications
+    if (d.notifications && typeof d.notifications === 'object') {
+        for (const nk of Object.keys(d.notifications)) {
+            if (Array.isArray(d.notifications[nk])) {
+                d.notifications[nk] = d.notifications[nk].filter(n => String(n.actorUid || '') !== id);
+            }
+        }
+    }
+
+    // PinnedEngages: remove uid from other users' pinned lists
+    if (d.pinnedEngages && typeof d.pinnedEngages === 'object') {
+        for (const pk of Object.keys(d.pinnedEngages)) {
+            if (Array.isArray(d.pinnedEngages[pk])) {
+                d.pinnedEngages[pk] = d.pinnedEngages[pk].filter(x => String(x) !== id);
+            }
+        }
+    }
+
+    // Mindset stories
+    if (d.mindsetStories) {
+        if (d.mindsetStories.waitlist) delete d.mindsetStories.waitlist[id];
+        if (d.mindsetStories.rejected) delete d.mindsetStories.rejected[id];
+        if (d.mindsetStories.done) delete d.mindsetStories.done[id];
+        if (d.mindsetStories.weeklyState && String(d.mindsetStories.weeklyState.pickedUid) === id) {
+            d.mindsetStories.weeklyState.pickedUid = null;
+        }
+    }
+
+    // Sub-account link: clear parent reference
+    const u = d.users[id];
+    if (u && u.parent_uid && d.users[u.parent_uid]) {
+        delete d.users[u.parent_uid].subUid;
+    }
+    if (u && u.subUid && d.users[u.subUid]) {
+        delete d.users[u.subUid].parent_uid;
+    }
+}
+
+function _mergeUserData(sourceUid, targetUid) {
+    const src = d.users[String(sourceUid)];
+    const tgt = d.users[String(targetUid)];
+    if (!src || !tgt) return { ok: false, error: 'User nicht gefunden' };
+
+    const sId = String(sourceUid);
+    const tId = String(targetUid);
+    const log = [];
+
+    // Transfer profile fields (only if target is empty/missing)
+    const profileFields = ['email','emailConfirmedAt','pendingEmail','password_hash',
+        'instagram','bio','nische','spitzname','website','tiktok','youtube','twitter',
+        'banner','profilePic','accentColor','appCode','appCodeChosenAt','signupSource'];
+    for (const f of profileFields) {
+        if (src[f] && !tgt[f]) { tgt[f] = src[f]; log.push('Profil: ' + f + ' übertragen'); }
+    }
+
+    // Merge XP (additive)
+    if (src.xp > 0) {
+        const oldXp = tgt.xp || 0;
+        tgt.xp = (tgt.xp || 0) + src.xp;
+        tgt.level = level(tgt.xp);
+        tgt.role = badge(tgt.xp);
+        log.push('XP: ' + oldXp + ' + ' + src.xp + ' = ' + tgt.xp);
+    }
+
+    // Merge diamonds
+    if (src.diamonds > 0) {
+        tgt.diamonds = (tgt.diamonds || 0) + src.diamonds;
+        log.push('Diamonds: +' + src.diamonds + ' = ' + tgt.diamonds);
+    }
+
+    // Merge link/like counters
+    if (src.links > 0) { tgt.links = (tgt.links || 0) + src.links; log.push('Links: +' + src.links); }
+    if (src.totalLikes > 0) { tgt.totalLikes = (tgt.totalLikes || 0) + src.totalLikes; log.push('TotalLikes: +' + src.totalLikes); }
+
+    // Merge followers/following (deduplicated)
+    if (Array.isArray(src.followers)) {
+        if (!Array.isArray(tgt.followers)) tgt.followers = [];
+        const existing = new Set(tgt.followers.map(String));
+        for (const f of src.followers) {
+            if (String(f) !== tId && !existing.has(String(f))) {
+                tgt.followers.push(String(f));
+                existing.add(String(f));
+            }
+        }
+        // Update reverse references: followers of source now follow target
+        for (const fUid of src.followers) {
+            const fUser = d.users[String(fUid)];
+            if (fUser && Array.isArray(fUser.following)) {
+                fUser.following = fUser.following.filter(x => String(x) !== sId);
+                if (!fUser.following.map(String).includes(tId)) fUser.following.push(tId);
+            }
+        }
+        log.push('Followers: ' + src.followers.length + ' zusammengeführt');
+    }
+    if (Array.isArray(src.following)) {
+        if (!Array.isArray(tgt.following)) tgt.following = [];
+        const existing = new Set(tgt.following.map(String));
+        for (const f of src.following) {
+            if (String(f) !== tId && !existing.has(String(f))) {
+                tgt.following.push(String(f));
+                existing.add(String(f));
+            }
+        }
+        // Update reverse references: users followed by source now have target as follower
+        for (const fUid of src.following) {
+            const fUser = d.users[String(fUid)];
+            if (fUser && Array.isArray(fUser.followers)) {
+                fUser.followers = fUser.followers.filter(x => String(x) !== sId);
+                if (!fUser.followers.map(String).includes(tId)) fUser.followers.push(tId);
+            }
+        }
+        log.push('Following: ' + src.following.length + ' zusammengeführt');
+    }
+
+    // Remove self-follow after merge
+    if (Array.isArray(tgt.followers)) tgt.followers = tgt.followers.filter(x => String(x) !== tId);
+    if (Array.isArray(tgt.following)) tgt.following = tgt.following.filter(x => String(x) !== tId);
+
+    // Merge trophies (deduplicated)
+    if (Array.isArray(src.trophies) && src.trophies.length > 0) {
+        if (!Array.isArray(tgt.trophies)) tgt.trophies = [];
+        const existingT = new Set(tgt.trophies.map(JSON.stringify));
+        for (const t of src.trophies) {
+            if (!existingT.has(JSON.stringify(t))) tgt.trophies.push(t);
+        }
+        log.push('Trophies: zusammengeführt');
+    }
+
+    // Merge inventory
+    if (Array.isArray(src.inventory) && src.inventory.length > 0) {
+        if (!Array.isArray(tgt.inventory)) tgt.inventory = [];
+        tgt.inventory = tgt.inventory.concat(src.inventory);
+        log.push('Inventar: +' + src.inventory.length + ' Items');
+    }
+
+    // Merge projects
+    if (Array.isArray(src.projects) && src.projects.length > 0) {
+        if (!Array.isArray(tgt.projects)) tgt.projects = [];
+        tgt.projects = tgt.projects.concat(src.projects);
+        log.push('Projekte: +' + src.projects.length);
+    }
+
+    // Transfer scalar XP maps (additive)
+    for (const key of ['dailyXP','weeklyXP','gesternDailyXP']) {
+        if (d[key] && d[key][sId]) {
+            d[key][tId] = (d[key][tId] || 0) + d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': zusammengeführt');
+        }
+    }
+
+    // Transfer other scalar maps
+    for (const key of ['tracker','counter','badgeTracker','bonusLinks','dailyLogins','dailyGroupMsgs','m1Streak']) {
+        if (d[key] && d[key][sId] !== undefined && d[key][tId] === undefined) {
+            d[key][tId] = d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': übertragen');
+        } else if (d[key] && d[key][sId] !== undefined) {
+            delete d[key][sId];
+        }
+    }
+
+    // Transfer mission data
+    for (const key of ['missionen','wochenMissionen','missionQueue']) {
+        if (d[key] && d[key][sId] && !d[key][tId]) {
+            d[key][tId] = d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': übertragen');
+        } else if (d[key] && d[key][sId]) {
+            delete d[key][sId];
+        }
+    }
+
+    // Transfer thread read state
+    if (d.threadLastRead && d.threadLastRead[sId]) {
+        if (!d.threadLastRead[tId]) d.threadLastRead[tId] = {};
+        Object.assign(d.threadLastRead[tId], d.threadLastRead[sId]);
+        delete d.threadLastRead[sId];
+        log.push('ThreadLastRead: übertragen');
+    }
+
+    // Transfer notifications
+    if (d.notifications && Array.isArray(d.notifications[sId])) {
+        if (!d.notifications[tId]) d.notifications[tId] = [];
+        d.notifications[tId] = d.notifications[tId].concat(d.notifications[sId]);
+        if (d.notifications[tId].length > 50) d.notifications[tId] = d.notifications[tId].slice(-50);
+        delete d.notifications[sId];
+        log.push('Benachrichtigungen: zusammengeführt');
+    }
+
+    // Transfer app activity
+    if (d.appActivity && d.appActivity[sId]) {
+        if (!d.appActivity[tId]) d.appActivity[tId] = d.appActivity[sId];
+        else {
+            const t = d.appActivity[tId], s = d.appActivity[sId];
+            t.firstSeen = Math.min(t.firstSeen || Infinity, s.firstSeen || Infinity);
+            t.lastSeen = Math.max(t.lastSeen || 0, s.lastSeen || 0);
+            t.sessions = (t.sessions || 0) + (s.sessions || 0);
+            t.totalCalls = (t.totalCalls || 0) + (s.totalCalls || 0);
+        }
+        delete d.appActivity[sId];
+        log.push('AppActivity: zusammengeführt');
+    }
+
+    // Transfer appChatLastRead
+    if (d.appChatLastRead && d.appChatLastRead[sId]) {
+        if (!d.appChatLastRead[tId] || d.appChatLastRead[sId] > d.appChatLastRead[tId]) {
+            d.appChatLastRead[tId] = d.appChatLastRead[sId];
+        }
+        delete d.appChatLastRead[sId];
+    }
+
+    // Re-assign links ownership
+    let linksReassigned = 0;
+    for (const l of Object.values(d.links || {})) {
+        if (String(l.user_id) === sId) { l.user_id = /^\d+$/.test(tId) ? Number(tId) : tId; l.user_name = tgt.name; linksReassigned++; }
+        if (l.likes) {
+            if (typeof l.likes.delete === 'function' && l.likes.has(sId)) { l.likes.delete(sId); l.likes.add(tId); }
+            else if (Array.isArray(l.likes)) l.likes = l.likes.map(x => String(x) === sId ? tId : String(x));
+        }
+        if (l.likerNames && l.likerNames[sId]) {
+            l.likerNames[tId] = l.likerNames[sId];
+            delete l.likerNames[sId];
+        }
+    }
+    if (linksReassigned > 0) log.push('Links: ' + linksReassigned + ' umgeschrieben');
+
+    // Re-assign superlinks ownership
+    let slReassigned = 0;
+    for (const sl of Object.values(d.superlinks || {})) {
+        if (String(sl.uid) === sId) { sl.uid = tId; slReassigned++; }
+        if (Array.isArray(sl.likes)) sl.likes = sl.likes.map(x => String(x) === sId ? tId : String(x));
+        if (sl.likerNames && sl.likerNames[sId]) {
+            sl.likerNames[tId] = sl.likerNames[sId];
+            delete sl.likerNames[sId];
+        }
+    }
+    if (slReassigned > 0) log.push('Superlinks: ' + slReassigned + ' umgeschrieben');
+
+    // Re-assign comments
+    if (d.comments) {
+        let cReassigned = 0;
+        for (const arr of Object.values(d.comments)) {
+            if (Array.isArray(arr)) {
+                for (const c of arr) {
+                    if (String(c.uid) === sId) { c.uid = tId; c.name = tgt.name; cReassigned++; }
+                }
+            }
+        }
+        if (cReassigned > 0) log.push('Kommentare: ' + cReassigned + ' umgeschrieben');
+    }
+
+    // Re-assign posts
+    if (d.posts && d.posts[sId]) {
+        if (!d.posts[tId]) d.posts[tId] = [];
+        d.posts[tId] = d.posts[tId].concat(d.posts[sId]);
+        delete d.posts[sId];
+        log.push('Posts: zusammengeführt');
+    }
+
+    // Re-assign app chat messages
+    if (Array.isArray(d.appChat)) {
+        let chatReassigned = 0;
+        for (const m of d.appChat) {
+            if (String(m.uid) === sId) { m.uid = tId; m.name = tgt.name; chatReassigned++; }
+            if (m.reactions) {
+                for (const emoji of Object.keys(m.reactions)) {
+                    if (Array.isArray(m.reactions[emoji])) {
+                        m.reactions[emoji] = m.reactions[emoji].map(x => String(x) === sId ? tId : String(x));
+                        m.reactions[emoji] = [...new Set(m.reactions[emoji])];
+                    }
+                }
+            }
+        }
+        if (chatReassigned > 0) log.push('AppChat: ' + chatReassigned + ' Nachrichten umgeschrieben');
+    }
+
+    // Re-assign thread messages
+    if (d.threadMessages) {
+        let tmReassigned = 0;
+        for (const arr of Object.values(d.threadMessages)) {
+            if (Array.isArray(arr)) {
+                for (const m of arr) {
+                    if (String(m.uid) === sId) { m.uid = tId; m.name = tgt.name; tmReassigned++; }
+                }
+            }
+        }
+        if (tmReassigned > 0) log.push('ThreadMessages: ' + tmReassigned + ' umgeschrieben');
+    }
+
+    // Re-assign DMs
+    if (d.messages) {
+        const keysToMigrate = Object.keys(d.messages).filter(k => k.split('_').includes(sId));
+        for (const oldKey of keysToMigrate) {
+            const newKey = [String(oldKey.split('_')[0]) === sId ? tId : oldKey.split('_')[0],
+                            String(oldKey.split('_')[1]) === sId ? tId : oldKey.split('_')[1]]
+                            .sort().join('_');
+            for (const m of d.messages[oldKey]) {
+                if (String(m.from) === sId) m.from = tId;
+                if (String(m.to) === sId) m.to = tId;
+            }
+            if (d.messages[newKey] && newKey !== oldKey) {
+                d.messages[newKey] = d.messages[newKey].concat(d.messages[oldKey]);
+                d.messages[newKey].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                if (d.messages[newKey].length > 200) d.messages[newKey] = d.messages[newKey].slice(-200);
+            } else if (newKey !== oldKey) {
+                d.messages[newKey] = d.messages[oldKey];
+            }
+            if (newKey !== oldKey) delete d.messages[oldKey];
+        }
+        if (keysToMigrate.length > 0) log.push('DMs: ' + keysToMigrate.length + ' Chats migriert');
+    }
+
+    // Re-assign notifications referencing source as actor
+    if (d.notifications) {
+        for (const arr of Object.values(d.notifications)) {
+            if (Array.isArray(arr)) {
+                for (const n of arr) {
+                    if (String(n.actorUid || '') === sId) n.actorUid = tId;
+                }
+            }
+        }
+    }
+
+    // PinnedEngages: transfer and re-reference
+    if (d.pinnedEngages) {
+        if (d.pinnedEngages[sId]) {
+            if (!d.pinnedEngages[tId]) d.pinnedEngages[tId] = [];
+            d.pinnedEngages[tId] = [...new Set([...d.pinnedEngages[tId], ...d.pinnedEngages[sId]])];
+            delete d.pinnedEngages[sId];
+        }
+        for (const pk of Object.keys(d.pinnedEngages)) {
+            if (Array.isArray(d.pinnedEngages[pk])) {
+                d.pinnedEngages[pk] = d.pinnedEngages[pk].map(x => String(x) === sId ? tId : String(x));
+                d.pinnedEngages[pk] = [...new Set(d.pinnedEngages[pk])];
+            }
+        }
+    }
+
+    // Mindset stories: transfer references
+    if (d.mindsetStories) {
+        for (const cat of ['waitlist','rejected','done']) {
+            if (d.mindsetStories[cat] && d.mindsetStories[cat][sId]) {
+                if (!d.mindsetStories[cat][tId]) d.mindsetStories[cat][tId] = d.mindsetStories[cat][sId];
+                delete d.mindsetStories[cat][sId];
+            }
+        }
+        if (d.mindsetStories.weeklyState && String(d.mindsetStories.weeklyState.pickedUid) === sId) {
+            d.mindsetStories.weeklyState.pickedUid = tId;
+        }
+    }
+
+    // Clean up remaining source-keyed entries
+    for (const key of ['warteNachricht','instaWarte','dmNachrichten','_smartReminderSent']) {
+        if (d[key] && d[key][sId] !== undefined) delete d[key][sId];
+    }
+
+    // Transfer sub-account relationship
+    if (src.subUid && d.users[src.subUid]) {
+        if (!tgt.subUid) {
+            tgt.subUid = src.subUid;
+            d.users[src.subUid].parent_uid = tId;
+            log.push('Sub-Account übertragen: ' + src.subUid);
+        }
+    }
+    if (src.parent_uid && d.users[src.parent_uid]) {
+        d.users[src.parent_uid].subUid = tId;
+        tgt.parent_uid = src.parent_uid;
+        log.push('Parent-Beziehung übertragen');
+    }
+
+    // Flags
+    if (src.appUser) tgt.appUser = true;
+    if (src.started) tgt.started = true;
+    if (src.inGruppe) tgt.inGruppe = true;
+    if (src.rulesAcceptedAt && !tgt.rulesAcceptedAt) tgt.rulesAcceptedAt = src.rulesAcceptedAt;
+    if (src.joinDate && (!tgt.joinDate || src.joinDate < tgt.joinDate)) tgt.joinDate = src.joinDate;
+
+    // Backup source user before deletion
+    if (!d._mergeLog) d._mergeLog = [];
+    d._mergeLog.push({
+        timestamp: Date.now(),
+        sourceUid: sId,
+        targetUid: tId,
+        sourceBackup: JSON.parse(JSON.stringify(src)),
+        changes: log
+    });
+    while (d._mergeLog.length > 50) d._mergeLog.shift();
+
+    // Delete source user
+    delete d.users[sId];
+
+    speichern();
+    return { ok: true, log };
+}
+
+function _deleteUser(uid) {
+    const id = String(uid);
+    const u = d.users[id];
+    if (!u) return { ok: false, error: 'User nicht gefunden' };
+
+    // Backup before deletion
+    if (!d._deleteLog) d._deleteLog = [];
+    d._deleteLog.push({
+        timestamp: Date.now(),
+        uid: id,
+        backup: JSON.parse(JSON.stringify(u))
+    });
+    while (d._deleteLog.length > 50) d._deleteLog.shift();
+
+    _purgeUidFromCollections(id);
+    delete d.users[id];
+    speichern();
+
+    return { ok: true, name: u.name || u.email || id };
+}
+
+bot.command('mergeuser', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const args = (ctx.message.text || '').split(/\s+/).slice(1);
+    if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell-uid> <ziel-uid>\n\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
+
+    const sourceUid = args[0];
+    const targetUid = args[1];
+
+    if (sourceUid === targetUid) return ctx.reply('❌ Quell-UID und Ziel-UID dürfen nicht gleich sein.');
+    if (!d.users[sourceUid]) return ctx.reply('❌ Quell-User (' + sourceUid + ') nicht gefunden.');
+    if (!d.users[targetUid]) return ctx.reply('❌ Ziel-User (' + targetUid + ') nicht gefunden.');
+
+    const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
+    const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+
+    const result = _mergeUserData(sourceUid, targetUid);
+    if (!result.ok) return ctx.reply('❌ Merge fehlgeschlagen: ' + result.error);
+
+    const logText = result.log.length > 0 ? '\n\n📋 Details:\n' + result.log.map(l => '• ' + l).join('\n') : '';
+    await ctx.reply('✅ *Merge abgeschlossen!*\n\n👤 ' + srcName + ' (' + sourceUid + ') → ' + tgtName + ' (' + targetUid + ')\n🗑 Quell-User gelöscht.' + logText, { parse_mode: 'Markdown' });
+    console.log('[MERGE] ' + sourceUid + ' → ' + targetUid + ' von Admin ' + ctx.from.id + ': ' + result.log.join(', '));
+});
+
+bot.command('deleteuser', async (ctx) => {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const args = (ctx.message.text || '').split(/\s+/).slice(1);
+    if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid>\n\nLöscht einen User und alle Referenzen komplett.');
+
+    const uid = args[0];
+    if (!d.users[uid]) return ctx.reply('❌ User (' + uid + ') nicht gefunden.');
+    if (istAdminId(Number(uid))) return ctx.reply('❌ Admin-Accounts können nicht gelöscht werden.');
+
+    const userName = d.users[uid].spitzname || d.users[uid].name || uid;
+    const result = _deleteUser(uid);
+    if (!result.ok) return ctx.reply('❌ Fehler: ' + result.error);
+
+    await ctx.reply('✅ *User gelöscht!*\n\n👤 ' + userName + ' (' + uid + ')\n📋 Backup im _deleteLog gespeichert.', { parse_mode: 'Markdown' });
+    console.log('[DELETE] User ' + uid + ' (' + userName + ') gelöscht von Admin ' + ctx.from.id);
+});
+
 bot.command('dellink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const suche = ctx.message.text.replace('/dellink', '').trim().toLowerCase();
@@ -6320,6 +6897,41 @@ app.post('/report-nonengager-api', async (req, res) => {
         try { await bot.telegram.sendMessage(adminId, msg, { parse_mode: 'Markdown' }); } catch(e){}
     }
     res.json({ok:true});
+});
+
+// ── ADMIN API: merge + delete ───────────────────────────────────────────
+
+app.post('/admin/merge-users', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const sourceUid = req.body && req.body.source_uid ? String(req.body.source_uid) : '';
+    const targetUid = req.body && req.body.target_uid ? String(req.body.target_uid) : '';
+    if (!sourceUid || !targetUid) return res.status(400).json({ ok: false, error: 'source_uid und target_uid erforderlich' });
+    if (sourceUid === targetUid) return res.status(400).json({ ok: false, error: 'source_uid und target_uid dürfen nicht gleich sein' });
+    if (!d.users[sourceUid]) return res.status(404).json({ ok: false, error: 'Quell-User nicht gefunden: ' + sourceUid });
+    if (!d.users[targetUid]) return res.status(404).json({ ok: false, error: 'Ziel-User nicht gefunden: ' + targetUid });
+
+    const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
+    const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+    const result = _mergeUserData(sourceUid, targetUid);
+    if (!result.ok) return res.status(500).json(result);
+
+    console.log('[MERGE-API] ' + sourceUid + ' → ' + targetUid + ': ' + result.log.join(', '));
+    res.json({ ok: true, source: { uid: sourceUid, name: srcName }, target: { uid: targetUid, name: tgtName }, log: result.log });
+});
+
+app.post('/admin/delete-user', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.body && req.body.uid ? String(req.body.uid) : '';
+    if (!uid) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    if (!d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + uid });
+    if (istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Admin-Accounts können nicht gelöscht werden' });
+
+    const userName = d.users[uid].spitzname || d.users[uid].name || uid;
+    const result = _deleteUser(uid);
+    if (!result.ok) return res.status(500).json(result);
+
+    console.log('[DELETE-API] User ' + uid + ' (' + userName + ') gelöscht');
+    res.json({ ok: true, uid, name: userName });
 });
 
 const PORT = process.env.PORT || 3000;

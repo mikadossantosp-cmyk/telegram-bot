@@ -242,110 +242,13 @@ async function updateSuperLinkCard(slId) {
 }
 
 async function handleSuperlink(ctx, senderUid, senderUser, text) {
-    const uidStr = String(senderUid);
-    if (!senderUser?.instagram) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Zuerst Instagram verbinden! Schreibe /setinsta'); } catch(e) {}
-        return;
-    }
-    if (!isSuperLinkPostingAllowed()) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks können nur Montag bis Samstag (bis 23:58 Uhr) gepostet werden! Sonntag ist Auswertungstag.'); } catch(e) {}
-        return;
-    }
-    const week = getBerlinWeekKey();
-    const isElitePlus = d.users[uidStr]?.role === '🌟 Elite+';
-    const maxSuperlinks = isElitePlus ? 2 : 1;
-    const slThisWeek = Object.values(d.superlinks||{}).filter(s => s.uid === uidStr && s.week === week);
-    const userCredits = d.users[uidStr]?.superlinkCredits || 0;
-    const isExtraSlotTG = slThisWeek.length > 0;
-    if (slThisWeek.length >= maxSuperlinks && userCredits <= 0) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits ' + maxSuperlinks + ' Superlink(s) gepostet! Limit: ' + maxSuperlinks + 'x pro Woche.'); } catch(e) {}
-        return;
-    }
-    const uCheck = d.users[uidStr];
-    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && (uCheck?.diamonds||0) < 10 && userCredits <= 0) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten oder einen Admin-Slot. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
-        return;
-    }
-    const useCredit = (slThisWeek.length >= maxSuperlinks || isExtraSlotTG) && userCredits > 0;
-    // Strip /superlink command prefix if user sent it together with the URL
-    const cleanText = text.replace(/^\/superlink\s*/i, '').trim();
-    const urlMatch = cleanText.match(/(?:https?:\/\/)?((?:www\.)?instagram\.com\/[^\s]+)/i);
-    let url = null;
-    if (urlMatch) {
-        url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
-        url = url.replace(/[.,;!?]+$/, '');
-    }
-    if (!url || !url.includes('instagram.com')) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Bitte sende einen gültigen Instagram-Link (instagram.com/...)'); } catch(e) {}
-        return;
-    }
-    const caption = cleanText.replace(urlMatch[0], '').trim();
-    let feThreadId;
-    try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
-    if (!feThreadId) {
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Full Engagement Thread nicht verfügbar. Bitte Admin kontaktieren.'); } catch(e) {}
-        return;
-    }
+    // Superlinks werden nicht mehr über Telegram gepostet — alles nur noch in der App.
+    // Der Engagement-Check liest weiterhin d.superlinks (gespeist von /post-superlink-api).
     try { await ctx.deleteMessage(); } catch(e) {}
-    const slId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    const u = d.users[uidStr];
-    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||ctx.from.first_name||'User', u?.instagram, url, caption, 0, {});
-    const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
-        parse_mode: 'HTML',
-        message_thread_id: Number(feThreadId),
-        reply_markup: buildSuperLinkButtons(slId, 0)
-    });
-    d.superlinks = d.superlinks || {};
-    d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
-    tryFetchThumbnail(d.superlinks[slId], 'url');
-    if (useCredit && d.users[uidStr]) {
-        d.superlinks[slId].adminCredit = true;
-        d.users[uidStr].superlinkCredits = Math.max(0, (d.users[uidStr].superlinkCredits||0) - 1);
-    } else if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) {
-        d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
-    }
-    // Superlink-Karte im Web-Thread speichern
-    const feThreadKey = String(feThreadId);
-    if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
-    const u2 = d.users[uidStr];
-    d.threadMessages[feThreadKey].unshift({
-        uid: uidStr, tgName: u2?.username ? '@'+u2.username : null,
-        name: u2?.spitzname || u2?.name || ctx.from.first_name || 'User',
-        role: u2?.role || null, type: 'text',
-        text: '🔗 ' + url + (caption ? '\n' + caption : '') + '\n👍 0 Likes',
-        mediaId: null, timestamp: Date.now(), msg_id: sent.message_id, slId
-    });
-    if (d.threadMessages[feThreadKey].length > 100) d.threadMessages[feThreadKey] = d.threadMessages[feThreadKey].slice(0, 100);
-    const feThr = (d.threads||[]).find(t => String(t.id) === feThreadKey);
-    if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
-    speichern();
-    // DM an Poster
-    try {
-        const maxMsg = isElitePlus ? 2 : 1;
-        await bot.telegram.sendMessage(Number(senderUid),
-            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können ' + maxMsg + '× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
-            { parse_mode: 'Markdown' });
-    } catch(e) {}
-    // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
-    const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
-    const sl = d.superlinks[slId];
-    if (sl) sl.dmNotifications = sl.dmNotifications || {};
-    for (const other of otherPosters) {
-        try {
-            const magicUrl = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
-            const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } }
-            );
-            if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
-            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
-        } catch(e) {}
-    }
+    try { await bot.telegram.sendMessage(Number(senderUid),
+        '⭐ Superlinks werden jetzt direkt über die App gepostet.\n\n' +
+        '📲 Öffne die App → Feed → ⭐ Superlink posten',
+    ); } catch(e) {}
 }
 
 async function runEngagementCheck(isReminder = false) {
@@ -371,12 +274,8 @@ async function runEngagementCheck(isReminder = false) {
         if (!likedAll) {
             warned++;
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
-            const isNumericUid = /^\d+$/.test(String(uid));
             if (isReminder) {
                 const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
-                if (isNumericUid) {
-                    try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
-                }
                 try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
                 u.xp = Math.max(0, (u.xp||0) - 50);
@@ -384,9 +283,6 @@ async function runEngagementCheck(isReminder = false) {
                 const warnCount = u.warnings;
                 const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
                 addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
-                if (isNumericUid) {
-                    try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
-                }
                 try { sendCreatorBoostDM(uid, violationText, { link: { url: magicUrl, label: '📲 In der App ansehen' } }); } catch(e) {}
             }
         }
@@ -532,21 +428,12 @@ async function superlinkDailyReminder() {
             !fam.has(String(s.uid)) && !familyHasLiked(s.likes)
         ).length;
         if (offen === 0) continue;
-        const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
-        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } };
-        // Telegram-DM nur an numerische UIDs (Sub-Accounts haben keine TG-Identität).
-        if (/^\d+$/.test(String(uid))) {
-            try {
-                await bot.telegram.sendMessage(Number(uid), tgText, opts);
-                sent++;
-            } catch(e) {}
-        }
-        // App-DM auch für Subs OK.
+        // Nur noch In-App-DM — Superlinks laufen vollständig über die App.
         try {
             const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
             const engageUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/feed?tab=engagement';
             sendCreatorBoostDM(uid, inappText, { link: { url: engageUrl, label: '📲 Jetzt engagen' } });
+            sent++;
         } catch(e) {}
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
@@ -674,23 +561,7 @@ setInterval(async () => {
     const h = now.getHours(), m = now.getMinutes();
     if (!d._seenEngagementJobs) d._seenEngagementJobs = {};
 
-    // Montag 08:00 → Neue Engagement-Woche ankündigen
-    if (day === 1 && h === 8 && m === 0 && !d._seenEngagementJobs[wk+'_open']) {
-        d._seenEngagementJobs[wk+'_open'] = true;
-        speichern();
-        try {
-            const threadId = await ensureFullEngagementThread();
-            if (threadId && GROUP_B_ID) {
-                await bot.telegram.sendMessage(GROUP_B_ID,
-                    '⭐ *Neue Full Engagement Woche gestartet!*\n\n' +
-                    'Ihr könnt jetzt eure Superlinks posten.\n\n' +
-                    '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Elite+ = 2)\n• Wer postet, muss ALLE anderen Superlinks liken, kommentieren, teilen & speichern\n• Sonst: -50 XP am Sonntag\n\n' +
-                    '📲 Link hier in diesen Thread posten oder per /superlink im Bot.',
-                    { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
-                );
-            }
-        } catch(e) { console.log('Engagement Ankündigung Fehler:', e.message); }
-    }
+    // Montag 08:00 — TG-Wochen-Ankündigung deaktiviert (Superlinks laufen jetzt App-only).
 
     // Mo-Sa 20:00 → Tägliche Erinnerung an Poster mit noch offenen Superlinks
     if (day !== 0 && h === 20 && m === 0 && !d._seenEngagementJobs[wk+'_dr_'+day]) {
@@ -2430,41 +2301,8 @@ bot.action('set_insta', async (ctx) => {
 const slLikeInProgress = new Set();
 const _slWaiting = {};
 bot.action(/^sllike_(.+)$/, async (ctx) => {
-    const slId = ctx.match[1];
-    const uid = String(ctx.from.id);
-    if (ctx.callbackQuery?.message?.chat?.type === 'private') {
-        return ctx.answerCbQuery('❌ Liken ist nur direkt im Full-Engagement-Thread möglich!', { show_alert: true });
-    }
-    if (slLikeInProgress.has(uid + '_' + slId)) return ctx.answerCbQuery('⏳');
-    slLikeInProgress.add(uid + '_' + slId);
-    try {
-        const sl = d.superlinks?.[slId];
-        if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
-        if (sl.uid === uid) return ctx.answerCbQuery('❌ Du kannst deinen eigenen Link nicht liken');
-        if (String(getRootUid(uid)) === String(getRootUid(sl.uid))) return ctx.answerCbQuery('❌ Eigener Account — kein Self-Like');
-        if (!Array.isArray(sl.likes)) sl.likes = [];
-        if (!sl.likerNames) sl.likerNames = {};
-        const idx = sl.likes.indexOf(uid);
-        if (idx >= 0) {
-            return ctx.answerCbQuery('✅ Bereits geliked!');
-        }
-        sl.likes.push(uid);
-        const u = d.users[uid];
-        sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
-        addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!', String(uid));
-        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
-        await ctx.answerCbQuery('❤️ Geliked!');
-        if (ctx.callbackQuery?.message?.chat?.type === 'private') {
-            try { await ctx.deleteMessage(); } catch(e) {}
-        }
-        // Reminder-DM für diesen Superlink im Chat des Likers löschen
-        if (sl.dmNotifications && sl.dmNotifications[uid]) {
-            try { await bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[uid]); } catch(e) {}
-            delete sl.dmNotifications[uid];
-        }
-        speichern();
-        await updateSuperLinkCard(slId);
-    } finally { slLikeInProgress.delete(uid + '_' + slId); }
+    // Liken läuft nur noch über die App — TG-Button wird vom Bot stummgeschaltet.
+    try { await ctx.answerCbQuery('⭐ Liken läuft jetzt nur noch über die App. Öffne den Feed → Engagement-Tab.', { show_alert: true }); } catch(e) {}
 });
 
 bot.action(/^slliker_(.+)$/, async (ctx) => {
@@ -3183,56 +3021,14 @@ bot.command('fixsuperlink', async (ctx) => {
 });
 
 bot.command('superlink', async (ctx) => {
-    const uid = String(ctx.from.id);
-    const u = user(ctx.from.id, ctx.from.first_name);
-    if (!u.started) return ctx.reply('⚠️ Starte zuerst den Bot per DM mit /start');
-    if (istAdminId(ctx.from.id)) return ctx.reply('⚙️ Admins können keine Superlinks posten.');
-
-    const weekKey = getBerlinWeekKey();
-    const weekSuperlinks = Object.values(d.superlinks||{}).sort((a,b) => b.timestamp - a.timestamp).filter(s => s.week === weekKey);
-    const isElitePlusSL = u.role === '🌟 Elite+';
-    const maxSLCmd = isElitePlusSL ? 2 : 1;
-    const mySlCountThisWeek = weekSuperlinks.filter(s => s.uid === uid).length;
-    const mySlThisWeek = mySlCountThisWeek > 0;
-    const canPost = mySlCountThisWeek < maxSLCmd && isSuperLinkPostingAllowed();
-
-    let text = '⭐ *Full Engagement – Superlinks*\n\n';
-    text += '📌 *Regeln:*\n• ' + maxSLCmd + ' Superlink' + (maxSLCmd > 1 ? 's' : '') + ' pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n';
-
-    if (weekSuperlinks.length === 0) {
-        text += '📭 Noch keine Superlinks diese Woche.\n\n';
-    } else {
-        text += `📊 *Diese Woche: ${weekSuperlinks.length} Superlink${weekSuperlinks.length !== 1 ? 's' : ''}*\n`;
-        for (const sl of weekSuperlinks) {
-            const poster = d.users[sl.uid];
-            const name = (poster?.spitzname || poster?.name || 'User').replace(/[*_`]/g, '');
-            const liked = (sl.likes||[]).includes(uid);
-            const isOwn = sl.uid === uid;
-            const status = isOwn ? '(dein)' : liked ? '✅' : '❌ noch nicht geliked';
-            text += `\n• *${name}* ${status}\n  ${sl.url}`;
-        }
-        text += '\n\n';
-    }
-
-    if (mySlCountThisWeek >= maxSLCmd) {
-        text += `✅ *Du hast diese Woche bereits ${maxSLCmd}/${maxSLCmd} Superlink(s) gepostet.*`;
-    } else if (!isSuperLinkPostingAllowed()) {
-        text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
-        if (mySlThisWeek) text += ` (${mySlCountThisWeek}/${maxSLCmd} diese Woche gepostet)`;
-    } else if (mySlThisWeek && canPost) {
-        text += `⭐ *${mySlCountThisWeek}/${maxSLCmd} Superlinks gepostet — noch 1 übrig!*\n📲 Schicke mir deinen Instagram-Link als nächste Nachricht.`;
-        _slWaiting[uid] = Date.now();
-    } else if (!u.instagram) {
-        text += '⚠️ Bitte zuerst /setinsta verwenden.';
-    } else {
-        text += '📲 *Superlink posten:*\nSchicke mir deinen Instagram-Link als nächste Nachricht.';
-        _slWaiting[uid] = Date.now();
-    }
-
-    const buttons = [];
-    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://web-production-7981d.up.railway.app' }]);
-
-    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
+    // Superlinks werden nicht mehr über Telegram gepostet/verwaltet — alles in der App.
+    await ctx.reply(
+        '⭐ *Full Engagement — Superlinks*\n\n' +
+        'Superlinks werden jetzt direkt über die App gepostet und verwaltet.\n\n' +
+        '📲 Öffne die App → Feed → ⭐ Superlink posten\n\n' +
+        'Dort siehst du auch deinen Engagement-Status und kannst andere Superlinks liken.',
+        { parse_mode: 'Markdown' }
+    );
 });
 
 bot.command('restoredata', async (ctx) => {

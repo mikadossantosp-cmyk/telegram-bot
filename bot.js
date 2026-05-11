@@ -4212,7 +4212,6 @@ app.post('/mindset-set-answer-api', (req, res) => {
     const answer = String(req.body.answer || ''); // 'yes' oder 'no'
     if (!uid || !d.users[uid]) return res.json({ ok:false, error:'User nicht gefunden' });
     if (!['yes','no'].includes(answer)) return res.json({ ok:false, error:'Ungültige Antwort' });
-    if (d.users[uid].parent_uid) return res.json({ ok:false, error:'Bitte mit dem Hauptaccount eintragen — Sub-Accounts können sich nicht separat eintragen' });
     if (!d.users[uid].instagram) return res.json({ ok:false, error:'Erst Instagram-Username in den Einstellungen setzen' });
     if (isMindsetLocked()) return res.json({ ok:false, error:'Antworten für diese Woche bereits gefroren' });
     if (d.mindsetStories.done[uid]) return res.json({ ok:false, error:'Du wurdest bereits vorgestellt' });
@@ -4302,7 +4301,6 @@ app.post('/mindset-admin-blast-api', async (req, res) => {
     const targets = Object.keys(d.users).filter(uid => {
         const u = d.users[uid];
         if (!u || !u.instagram || u.isSystem) return false;
-        if (u.parent_uid) return false;                    // Sub-Accounts: nur Parent kriegt die DM
         if (istAdminId(uid)) return false;
         if (ms.waitlist[uid] || ms.rejected[uid] || ms.done[uid]) return false;
         return true;

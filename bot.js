@@ -4,19 +4,22 @@ import express from 'express';
 import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
+import { detectGender, genderize } from './gender-helper.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
-const APP_URL        = process.env.APP_URL || 'https://site--creatorboost-app--899dydmn7d7v.code.run';
+const APP_URL        = process.env.APP_URL || 'https://web-production-7981d.up.railway.app';
 const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
-const GROUP_A_ID     = Number(process.env.GROUP_A_ID);
-const GROUP_B_ID     = Number(process.env.GROUP_B_ID);
-const MEINE_GRUPPE   = 'B';
+const GROUP_A_ID       = Number(process.env.GROUP_A_ID);
+const GROUP_B_ID       = Number(process.env.GROUP_B_ID);
+const GROUP_A_INVITE   = process.env.GROUP_A_INVITE || 'https://t.me/+w-V2QL-igJw5YjY0';  // Link-Gruppe (zum Insta-Posten)
+const GROUP_B_INVITE   = process.env.GROUP_B_INVITE || '';                                  // Chat-Gruppe (Community-Chat)
+const MEINE_GRUPPE     = 'B';
 
 process.env.TZ = 'Europe/Berlin';
 
@@ -29,6 +32,10 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use((req, res, next) => {
     try {
         if (req.path === '/data' || req.path.startsWith('/bild/')) return next();
+        // /app-presence ist nur ein Marker für "User existiert in App" — soll NICHT
+        // als echte Aktivität für Dashboard-Online-Status zählen, sonst zeigt
+        // Dashboard nach App-Restart alle Sessions als "🟢 online".
+        if (req.path === '/app-presence' || req.path === '/track-funnel') return next();
         const uid = String(req.query?.uid || req.body?.uid || req.body?.user_id || req.query?.user_id || '');
         if (!uid || !/^\d+$/.test(uid)) return next();
         if (!d.appActivity) d.appActivity = {};
@@ -40,11 +47,17 @@ app.use((req, res, next) => {
         const ep = (req.path.replace(/^\/+/, '').split('/')[0] || 'root').slice(0,40);
         e.lastEndpoint = ep;
         e.endpoints[ep] = (e.endpoints[ep]||0) + 1;
+        // Permanent Flag: User war in App. Nie zurückgesetzt. Für Member-Eligibility.
+        if (d.users[uid]) d.users[uid].appUser = true;
     } catch(_) {}
     next();
 });
 
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
+
+// System-User für In-App DMs (CreatorBoost). Hier oben definiert damit laden() unten
+// safely darauf referenzieren kann (vorher: TDZ-ReferenceError wenn man's bräuchte).
+const CREATORBOOST_UID = 'creatorboost';
 
 let d = {
     users: {}, chats: {}, links: {},
@@ -85,6 +98,10 @@ function laden() {
         const geladen = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         d = Object.assign({}, d, geladen);
         for (const uid in d.users) {
+            // System-User wie 'creatorboost' nicht als gestarteter Telegram-User markieren —
+            // sonst iterieren welcomeFunnel/announce/insta-check etc. über ihn und versuchen
+            // bot.telegram.sendMessage(NaN, ...) → wasted error pro Lauf.
+            if (uid === CREATORBOOST_UID || d.users[uid].isSystem) continue;
             d.users[uid].started = true;
             if (!d.users[uid].instagram) d.users[uid].instagram = null;
             if (istAdminId(Number(uid))) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
@@ -104,6 +121,7 @@ function laden() {
             gesternDailyXP: {}, badgeTracker: {}, m1Streak: {}, missionAuswertungErledigt: {},
             _lastEvents: {},
             threadMessages: {}, threads: [], dailyLogins: {}, dailyGroupMsgs: {}, threadLastRead: {}, superlinks: {}, fullEngagementThreadId: null,
+            appChat: [], appChatLastRead: {},
             wochenGewinnspiel: { aktiv: true, gewinner: [], letzteAuslosung: null },
             xpEvent: { aktiv: false, multiplier: 1, start: null, end: null, announced: false },
             newsletter: [], pinnedEngages: {},
@@ -155,6 +173,26 @@ function speichernDebounced() {
 
 setInterval(speichern, 30000);
 laden();
+
+// ── MIGRATION: Email-User auf started:true + inGruppe:true backfillen ──
+// Vor diesem Fix wurden Email-User mit started:false + inGruppe:false angelegt,
+// dadurch wurden sie aus allen Ranking-/Mission-/Daily-Filtern rausgefiltert.
+(function backfillEmailUsers() {
+    let fixed = 0;
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || typeof u !== 'object') continue;
+        const isEmailUser = u.signupSource === 'email' || (u.email && u.appUser);
+        if (!isEmailUser) continue;
+        let changed = false;
+        if (u.started !== true) { u.started = true; changed = true; }
+        if (u.inGruppe === false) { u.inGruppe = true; changed = true; }
+        if (changed) fixed++;
+    }
+    if (fixed > 0) {
+        console.log(`✅ Email-User Backfill: ${fixed} User auf started:true + inGruppe:true gesetzt`);
+        speichern();
+    }
+})();
 
 // ── FULL ENGAGEMENT / SUPERLINK SYSTEM ──
 
@@ -264,6 +302,7 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     });
     d.superlinks = d.superlinks || {};
     d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
+    tryFetchThumbnail(d.superlinks[slId], 'url');
     if (useCredit && d.users[uidStr]) {
         d.superlinks[slId].adminCredit = true;
         d.users[uidStr].superlinkCredits = Math.max(0, (d.users[uidStr].superlinkCredits||0) - 1);
@@ -294,17 +333,17 @@ async function handleSuperlink(ctx, senderUid, senderUser, text) {
     } catch(e) {}
     // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
     const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
-    const threadUrl = getFullEngagementThreadUrl();
     const sl = d.superlinks[slId];
     if (sl) sl.dmNotifications = sl.dmNotifications || {};
     for (const other of otherPosters) {
         try {
+            const magicUrl = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
             const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
-                threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
+                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } }
             );
             if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
-            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
+            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
         } catch(e) {}
     }
 }
@@ -316,18 +355,33 @@ async function runEngagementCheck(isReminder = false) {
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
     let warned = 0;
     for (const uid of posters) {
-        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
+        const u = d.users[uid];
+        if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
+        // Family-Filter: eigene Family (Parent ↔ Sub) zählt nicht als 'andere Links'.
+        const fam = new Set(familyUids(uid));
+        const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
         if (!otherLinks.length) continue;
         const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
         if (!likedAll) {
             warned++;
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+            const isNumericUid = /^\d+$/.test(String(uid));
             if (isReminder) {
-                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+                const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
+                if (isNumericUid) {
+                    try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
+                }
+                try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
-                const u = d.users[uid];
-                if (u) { u.xp = Math.max(0, (u.xp||0) - 50); u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1; }
-                addNotification(uid, '⚠️', 'Full Engagement Pflicht verletzt! -50 XP');
-                try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP und eine Verwarnung wurden vergeben\\.', { parse_mode: 'MarkdownV2' }); } catch(e) {}
+                u.xp = Math.max(0, (u.xp||0) - 50);
+                u.level = level(u.xp); u.role = badge(u.xp); u.warnings = (u.warnings||0) + 1;
+                const warnCount = u.warnings;
+                const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
+                addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
+                if (isNumericUid) {
+                    try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
+                }
+                try { sendCreatorBoostDM(uid, violationText, { link: { url: magicUrl, label: '📲 In der App ansehen' } }); } catch(e) {}
             }
         }
     }
@@ -335,25 +389,155 @@ async function runEngagementCheck(isReminder = false) {
     return { checked: posters.length, warned };
 }
 
+function buildAppReminderMessage(uid = null) {
+    const appUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/, '');
+    const apkUrl = appUrl + '/download-app';
+    // Wenn uid bekannt → Magic-Link für 1-Klick-Login. Sonst nackter App-URL als Fallback.
+    const openUrl = uid ? buildMagicLinkUrl(uid, '/feed') : appUrl;
+    const text =
+        '📱 *Hast du schon die CreatorX-App?*\n\n' +
+        'Die App ist deine Zentrale für die Community:\n' +
+        '• Feed mit allen Posts der Woche\n' +
+        '• Direktnachrichten\n' +
+        '• Profile, Stats & Diamanten-Shop\n' +
+        '• Push-Benachrichtigungen über Engagement\n\n' +
+        '📲 *Auf dem Handy installieren:*\n' +
+        '• iPhone: Safari → Teilen → "Zum Home-Bildschirm"\n' +
+        '• Android (PWA): Chrome → Menü → "App installieren"\n' +
+        '• Android (APK): ' + apkUrl + '\n\n' +
+        (uid
+            ? '🔐 Klick einfach auf den Button — du bist sofort eingeloggt, kein Code nötig.'
+            : '🔐 *Login-Code holen:*\nSchick mir hier den Befehl /mycode — du bekommst einen persönlichen Login-Code.');
+    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
+        [{ text: '📲 App öffnen (auto-login)', url: openUrl }],
+        [{ text: '⬇️ APK Download (Android)', url: apkUrl }]
+    ] } };
+    return { text, opts };
+}
+
+async function appReminderForNonUsers() {
+    const APP_REMINDER_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let sent = 0, skipped = 0;
+    for (const uid of Object.keys(d.users || {})) {
+        const u = d.users[uid];
+        if (!u?.started) continue;
+        if (uid === CREATORBOOST_UID) continue;
+        if (!/^\d+$/.test(String(uid))) continue;
+        if (d.appActivity?.[uid]) { skipped++; continue; }
+        if (u.lastAppReminder && (now - u.lastAppReminder) < APP_REMINDER_COOLDOWN_MS) { skipped++; continue; }
+        try {
+            const { text, opts } = buildAppReminderMessage(uid);
+            await bot.telegram.sendMessage(Number(uid), text, opts);
+            u.lastAppReminder = now;
+            sent++;
+        } catch(e) {}
+    }
+    if (sent || skipped) {
+        speichern();
+        console.log(`📱 App-Reminder: ${sent} gesendet, ${skipped} skipped`);
+    }
+    return { sent, skipped };
+}
+
+// 30-Min Feed-Batch: sammelt neue Gruppen-Links seit letztem Batch und schickt
+// jedem Bot-User eine zusammengefasste DM mit Magic-Link zum Feed.
+async function feedBatchDM() {
+    const now = Date.now();
+    const lastBatch = d.lastFeedBatchAt || (now - 30*60*1000);
+    // Trigger: gibt es überhaupt was Neues seit dem letzten Batch?
+    const newLinks = Object.values(d.links||{}).filter(l =>
+        l.timestamp && l.timestamp > lastBatch && l.timestamp <= now &&
+        l.text && l.text.includes('instagram.com')
+    );
+    if (!newLinks.length) {
+        d.lastFeedBatchAt = now;
+        return { sent: 0, links: 0 };
+    }
+    // Inhalt: alle Insta-Links von HEUTE — User sieht immer den aktuellen Stand
+    // (offene Links insgesamt), nicht nur die vom letzten 30min-Slot.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todaysLinks = Object.values(d.links||{}).filter(l =>
+        l.timestamp && l.timestamp >= startOfToday.getTime() && l.timestamp <= now &&
+        l.text && l.text.includes('instagram.com')
+    );
+    let sent = 0;
+    for (const uid of Object.keys(d.users||{})) {
+        const u = d.users[uid];
+        if (!u?.started) continue;
+        if (uid === CREATORBOOST_UID || u.isSystem) continue;
+        if (!/^\d+$/.test(String(uid))) continue;
+        const stillToEngage = todaysLinks.filter(l => {
+            if (String(l.user_id) === String(uid)) return false; // eigener Post
+            return !(l.likes instanceof Set ? l.likes.has(String(uid)) : (Array.isArray(l.likes) && l.likes.includes(String(uid))));
+        });
+        if (!stillToEngage.length) {
+            // Keine offenen Links mehr → alte Reminder-Nachricht löschen, kein neuer Send.
+            if (u._lastFeedBatchMsgId) {
+                try { await bot.telegram.deleteMessage(Number(uid), u._lastFeedBatchMsgId); } catch(e) {}
+                delete u._lastFeedBatchMsgId;
+            }
+            continue;
+        }
+        // Anti-Spam: alte 'offene Links'-Nachricht löschen BEVOR die neue gesendet wird —
+        // der User sieht so immer nur EINE aktuelle Reminder-Nachricht im Chat.
+        if (u._lastFeedBatchMsgId) {
+            try { await bot.telegram.deleteMessage(Number(uid), u._lastFeedBatchMsgId); } catch(e) {}
+            delete u._lastFeedBatchMsgId;
+        }
+        try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+            const todoNames = stillToEngage.slice(0, 5).map(l => {
+                const lu = d.users[l.user_id];
+                return '• ' + (lu?.spitzname || lu?.name || l.user_name || 'User');
+            }).join('\n');
+            const todoMore = stillToEngage.length > 5 ? `\n• +${stillToEngage.length - 5} weitere` : '';
+            const text = `🔗 *${stillToEngage.length} offene${stillToEngage.length===1?'r':''} Link${stillToEngage.length===1?'':'s'} im Feed*\n\n${todoNames}${todoMore}\n\nKlick zum Engagen — du bist sofort eingeloggt:`;
+            const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Heute-Feed öffnen', url: magicUrl }]] } };
+            const msg = await bot.telegram.sendMessage(Number(uid), text, opts);
+            if (msg?.message_id) u._lastFeedBatchMsgId = msg.message_id;
+            sent++;
+            await new Promise(r => setTimeout(r, 50));
+        } catch(e) {}
+    }
+    d.lastFeedBatchAt = now;
+    speichern();
+    console.log(`📨 Feed-Batch: ${newLinks.length} neue Links (Trigger), ${todaysLinks.length} heute total → ${sent} DMs gesendet/aktualisiert`);
+    return { sent, links: newLinks.length };
+}
+
 async function superlinkDailyReminder() {
     const weekKey = getBerlinWeekKey();
     const weekSuperlinks = Object.values(d.superlinks||{}).filter(s => s.week === weekKey);
-    if (weekSuperlinks.length < 2) return { sent: 0 };
     const posters = [...new Set(weekSuperlinks.map(s => s.uid))];
-    const threadUrl = getFullEngagementThreadUrl();
     let sent = 0;
     for (const uid of posters) {
-        const offen = weekSuperlinks.filter(s => s.uid !== uid && !(Array.isArray(s.likes) && s.likes.includes(uid))).length;
+        const u = d.users[uid];
+        if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
+        // Family-Filter: nicht für ungelinkte Posts der eigenen Family (Parent ↔ Sub) erinnern.
+        const fam = new Set(familyUids(uid));
+        const offen = weekSuperlinks.filter(s =>
+            !fam.has(String(s.uid)) &&
+            !(Array.isArray(s.likes) && s.likes.includes(uid))
+        ).length;
         if (offen === 0) continue;
-        const txt = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-        const opts = threadUrl
-            ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt engagen', url: threadUrl }]] } }
-            : { parse_mode: 'Markdown' };
+        const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
+        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } };
+        // Telegram-DM nur an numerische UIDs (Sub-Accounts haben keine TG-Identität).
+        if (/^\d+$/.test(String(uid))) {
+            try {
+                await bot.telegram.sendMessage(Number(uid), tgText, opts);
+                sent++;
+            } catch(e) {}
+        }
+        // App-DM auch für Subs OK.
         try {
-            await bot.telegram.sendMessage(Number(uid), txt, opts);
-            sent++;
+            const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
+            const engageUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/feed?tab=engagement';
+            sendCreatorBoostDM(uid, inappText, { link: { url: engageUrl, label: '📲 Jetzt engagen' } });
         } catch(e) {}
-        sendAppPush(String(uid), '⭐ Superlink-Erinnerung', `Du hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche — jetzt engagen!`, '/feed?tab=engagement').catch(()=>{});
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
     return { sent };
@@ -534,6 +718,7 @@ async function ensureFullEngagementThread() {
 async function checkInstagramForAllUsers() {
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || (u.instagram && u.instagram.trim() !== '') || d.instaWarte[uid]) continue;
+        if (uid === CREATORBOOST_UID || u.isSystem) continue;
         try {
             await bot.telegram.sendMessage(Number(uid), '📸 Bitte schick mir deinen Instagram Namen.\n\n(z.B. max123)', { reply_markup: { inline_keyboard: [[{ text: '📸 Instagram eingeben', callback_data: 'set_insta' }]] } });
             d.instaWarte[uid] = true;
@@ -631,16 +816,38 @@ function xpAddMitDaily(uid, menge, name) {
 
 function user(uid, name) {
     if (!d.users[uid]) {
-        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false, inventory: [], activeRing: null };
+        d.users[uid] = { name: name || '', username: null, instagram: null, bio: null, nische: null, spitzname: null, trophies: [], xp: 0, level: 1, warnings: 0, started: false, links: 0, likes: 0, role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(), inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false, inventory: [], activeRing: null, gender: null };
     }
     if (name) d.users[uid].name = name;
     if (istAdminId(uid)) { d.users[uid].xp = 0; d.users[uid].level = 1; d.users[uid].role = '⚙️ Admin'; }
+    // Auto-Detect Gender wenn noch nicht gesetzt — manuelles /setgender überschreibt das.
+    if (d.users[uid].gender == null) {
+        const detected = detectGender(d.users[uid].spitzname || d.users[uid].name);
+        if (detected) d.users[uid].gender = detected;
+    }
     return d.users[uid];
 }
 
 // Sub-Account: nur in der App lebende Persona. parent_uid zeigt auf den Telegram-User.
 function isSubAccount(uid) { return !!(d.users[uid] && d.users[uid].parent_uid); }
 function getRootUid(uid) { return d.users[uid]?.parent_uid ? String(d.users[uid].parent_uid) : String(uid); }
+// Liefert alle UIDs der Account-Family (Parent + Sub) — nützlich um zu vermeiden
+// dass jemand für ungelinkte Posts der eigenen Family erinnert/bestraft wird.
+function familyUids(uid) {
+    const u = d.users[uid];
+    const set = new Set([String(uid)]);
+    if (!u) return [...set];
+    if (u.parent_uid) {
+        // Sub: Family = Sub + Parent
+        set.add(String(u.parent_uid));
+        const p = d.users[u.parent_uid];
+        if (p && p.subUid) set.add(String(p.subUid));
+    } else {
+        // Parent: Family = Parent + sein Sub
+        if (u.subUid) set.add(String(u.subUid));
+    }
+    return [...set];
+}
 // DM-Send-Wrapper: Sub-Accounts haben keine Telegram-UID, sendMessage würde "chat not found" werfen.
 async function dmUser(uid, text, opts) {
     if (isSubAccount(uid)) return;
@@ -674,6 +881,20 @@ function istInstagramLink(text) {
     if (!text) return false;
     const t = text.toLowerCase();
     return t.includes('instagram.com') || t.includes('instagr.am');
+}
+// Extrahiert die erste Instagram-URL aus einem freien Text. Toleriert auch
+// schemenlose URLs ('www.instagram.com/p/ABC' oder 'instagram.com/p/ABC') und
+// trimmt typische trailing-Punktuation ('.', ',', ')', etc.) ab.
+function extractInstagramUrl(text) {
+    if (!text) return null;
+    const s = String(text);
+    const trim = (u) => u.replace(/[.,;)\]!?]+$/, '');
+    const m = s.match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+/i);
+    if (m) return trim(m[0]);
+    // Schemen-lose Version → https:// vorschieben.
+    const m2 = s.match(/(?:^|\s)((?:www\.)?(?:instagram\.com|instagr\.am)\/[^\s]+)/i);
+    if (m2) return 'https://' + trim(m2[1]);
+    return null;
 }
 function linkUrl(text) {
     if (!text || typeof text !== 'string') return null;
@@ -870,9 +1091,38 @@ bot.use(async (ctx, next) => {
     } catch (e) { console.log('Middleware Fehler:', e.message); return next(); }
 });
 
+// Welcome-Briefing — wird beim /start (Erst- + Re-) und über /welcome wieder aufgerufen.
+async function sendWelcomeBriefing(ctx, uid, opts = {}) {
+    const wasNew = !!opts.wasNew;
+    const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
+    const greeting = wasNew ? `👋 *Willkommen, ${ctx.from.first_name || 'Creator'}!*` : `👋 *Hi ${ctx.from.first_name || 'Creator'}!*`;
+    const briefing = greeting + '\n\n' +
+        'Schön dass du dabei bist 🚀\n\n' +
+        'Hier ist wie *CreatorX* funktioniert — wir haben *2 Gruppen* + *eine App*:\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        '🔗 *Link-Gruppe* — _hier postest du deine Insta-Reels_\n' +
+        'Jeder postet täglich seinen Reel-Link. Andere Creator liken zurück. Bot trackt alles.\n\n' +
+        '💬 *Chat-Gruppe* — _hier wird gequatscht_\n' +
+        'Community-Chat, Tipps, Fragen, Engagement-Pflicht-Threads.\n\n' +
+        '📱 *Die App* — _vereinfacht alles, nutze am besten die_ ⭐\n' +
+        'Feed, Stories, Profil, Ranking (👑 Gold / 🥈 Silber / 🥉 Bronze für Top-3), Messages, Sub-Account, Einstellungen — alles an einem Ort.\n' +
+        '━━━━━━━━━━━━━━\n\n' +
+        '⚠️ *Wichtig:* Setz unten deinen Instagram-Username — sonst kannst du in der App nicht posten/liken.';
+    const buttons = [];
+    if (GROUP_A_INVITE) buttons.push([{ text: '🔗 Zur Link-Gruppe', url: GROUP_A_INVITE }]);
+    if (GROUP_B_INVITE) buttons.push([{ text: '💬 Zur Chat-Gruppe', url: GROUP_B_INVITE }]);
+    buttons.push([{ text: '📱 App öffnen (1-Klick-Login)', url: magicAppUrl }]);
+    try {
+        await ctx.reply(briefing, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+    } catch (e) {
+        await ctx.reply(briefing.replace(/\*/g,'').replace(/_/g,''), { reply_markup: { inline_keyboard: buttons } });
+    }
+}
+
 bot.start(async (ctx) => {
     const uid = ctx.from.id;
     const u = user(uid, ctx.from.first_name);
+    const wasNew = !u.started;
     u.started = true;
     if (d.warteNachricht?.[uid]) {
         try { await bot.telegram.deleteMessage(d.warteNachricht[uid].chatId, d.warteNachricht[uid].msgId); } catch (e) {}
@@ -883,9 +1133,76 @@ bot.start(async (ctx) => {
         const payload = ctx.startPayload;
         if (payload === 'melden') return startMeldenFlow(ctx, uid);
         if (payload === 'shop') return sendShopNachricht(ctx, uid);
-        if (!u.instagram) { d.instaWarte[uid] = true; speichern(); return ctx.reply('📸 Willkommen!\n\nWie heißt dein Instagram Account?\n\n(z.B. max123)'); }
-        return ctx.reply('✅ Bot gestartet!\n\n📋 /help für alle Befehle.');
+        // Group-Link Payload: User klickt einen geteilten Link → bot sendet sofort
+        // Magic-Login-Button ohne Welcome-Briefing.
+        if (payload === 'app' || payload === 'login') {
+            const magicAppUrl = buildMagicLinkUrl(uid, '/feed');
+            return ctx.reply('🚀 *Hi ' + (ctx.from.first_name || 'Creator') + '!*\n\nKlick den Button und du bist sofort in der CreatorX-App eingeloggt — kein Code-Tippen nötig.', {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: [[{ text: '📱 In die App einloggen', url: magicAppUrl }]] }
+            });
+        }
+        await sendWelcomeBriefing(ctx, uid, { wasNew });
+        if (!u.instagram) {
+            d.instaWarte[uid] = true; speichern();
+            return ctx.reply('📸 Bevor du loslegst — wie heißt dein Instagram?\n\n(z.B. max123 — nur der Username, ohne @)');
+        }
     }
+});
+
+// /welcome — zum Re-Anzeigen des Welcome-Briefings (Test + jederzeit verfügbar).
+// /grouplink — generiert den shareable Link für die Telegram-Gruppe.
+// Jeder der drauf klickt bekommt im DM den 1-Klick-App-Login-Button.
+// Admin-Command: stellt soft-deleted App-Chat-Messages wieder her.
+// /restoremsg              → alle löschbaren wiederherstellen
+// /restoremsg minutes 30   → alle deleted in den letzten 30 Min
+bot.command('restoremsg', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    if (!d.appChat) d.appChat = [];
+    const args = (ctx.message.text||'').split(/\s+/).slice(1);
+    let sinceTs = 0;
+    if (args[0] === 'minutes' && Number(args[1]) > 0) sinceTs = Date.now() - Number(args[1]) * 60 * 1000;
+    let restored = 0;
+    for (const m of d.appChat) {
+        if (!m.deleted) continue;
+        if (sinceTs && (m.deletedAt || 0) < sinceTs) continue;
+        if (!m.text && !m.image) continue;
+        delete m.deleted;
+        delete m.deletedAt;
+        delete m.deletedBy;
+        restored++;
+    }
+    if (restored > 0) speichern();
+    const recoverable = d.appChat.filter(m => m.deleted && (m.text || m.image)).length;
+    const lost = d.appChat.filter(m => m.deleted && !m.text && !m.image).length;
+    let msg = '🔄 *App-Chat Restore*\n\n';
+    msg += '✅ Wiederhergestellt: *' + restored + '*\n';
+    if (recoverable > 0) msg += '⏳ Noch wiederherstellbar (soft-deleted): ' + recoverable + '\n';
+    if (lost > 0) msg += '❌ Hart-zerstört (vor Soft-Delete-Fix): ' + lost + ' — nur Backup-Restore möglich (passiert beim Bot-Restart).';
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+bot.command('grouplink', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const info = await ctx.telegram.getMe();
+    const link = 'https://t.me/' + info.username + '?start=app';
+    await ctx.reply(
+        '🚀 *Group-Login-Link*\n\n' +
+        'Teile diesen Link in der Gruppe — jeder der drauf klickt bekommt vom Bot einen 1-Klick-Login-Button:\n\n' +
+        '`' + link + '`\n\n' +
+        'Tippe auf den Link um ihn zu kopieren.',
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.command('welcome', async (ctx) => {
+    if (!istPrivat(ctx.chat.type)) {
+        const info = await ctx.telegram.getMe();
+        return ctx.reply('📩 Bitte im DM mit dem Bot tippen.', { reply_markup: { inline_keyboard: [[{ text: '📩 Bot DM öffnen', url: 'https://t.me/' + info.username + '?start=welcome' }]] } });
+    }
+    const uid = ctx.from.id;
+    user(uid, ctx.from.first_name);
+    await sendWelcomeBriefing(ctx, uid, { wasNew: false });
 });
 
 bot.command('help', async (ctx) => {
@@ -967,7 +1284,7 @@ bot.command('setinsta', async (ctx) => {
 });
 
 bot.command('ranking', async (ctx) => {
-    const sorted = Object.entries(d.users).filter(([uid]) => !istAdminId(uid)).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
+    const sorted = Object.entries(d.users).filter(([uid, u]) => !istAdminId(uid) && !u?.isSystem && uid !== CREATORBOOST_UID).sort((a, b) => b[1].xp - a[1].xp).slice(0, 10);
     if (!sorted.length) return ctx.reply('Noch keine Daten.');
     const b = ['🥇', '🥈', '🥉'];
     let text = '🏆 *GESAMT RANKING*\n━━━━━━━━━━━━━━\n\n';
@@ -1022,7 +1339,8 @@ bot.command(['bonuslinks','bonus','bonuslink'], async (ctx) => {
 bot.command('stats', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const alleChats = Object.values(d.chats);
-    await ctx.reply('📊 *Stats*\n\n👥 User: ' + Object.keys(d.users).length + '\n💬 Chats: ' + alleChats.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
+    const userCount = Object.keys(d.users).filter(uid => uid !== CREATORBOOST_UID && !d.users[uid]?.isSystem).length;
+    await ctx.reply('📊 *Stats*\n\n👥 User: ' + userCount + '\n💬 Chats: ' + alleChats.length + '\n🔗 Links: ' + Object.keys(d.links).length, { parse_mode: 'Markdown' });
 });
 
 bot.command('dashboard', async (ctx) => {
@@ -1053,6 +1371,7 @@ bot.command('dm', async (ctx) => {
     await ctx.reply('📨 Sende...');
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || u.parent_uid) continue; // Subs haben keine Telegram-UID
+        if (uid === CREATORBOOST_UID || u.isSystem) continue; // System-User keine TG-DM
         try { await bot.telegram.sendMessage(Number(uid), '📢 *Admin:*\n\n' + nachricht, { parse_mode: 'Markdown' }); ok++; await new Promise(r => setTimeout(r, 200)); }
         catch (e) { err++; }
     }
@@ -1082,7 +1401,8 @@ bot.command('fixlink', async (ctx) => {
     const reply = ctx.message.reply_to_message;
     if (!reply) return ctx.reply('❌ Antworte auf eine Link-Nachricht mit /fixlink');
     const text = reply.text || reply.caption || '';
-    const url = linkUrl(text);
+    // URL aus dem Reply-Text sauber extrahieren (Insta first, sonst linkUrl-Fallback).
+    const url = extractInstagramUrl(text) || linkUrl(text);
     if (!url) return ctx.reply('❌ Kein Link in der Nachricht gefunden.');
     const userId = reply.from?.id;
     const userName = reply.from?.first_name || 'User';
@@ -1100,6 +1420,7 @@ bot.command('fixlink', async (ctx) => {
     } catch (e) { return ctx.reply('❌ Fehler: ' + e.message); }
     const mapKey = MEINE_GRUPPE + '_' + msgId;
     d.links[mapKey] = { chat_id: ctx.chat.id, user_id: userId, user_name: userName, text: url, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+    tryFetchThumbnail(d.links[mapKey], 'text');
     if (!istAdminId(userId) && userId) { u.links = (u.links || 0) + 1; updateStreak(String(userId)); }
     speichern();
 });
@@ -1561,7 +1882,7 @@ bot.command('mycode', async (ctx) => {
         speichern();
     }
 
-    const appLink = APP_URL || 'https://creatorx.app';
+    const appLink = APP_URL || 'https://web-production-7981d.up.railway.app';
     await ctx.reply(
         '🔐 *Dein CreatorX Login Code*\n\n' +
         '`' + u.appCode + '`\n\n' +
@@ -1583,6 +1904,14 @@ bot.on('left_chat_member', async (ctx) => {
         if (!m || m.is_bot) return;
         const uid = String(m.id);
         if (d.users[uid] && !istAdminId(Number(uid))) {
+            // Email-User: NICHT löschen — App-Zugang bleibt erhalten, nur als 'nicht in Gruppe' markieren.
+            if (d.users[uid].email) {
+                d.users[uid].inGruppe = false;
+                d.users[uid].leftGroupAt = Date.now();
+                speichern();
+                console.log('Email-User behalten (left group):', m.first_name, uid);
+                return;
+            }
             delete d.users[uid];
             delete d.dailyXP[uid];
             delete d.weeklyXP[uid];
@@ -1823,9 +2152,11 @@ bot.on('message', async (ctx, next) => {
             speichern(); return;
         }
 
-        const url = linkUrl(text);
-        const urlNorm = normalisiereUrl(url);
-        if (url && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {
+        // Prefer Instagram-URL-Extraktion (sauber), fallback auf linkUrl (whole-text Validator).
+        const cleanUrl = extractInstagramUrl(text) || linkUrl(text);
+        const url = cleanUrl;
+        const urlNorm = normalisiereUrl(cleanUrl);
+        if (cleanUrl && d.gepostet.some(g => normalisiereUrl(g) === urlNorm)) {
             if (!admin) {
                 try { await ctx.deleteMessage(); } catch (e) {}
                 const msg = await ctx.reply('❌ Duplikat! Dieser Link wurde bereits gepostet.');
@@ -1870,48 +2201,46 @@ bot.on('message', async (ctx, next) => {
         const istInsta = istInstagramLink(text);
 
         if (istInsta) {
+            // App-only Flow: Bot löscht User-Message, postet KEINE Karte in der Gruppe.
+            // Link wird mit synthetischer ID in d.links gespeichert → erscheint im
+            // App-Feed und wird in der nächsten 30-Min-Batch-DM angekündigt.
             try { await ctx.deleteMessage(); } catch (e) {}
-            const isAdmin = istAdminId(uid);
-            let botMsg;
+
+            // URL extrahieren + Caption-Text trennen → konsistent mit App-Post-Pfad.
+            // Vorher: text=fullMessage (z.B. 'Schaut mein Reel <URL>') → window.open() bricht.
+            const extractedUrl = extractInstagramUrl(text) || text;
+            const captionText = (text === extractedUrl) ? '' : text.replace(extractedUrl, '').trim();
+
+            const linkId = generateSyntheticLinkId();
+            const mapKey = linkId;
+            d.links[mapKey] = {
+                chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name,
+                text: extractedUrl, caption: captionText,
+                likes: new Set(), likerNames: {},
+                counter_msg_id: linkId, timestamp: Date.now(),
+                origin: 'telegram', appOnly: true,
+                likeSource: { app: 0, telegram: 0 }
+            };
+            tryFetchThumbnail(d.links[mapKey], 'text');
+
+            // Confirmation-DM an Poster mit Magic-Link in den App-Feed.
             try {
-                botMsg = await bot.telegram.sendMessage(ctx.chat.id,
-                    buildLinkKarte(ctx.from.first_name, u.role, text, 0, u.xp, isAdmin),
-                    { reply_markup: buildLinkButtons(msgId, 0) }
+                const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+                await bot.telegram.sendMessage(Number(uid),
+                    '✅ *Dein Link ist im Feed!*\n\nDein Instagram-Link wurde aus der Gruppe in den App-Feed übernommen. Andere User werden in der nächsten 30-Min-DM-Welle benachrichtigt.\n\n💡 *Vergiss nicht*: andere Links liken & mit 2 Wörtern kommentieren — Pflicht!',
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } }
                 );
-            } catch (e) { console.log('Fehler beim Posten:', e.message); speichern(); return; }
-
-            const mapKey = MEINE_GRUPPE + '_' + msgId;
-            d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: botMsg.message_id, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
-
-            if (!istAdminId(uid)) {
-                try {
-                    const erin = await bot.telegram.sendMessage(ctx.chat.id, '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!', { reply_to_message_id: botMsg.message_id });
-                    setTimeout(async () => { try { await bot.telegram.deleteMessage(ctx.chat.id, erin.message_id); } catch (e) {} }, 10000);
-                } catch (e) {}
-            }
+            } catch (e) {}
 
             const linkKeys = Object.keys(d.links);
             if (linkKeys.length > 500) {
                 const oldest = linkKeys.sort((a, b) => d.links[a].timestamp - d.links[b].timestamp)[0];
                 delete d.links[oldest];
             }
-            await sendeLinkAnAlle(d.links[mapKey]);
-
-            if (BRIDGE_BOT_URL) {
-                try {
-                    await fetch(BRIDGE_BOT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
-                        body: JSON.stringify({ fromGroup: MEINE_GRUPPE, msgId: msgId, chatId: ctx.chat.id, botMsgId: botMsg.message_id, linkText: text, userName: ctx.from.first_name, userId: uid, username: ctx.from.username || null })
-                    });
-                    const updateUrl = BRIDGE_BOT_URL.replace('/new-link-from-group', '/update-msg-id');
-                    fetch(updateUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET }, body: JSON.stringify({ fromGroup: MEINE_GRUPPE, mapKey: MEINE_GRUPPE + '_' + msgId, realBotMsgId: botMsg.message_id }) }).catch(e => {});
-                    console.log('Bridge Meldung: msgId=' + msgId + ' botMsgId=' + botMsg.message_id);
-                } catch (e) { console.log('Bridge Bot Meldung fehlgeschlagen:', e.message); }
-            }
         } else if (!istAdminId(uid)) {
             const mapKey = MEINE_GRUPPE + '_' + msgId;
             d.links[mapKey] = { chat_id: ctx.chat.id, user_id: uid, user_name: ctx.from.first_name, text: text, likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
+            tryFetchThumbnail(d.links[mapKey], 'text');
         }
         speichern();
     } catch (e) { console.log('Message Handler Fehler:', e.message); }
@@ -2097,7 +2426,7 @@ bot.action(/^sllike_(.+)$/, async (ctx) => {
         const u = d.users[uid];
         sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
         addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!', String(uid));
-        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
+        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
         await ctx.answerCbQuery('❤️ Geliked!');
         if (ctx.callbackQuery?.message?.chat?.type === 'private') {
             try { await ctx.deleteMessage(); } catch(e) {}
@@ -2223,7 +2552,7 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
             '📲 So gehts: schreib hier `/superlink <dein-Instagram-Link>` oder posts den Link einfach in den Full-Engagement-Thread.\n\n' +
             '✅ Verbleibende Slots: ' + u.superlinkCredits,
             { parse_mode: 'Markdown' }); } catch(e) {}
-        sendAppPush(targetUid, '🎁 Superlink-Slot!', 'Admin hat dir einen Superlink-Slot gegeben — nutze /superlink', '/feed').catch(()=>{});
+        sendAppPush(targetUid, '🎁 Superlink-Slot!', 'Admin hat dir einen Superlink-Slot gegeben — nutze /superlink', '/feed?tab=engagement&opensl=1').catch(()=>{});
         return ctx.reply('✅ ' + (u.spitzname||u.name||targetUid) + ' hat jetzt *' + u.superlinkCredits + '* Superlink-Slot(s)\n\nDer User kann mit `/superlink <Instagram-Link>` einen Extra-Superlink posten.', { parse_mode:'Markdown' });
     }
     let url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
@@ -2252,6 +2581,7 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
             gift: true, giftedBy: String(ctx.from.id),
             dmNotifications: {}
         };
+        tryFetchThumbnail(d.superlinks[slId], 'url');
         const feThreadKey = String(feThreadId);
         if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
         d.threadMessages[feThreadKey].unshift({
@@ -2266,17 +2596,17 @@ bot.command(['givesuperlink','givesl'], async (ctx) => {
         if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
         speichern();
         try { await bot.telegram.sendMessage(Number(targetUid), '🎁 *Du hast einen Superlink geschenkt bekommen!*\n\nEin Admin hat dir einen Superlink im Full-Engagement-Thread gepostet. Engagement-Pflicht für alle anderen Superlinks der Woche bleibt!\n\n🔗 ' + url, { parse_mode: 'Markdown' }); } catch(e) {}
-        sendAppPush(targetUid, '🎁 Superlink geschenkt!', 'Admin hat dir einen Superlink gegeben — engage die anderen!', '/feed').catch(()=>{});
+        sendAppPush(targetUid, '🎁 Superlink geschenkt!', 'Admin hat dir einen Superlink gegeben — engage die anderen!', '/feed?tab=engagement').catch(()=>{});
         const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== targetUid);
-        const threadUrl = getFullEngagementThreadUrl();
         for (const other of otherPosters) {
             try {
+                const magicUrlGift = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
                 const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
                     `⭐ *Neuer Superlink (Geschenk)!*\n\n👤 ${u.spitzname||u.name||'User'} · 🔗 ${url}\n\n⚠️ Engagement-Pflicht!`,
-                    threadUrl ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Thread', url: threadUrl }]] } } : { parse_mode: 'Markdown' }
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrlGift }]] } }
                 );
                 if (dmMsg?.message_id) d.superlinks[slId].dmNotifications[String(other.uid)] = dmMsg.message_id;
-                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u.spitzname||u.name||'User') + ' (Geschenk) — engagen', '/feed').catch(()=>{});
+                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u.spitzname||u.name||'User') + ' (Geschenk) — engagen', '/feed?tab=engagement').catch(()=>{});
             } catch(e) {}
         }
         speichern();
@@ -2440,8 +2770,6 @@ bot.command('superlinkdm', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     if (!d.superlinkDmSent) d.superlinkDmSent = {};
     const force = (ctx.message.text || '').includes('force');
-    const url = getFullEngagementThreadUrl();
-    const linkLine = url ? `\n\n📲 *Hier posten:* ${url}` : '';
     const userIds = Object.keys(d.users || {});
     let sent = 0, skipped = 0, failed = 0;
     await ctx.reply(`📤 Sende Superlink-DM an ${userIds.length} User${force ? ' (force-Mode)' : ''}...`);
@@ -2450,13 +2778,13 @@ bot.command('superlinkdm', async (ctx) => {
         if (!u || !u.started) { skipped++; continue; }
         if (!force && d.superlinkDmSent[uid]) { skipped++; continue; }
         try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement&opensl=1');
             await bot.telegram.sendMessage(Number(uid),
                 '⭐ *Hast du schon deinen Superlink gesendet?*\n\n' +
-                'Jede Woche darfst du *einen* Superlink im Full Engagement Thread posten ' +
-                '(Elite+ darf 2). Wer postet, muss auch die anderen Superlinks engagen ' +
-                '(Liken, Kommentieren, Teilen, Speichern) — sonst gibt es −50 XP am Sonntag.' +
-                linkLine + '\n\nOder direkt im Bot mit /superlink <Instagram-Link>.',
-                { parse_mode: 'Markdown', disable_web_page_preview: true }
+                'Jede Woche darfst du *einen* Superlink posten (Elite+ darf 2). ' +
+                'Wer postet, muss auch alle anderen Superlinks engagen (Liken, Kommentieren, Teilen, Speichern) — sonst gibt es −50 XP am Sonntag.\n\n' +
+                'Klick zum Posten — du bist sofort eingeloggt:',
+                { parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup: { inline_keyboard: [[{ text: '⭐ Superlink posten', url: magicUrl }]] } }
             );
             d.superlinkDmSent[uid] = Date.now();
             sent++;
@@ -2497,6 +2825,272 @@ bot.command('superlinkreminder', async (ctx) => {
     await ctx.reply('⏳ Sende Reminder an alle Poster mit offenen Superlinks...');
     const result = await superlinkDailyReminder();
     await ctx.reply(`✅ ${result.sent} Reminder-DMs gesendet`);
+});
+
+bot.command('setgender', async (ctx) => {
+    const u = user(ctx.from.id, ctx.from.first_name);
+    const arg = (ctx.message?.text||'').split(/\s+/)[1]?.toLowerCase().trim();
+    if (!arg || !['m','w','d','unset','reset','auto'].includes(arg)) {
+        const current = u.gender ? (u.gender === 'm' ? 'männlich' : u.gender === 'w' ? 'weiblich' : 'divers') : 'nicht gesetzt (Auto-Detect aktiv)';
+        return ctx.reply(
+            '👤 *Geschlecht festlegen*\n\n' +
+            'Aktuell: *' + current + '*\n\n' +
+            'Setzen mit:\n' +
+            '• `/setgender m` — männlich\n' +
+            '• `/setgender w` — weiblich\n' +
+            '• `/setgender d` — divers / neutrale Sprache\n' +
+            '• `/setgender unset` — zurück auf Auto-Detect',
+            { parse_mode: 'Markdown' });
+    }
+    if (arg === 'unset' || arg === 'reset' || arg === 'auto') {
+        u.gender = null;
+        speichern();
+        return ctx.reply('🔄 Geschlecht zurückgesetzt — Auto-Detect ist wieder aktiv.');
+    }
+    u.gender = arg;
+    speichern();
+    const label = arg === 'm' ? 'männlich' : arg === 'w' ? 'weiblich' : 'divers';
+    return ctx.reply('✅ Geschlecht gesetzt auf *' + label + '*.', { parse_mode: 'Markdown' });
+});
+
+bot.command('setemail', async (ctx) => {
+    const u = user(ctx.from.id, ctx.from.first_name);
+    const arg = (ctx.message?.text||'').split(/\s+/).slice(1).join(' ').toLowerCase().trim();
+    if (!arg || arg === 'show' || arg === 'status') {
+        const current = u.email ? '`' + u.email + '`' : '_nicht gesetzt_';
+        return ctx.reply(
+            '📧 *Email-Login*\n\n' +
+            'Aktuell: ' + current + '\n\n' +
+            'Wenn du eine Email setzt, kannst du dich auch ohne Telegram-Code in der App einloggen — wir schicken dir einen Magic-Link an die Email.\n\n' +
+            'Setzen mit:\n' +
+            '• `/setemail deine@email.de`\n' +
+            '• `/setemail unset` — Email entfernen',
+            { parse_mode: 'Markdown' });
+    }
+    if (arg === 'unset' || arg === 'reset' || arg === 'remove' || arg === 'delete') {
+        delete u.email;
+        speichern();
+        return ctx.reply('🗑️ Email entfernt. Email-Login ist deaktiviert.');
+    }
+    // Email-Format prüfen.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(arg) || arg.length > 200) {
+        return ctx.reply('❌ Das sieht nicht nach einer gültigen Email aus.\n\nBeispiel: `/setemail max@gmail.com`', { parse_mode: 'Markdown' });
+    }
+    // Schon vergeben? Email muss eindeutig sein, sonst weiß der App-Server nicht zu wem sie gehört.
+    const taken = Object.entries(d.users || {}).find(([uid, x]) => String(uid) !== String(ctx.from.id) && String(x.email||'').toLowerCase() === arg);
+    if (taken) {
+        return ctx.reply('⚠️ Diese Email ist bereits bei einem anderen Account hinterlegt. Bitte nutze eine andere.');
+    }
+    u.email = arg;
+    speichern();
+    return ctx.reply(
+        '✅ Email gesetzt auf `' + arg + '`.\n\n' +
+        '👉 Du kannst dich jetzt unter *App → Login → Email* mit dieser Adresse einloggen. Wir schicken dir dann einen einmaligen Magic-Link per Mail.',
+        { parse_mode: 'Markdown' });
+});
+
+bot.command('appreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende App-Reminder an alle User die die App noch nie geöffnet haben...');
+    const result = await appReminderForNonUsers();
+    await ctx.reply(`✅ ${result.sent} Reminder gesendet, ${result.skipped} skipped (bereits aktiv oder Cooldown)`);
+});
+
+// /findmysub — sucht in allen Backup-Dateien nach Subs des aufrufenden Admins.
+// Zeigt für jedes Datum: ob ein Sub mit parent_uid = ctx.from.id existierte.
+bot.command('findmysub', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const myUid = String(ctx.from.id);
+    try {
+        const dir = require('path').dirname(DATA_FILE);
+        const base = require('path').basename(DATA_FILE).replace('.json', '');
+        const files = fs.readdirSync(dir).filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json')).sort().reverse();
+        if (!files.length) return ctx.reply('❌ Keine Backups gefunden.');
+        const found = [];
+        for (const f of files) {
+            try {
+                const data = JSON.parse(fs.readFileSync(require('path').join(dir, f), 'utf8'));
+                const subs = Object.entries(data.users || {}).filter(([, u]) => u && String(u.parent_uid||'') === myUid);
+                if (subs.length) {
+                    const dateStr = f.replace(base + '_backup_', '').replace('.json', '');
+                    for (const [sUid, sU] of subs) {
+                        found.push({ date: dateStr, sub_uid: sUid, name: sU.spitzname || sU.name || '?', xp: sU.xp || 0 });
+                    }
+                }
+            } catch(e) {}
+        }
+        if (!found.length) return ctx.reply('❌ Kein Sub-Account von dir in den Backups gefunden. Vielleicht hattest du nie einen, oder die Backups sind älter als der Zeitpunkt des Erstellens.');
+        const aktuellHat = !!Object.entries(d.users || {}).find(([, u]) => u && String(u.parent_uid||'') === myUid);
+        let msg = '🔍 *Deine Sub-Accounts in Backups:*\n\n';
+        // Gruppieren nach sub_uid
+        const groups = {};
+        for (const f of found) {
+            if (!groups[f.sub_uid]) groups[f.sub_uid] = { name: f.name, xp: f.xp, dates: [] };
+            groups[f.sub_uid].dates.push(f.date);
+        }
+        for (const [suid, g] of Object.entries(groups)) {
+            msg += `• *${g.name}* (\`${suid}\`, ${g.xp} XP)\n  Backups: ${g.dates.slice(0, 6).join(', ')}${g.dates.length > 6 ? ' …' : ''}\n\n`;
+        }
+        msg += aktuellHat ? '\n✅ Du hast aktuell schon einen Sub in den Live-Daten.' : '\n⚠️ Aktuell kein Sub in Live-Daten.\n\nWiederherstellen mit:\n`/restoresubs ' + found[0].date + '`';
+        return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch(e) { return ctx.reply('❌ Fehler: ' + e.message); }
+});
+
+// /relinksubs [dry] — Repariert kaputte Parent→Sub-Backlinks.
+// Hintergrund: Sub-Accounts haben d.users[sub].parent_uid gesetzt, aber
+// d.users[parent].subUid kann durch Bug verloren gegangen sein. Switcher
+// rendert dann leer obwohl die Subs in d.users weiter existieren.
+bot.command('relinksubs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const args = (ctx.message?.text||'').split(/\s+/).slice(1);
+    const dry = args.some(a => a.toLowerCase() === 'dry' || a.toLowerCase() === 'trocken');
+    const fixed = [], alreadyOk = [], conflicts = [], orphaned = [];
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || !u.parent_uid) continue;
+        const parentUid = String(u.parent_uid);
+        const parent = d.users[parentUid];
+        if (!parent) {
+            orphaned.push({ sub: uid, parent: parentUid, name: u.spitzname || u.name || '?' });
+            continue;
+        }
+        if (parent.subUid && String(parent.subUid) === String(uid)) {
+            alreadyOk.push({ sub: uid, parent: parentUid });
+            continue;
+        }
+        if (parent.subUid && String(parent.subUid) !== String(uid)) {
+            // Parent hat bereits einen anderen Sub-Pointer → potentielles Problem.
+            // Wir überschreiben NICHT automatisch; user muss manuell prüfen.
+            conflicts.push({ sub: uid, parent: parentUid, parentSubUid: parent.subUid, name: u.spitzname || u.name || '?' });
+            continue;
+        }
+        // parent.subUid fehlt → setzen.
+        if (!dry) parent.subUid = String(uid);
+        fixed.push({ sub: uid, parent: parentUid, name: u.spitzname || u.name || '?', xp: u.xp || 0 });
+    }
+    if (!dry && fixed.length) speichern();
+    const head = dry ? '🧪 *Dry-Run* — nichts gespeichert' : '✅ *Relink ausgeführt*';
+    let msg = head + '\n\n';
+    msg += `🔗 Repariert: *${fixed.length}*\n👌 Bereits OK: *${alreadyOk.length}*\n⚠️ Konflikt: *${conflicts.length}*\n❓ Verwaist: *${orphaned.length}*`;
+    if (fixed.length) {
+        msg += '\n\n*Repariert (Parent → Sub):*\n' + fixed.slice(0, 15).map(f => '• ' + f.name + ' → Parent `' + f.parent + '` (' + f.xp + ' XP)').join('\n');
+        if (fixed.length > 15) msg += '\n• … +' + (fixed.length - 15) + ' weitere';
+    }
+    if (conflicts.length) {
+        msg += '\n\n*Konflikte (Parent zeigt auf anderen Sub):*\n' + conflicts.slice(0, 5).map(c => '• ' + c.name + ' (Parent zeigt auf `' + c.parentSubUid + '` statt `' + c.sub + '`)').join('\n');
+    }
+    if (orphaned.length) {
+        msg += '\n\n*Verwaist (Parent fehlt komplett):*\n' + orphaned.slice(0, 5).map(o => '• ' + o.name + ' → Parent `' + o.parent + '` nicht in d.users').join('\n');
+    }
+    return ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// /restoresubs [YYYY-MM-DD] [dry] — Sub-Accounts aus einem Backup wiederherstellen.
+// Default: heutiges Datum. 'dry' an zweiter Stelle = Trockenlauf ohne Speichern.
+bot.command('restoresubs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const args = (ctx.message?.text||'').split(/\s+/).slice(1);
+    const today = new Date().toISOString().slice(0, 10);
+    let date = today, dry = false;
+    for (const a of args) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(a)) date = a;
+        else if (a.toLowerCase() === 'dry' || a.toLowerCase() === 'trocken') dry = true;
+    }
+    const backupFile = DATA_FILE.replace('.json', '_backup_' + date + '.json');
+    if (!fs.existsSync(backupFile)) {
+        // Liste verfügbare Backups zeigen falls Datum daneben liegt.
+        try {
+            const dir = require('path').dirname(DATA_FILE);
+            const base = require('path').basename(DATA_FILE).replace('.json', '');
+            const files = fs.readdirSync(dir).filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json')).sort().reverse().slice(0, 7);
+            return ctx.reply('❌ Backup nicht gefunden für `' + date + '`.\n\nVerfügbar:\n' + (files.length ? files.map(f => '• `'+f.replace(base+'_backup_','').replace('.json','')+'`').join('\n') : '_keine_'), { parse_mode: 'Markdown' });
+        } catch { return ctx.reply('❌ Backup nicht gefunden: ' + backupFile); }
+    }
+    try {
+        const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+        const restored = [], skipped = [], orphaned = [];
+        for (const [uid, u] of Object.entries(backup.users || {})) {
+            if (!u || !u.parent_uid) continue;
+            if (d.users[uid]) { skipped.push(uid); continue; }
+            const parentUid = String(u.parent_uid);
+            if (!d.users[parentUid]) { orphaned.push({uid, parentUid}); continue; }
+            if (!dry) {
+                d.users[uid] = u;
+                d.users[parentUid].subUid = uid;
+            }
+            restored.push({ uid, parent: parentUid, name: u.spitzname || u.name || '?', xp: u.xp || 0 });
+        }
+        if (!dry && restored.length) speichern();
+        const head = dry ? '🧪 *Dry-Run* — nichts gespeichert' : '✅ *Restore ausgeführt*';
+        let msg = head + '\n\nQuelle: `' + backupFile.split('/').pop() + '`\n\n';
+        msg += `🔄 Wiederhergestellt: *${restored.length}*\n⏭️ Schon vorhanden (skip): *${skipped.length}*\n⚠️ Verwaist (parent fehlt): *${orphaned.length}*`;
+        if (restored.length) {
+            msg += '\n\n*Wiederhergestellt:*\n' + restored.slice(0, 15).map(r => '• ' + r.name + ' (Parent ' + r.parent + ', ' + r.xp + ' XP)').join('\n');
+            if (restored.length > 15) msg += '\n• … +' + (restored.length - 15) + ' weitere';
+        }
+        if (orphaned.length) {
+            msg += '\n\n*Verwaist (Parent fehlt):*\n' + orphaned.slice(0, 5).map(o => '• `'+o.uid+'`').join('\n');
+        }
+        return ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch(e) {
+        return ctx.reply('❌ Fehler: ' + e.message);
+    }
+});
+
+bot.command('feedbatch', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Sende Feed-Batch DM an alle gestarteten Bot-User...');
+    const result = await feedBatchDM();
+    await ctx.reply(`✅ ${result.links} neue Links → ${result.sent} DMs gesendet`);
+});
+
+bot.command('refreshthumbs', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    await ctx.reply('⏳ Refresh Instagram-Thumbnails (kann ein bisschen dauern)...');
+    const result = await refreshThumbnails();
+    await ctx.reply(`✅ ${result.refreshed}/${result.attempts} Thumbnails neu geladen`);
+});
+
+bot.command('dmappreminder', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    user(ctx.from.id, ctx.from.first_name);
+    const { text, opts } = buildAppReminderMessage(ctx.from.id);
+    try { await bot.telegram.sendMessage(ctx.from.id, text, opts); } catch(e) {}
+    await ctx.reply('✅ App-Reminder Vorschau hier in deinem Telegram-Chat (siehe oben).');
+});
+
+bot.command('dmpreview', async (ctx) => {
+    if (!istAdminId(ctx.from.id)) return;
+    const uid = String(ctx.from.id);
+    const appUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
+    const rulesUrl = appUrl + '/explore?tab=regeln#r-superlinks';
+    const engageUrl = appUrl + '/feed?tab=engagement';
+    const previews = [
+        {
+            label: '1️⃣ App-Post Bestätigung',
+            text: '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
+            link: { url: rulesUrl, label: '📖 Superlink-Regeln' }
+        },
+        {
+            label: '2️⃣ Daily Reminder (Mo–Sa 20:00)',
+            text: '⭐ Superlink-Erinnerung\n\nDu hast noch 3 offene Superlinks dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.',
+            link: { url: engageUrl, label: '📲 Jetzt engagen' }
+        },
+        {
+            label: '3️⃣ Sonntag 21:00 Reminder',
+            text: '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.',
+            link: { url: engageUrl, label: '📲 Jetzt engagen' }
+        },
+        {
+            label: '4️⃣ Sonntag 23:59 Pflicht-Verletzt',
+            text: '⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #1 (insgesamt)',
+            link: { url: engageUrl, label: '📲 In der App ansehen' }
+        }
+    ];
+    for (const p of previews) {
+        const intro = `[VORSCHAU ${p.label}]\n\n`;
+        sendCreatorBoostDM(uid, intro + p.text, p.link ? { link: p.link } : undefined);
+    }
+    await ctx.reply(`✅ ${previews.length} DM-Previews als CreatorBoost-Chat in der App. Öffne die App → Nachrichten → CreatorBoost.`);
 });
 
 bot.command('fethread', async (ctx) => {
@@ -2605,7 +3199,7 @@ bot.command('superlink', async (ctx) => {
     }
 
     const buttons = [];
-    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://creatorx.app' }]);
+    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://web-production-7981d.up.railway.app' }]);
 
     await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
 });
@@ -2751,18 +3345,16 @@ async function likeErinnerung() {
         if (!nichtGeliked.length) continue;
 
         let text = '👋 *Hey ' + u.name + '!*\n\n━━━━━━━━━━━━━━\n⬜ Noch nicht geliked:\n\n';
-        const buttons = [];
-
         for (const [, l] of nichtGeliked) {
             const insta = l.user_id ? (d.users[String(l.user_id)]?.instagram ? ' · 📸 @' + d.users[String(l.user_id)].instagram : '') : '';
             text += '👤 ' + l.user_name + insta + '\n';
-            if (l.counter_msg_id && l.chat_id) {
-                const url = 'https://t.me/c/' + String(l.chat_id).replace('-100', '') + '/' + l.counter_msg_id;
-                buttons.push([{ text: '👍 ' + l.user_name + ' liken', url: url }]);
-            }
         }
-
         text += '\n━━━━━━━━━━━━━━\n⏳ Missionen schließen um 12:00 Uhr!';
+
+        // App-only Flow: t.me/c/.../{counter_msg_id} würde bei synthetischen App-IDs 404'en.
+        // Stattdessen ein Magic-Link zum App-Feed wo der User alles engagen kann.
+        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+        const buttons = [[{ text: '📲 Im Heute-Feed engagen', url: magicUrl }]];
 
         try {
             await bot.telegram.sendMessage(Number(uid), text, {
@@ -2895,9 +3487,18 @@ async function gruppenMitgliederPruefen() {
     let aktiv = 0, geloescht = 0;
     for (const [uid, u] of Object.entries(d.users)) {
         if (!u.started || istAdminId(uid)) continue;
+        // Sub-Accounts haben keine Telegram-Identität → wären immer 'left/kicked'
+        // und würden gelöscht. Plus wasted Telegram-API-Call pro Sub pro Tag.
+        if (u.parent_uid) continue;
         try {
             const member = await bot.telegram.getChatMember(GROUP_A_ID, Number(uid));
             if (['left', 'kicked', 'banned'].includes(member.status)) {
+                // Email-User: NICHT löschen — App-Zugang bleibt erhalten.
+                if (u.email) {
+                    u.inGruppe = false;
+                    if (!u.leftGroupAt) u.leftGroupAt = Date.now();
+                    continue;
+                }
                 delete d.users[uid];
                 // Auch aus dailyXP, weeklyXP etc. entfernen
                 delete d.dailyXP[uid];
@@ -2943,7 +3544,129 @@ function updateStreak(uid) {
 }
 
 // System-User "CreatorBoost" für In-App DMs (z.B. Superlink-Pflicht-Reminder)
-const CREATORBOOST_UID = 'creatorboost';
+// Holt das Instagram-OG-Image (Thumbnail/Deckblatt) für eine URL.
+// Returns die Bild-URL oder null. Fail-soft: bei Block/Timeout/Parse-Fehler → null.
+// Instagram blockt Bots aggressiv, ~80% Success-Rate mit Browser-Headers.
+// Instagram-Reel-URL → robuste Embed-URL (öffentlich, weniger restriktiv beim Scraping).
+function buildInstaEmbedUrl(url) {
+    const m = String(url||'').match(/instagram\.com\/(?:reel|p|tv)\/([A-Za-z0-9_-]+)/);
+    if (!m) return null;
+    return `https://www.instagram.com/p/${m[1]}/embed/captioned/`;
+}
+async function _scrapeOgImage(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+        const r = await fetch(url, {
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
+                'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                'Cache-Control': 'no-cache'
+            }
+        });
+        clearTimeout(timer);
+        if (!r.ok) return null;
+        const html = await r.text();
+        // Mehrere OG-Image-Patterns abdecken (Embed-Page liefert manchmal andere Reihenfolge).
+        const m = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/i)
+              || html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:image"/i)
+              || html.match(/"display_url":"([^"]+)"/)
+              || html.match(/"thumbnail_src":"([^"]+)"/);
+        if (!m) return null;
+        return m[1].replace(/&amp;/g,'&').replace(/\\u0026/g,'&').replace(/\\\//g,'/').slice(0, 800);
+    } catch(e) { clearTimeout(timer); return null; }
+}
+async function fetchInstagramThumbnail(url) {
+    if (!url || typeof url !== 'string' || !url.includes('instagram.com')) return null;
+    // Erst Embed-URL versuchen (öffentlich, robuster gegen Login-Wall).
+    const embedUrl = buildInstaEmbedUrl(url);
+    if (embedUrl) {
+        const t1 = await _scrapeOgImage(embedUrl);
+        if (t1) return t1;
+    }
+    // Fallback: original URL scrapen.
+    return await _scrapeOgImage(url);
+}
+
+// Synthetischer Link-ID-Generator für App-only Posts (kein Telegram-Message dahinter).
+function generateSyntheticLinkId() {
+    return 'app_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+}
+
+// Async-Hook: nicht blockierend ein Thumbnail für eine link/superlink Entry holen.
+function tryFetchThumbnail(entry, urlField = 'text') {
+    if (!entry) return;
+    const url = entry[urlField];
+    if (!url) return;
+    fetchInstagramThumbnail(url).then(thumb => {
+        if (!thumb) return;
+        entry.thumbnail = thumb;
+        entry.thumbnailFetchedAt = Date.now();
+        speichernDebounced();
+    }).catch(()=>{});
+}
+
+// Refreshed Thumbnails alle 6 Std da Instagram-OG-URLs nach ~24h ablaufen.
+// Targets: Links < 48h alt mit fehlendem oder >12h altem Thumbnail.
+async function refreshThumbnails() {
+    const now = Date.now();
+    const cutoff48h = now - 48*3600*1000;
+    const cutoff12h = now - 12*3600*1000;
+    let refreshed = 0, attempts = 0;
+    for (const link of Object.values(d.links||{})) {
+        if (!link.timestamp || link.timestamp < cutoff48h) continue;
+        if (link.thumbnail && (link.thumbnailFetchedAt || 0) > cutoff12h) continue;
+        if (!link.text || !link.text.includes('instagram.com')) continue;
+        attempts++;
+        const thumb = await fetchInstagramThumbnail(link.text);
+        if (thumb) { link.thumbnail = thumb; link.thumbnailFetchedAt = now; refreshed++; }
+        await new Promise(r => setTimeout(r, 250));
+    }
+    const wk = (typeof getBerlinWeekKey === 'function') ? getBerlinWeekKey() : null;
+    for (const sl of Object.values(d.superlinks||{})) {
+        if (wk && sl.week !== wk) continue;
+        if (sl.thumbnail && (sl.thumbnailFetchedAt || 0) > cutoff12h) continue;
+        if (!sl.url) continue;
+        attempts++;
+        const thumb = await fetchInstagramThumbnail(sl.url);
+        if (thumb) { sl.thumbnail = thumb; sl.thumbnailFetchedAt = now; refreshed++; }
+        await new Promise(r => setTimeout(r, 250));
+    }
+    if (refreshed) speichernDebounced();
+    if (attempts) console.log(`📸 Thumbnail-Refresh: ${refreshed}/${attempts} erfolgreich`);
+    return { refreshed, attempts };
+}
+
+// Stellt sicher dass user u einen appCode hat — generiert einen wenn nicht.
+// Wiederverwendet die Logik von /mycode (Hex-Random + Namen-Prefix + Kollisionscheck).
+// Persistiert NEU generierte Codes via speichernDebounced damit Magic-Links nach
+// einem Bot-Restart noch gültig sind, auch wenn der Caller selbst nicht speichert.
+function ensureAppCode(uid, u) {
+    if (!u) return null;
+    if (u.appCode) return u.appCode;
+    const taken = new Set(Object.values(d.users||{}).map(x => x.appCode).filter(Boolean));
+    const namePart = (u.name||'user').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8) || 'user';
+    let candidate;
+    do {
+        const rand = crypto.randomBytes(4).toString('hex');
+        candidate = namePart + rand;
+    } while (taken.has(candidate));
+    u.appCode = candidate;
+    speichernDebounced();
+    return candidate;
+}
+
+// Baut Magic-Link URL: /auth/auto?code=X&redirect=Y → User klickt → instant Session.
+function buildMagicLinkUrl(uid, redirect = '/feed') {
+    const u = d.users[String(uid)];
+    if (!u) return (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
+    const code = ensureAppCode(String(uid), u);
+    const baseUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'');
+    return baseUrl + '/auth/auto?code=' + encodeURIComponent(code) + '&redirect=' + encodeURIComponent(redirect);
+}
 function ensureCreatorBoostUser() {
     if (!d.users) d.users = {};
     if (!d.users[CREATORBOOST_UID]) {
@@ -2958,22 +3681,29 @@ function ensureCreatorBoostUser() {
         };
     }
 }
-function sendCreatorBoostDM(toUid, text) {
+function sendCreatorBoostDM(toUid, text, options = {}) {
     ensureCreatorBoostUser();
     if (!d.messages) d.messages = {};
     const chatKey = [CREATORBOOST_UID, String(toUid)].sort().join('_');
     if (!d.messages[chatKey]) d.messages[chatKey] = [];
-    d.messages[chatKey].push({
+    const msg = {
         from: CREATORBOOST_UID,
         to: String(toUid),
         text: String(text||'').slice(0,1000),
         timestamp: Date.now(),
         read: false
-    });
+    };
+    if (options.link?.url) {
+        msg.link = {
+            url: String(options.link.url).slice(0, 500),
+            label: String(options.link.label || 'Öffnen').slice(0, 60)
+        };
+    }
+    d.messages[chatKey].push(msg);
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     addNotification(String(toUid), '💬', 'CreatorBoost: ' + String(text||'').slice(0,40), CREATORBOOST_UID);
     sendAppPush(String(toUid), '💬 CreatorBoost', String(text||'').slice(0,100), '/nachrichten/' + CREATORBOOST_UID).catch(()=>{});
-    speichern();
+    speichernDebounced();
 }
 
 function addNotification(targetUid, icon, text, actorUid = null) {
@@ -3012,16 +3742,13 @@ async function zeitCheck() {
         if (h === 4  && m < 5)  taeglich('memberCheck', () => gruppenMitgliederPruefen());
         if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
             d.wochenMissionen = {};
-            // Fallback: falls /gewinnspiel-abschluss vom Announcer nicht durchlief, hier resetten
-            const lastReset = d.weeklyReset || 0;
-            const sechsTage = 6*24*3600*1000;
-            if (Date.now() - lastReset > sechsTage) {
-                if (archiveWeeklyXP('fallback-monday')) console.log('💾 weeklyXP archiviert (fallback)');
-                d.weeklyXP = {};
-                d.weeklyReset = Date.now();
-                console.log('✅ weeklyXP resettet (fallback)');
-            }
-            console.log('✅ Wochenmissionen resettet');
+            // Wochen-Reset findet IMMER Mo 00:05 statt. Die Woche läuft Mo 00:00 - So 23:59
+            // (Berlin TZ). Vorher wurde das fälschlicherweise Sonntag 20:00 via /gewinnspiel-abschluss
+            // gemacht — dadurch zeigte das Wochen-Ranking ab So 20:00 schon eine "neue Woche".
+            if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
+            d.weeklyXP = {};
+            d.weeklyReset = Date.now();
+            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05)');
             speichern();
         });
         if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
@@ -3030,6 +3757,9 @@ async function zeitCheck() {
         if (h === 22 && m < 5)  taeglich('reminder',     () => likeErinnerung());
         if (h === 19 && m < 5)  taeglich('bonusReminder',() => bonusLinkErinnerung());
         if (h === 11 && m < 5)  taeglich('welcomeFunnel',() => welcomeFunnelCheck());
+        if (jetzt.getDay() === 3 && h === 18 && m < 5) taeglich('appReminder', () => appReminderForNonUsers());
+        if (m === 0 || m === 30) einmalig('feedBatch_'+h+'_'+m, () => feedBatchDM().catch(e => console.log('feedBatchDM Fehler:', e.message)));
+        if (m < 5 && [0,6,12,18].includes(h)) taeglich('thumbnailRefresh_'+h, () => refreshThumbnails().catch(e => console.log('refreshThumbnails Fehler:', e.message)));
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());
@@ -3045,7 +3775,7 @@ async function zeitCheck() {
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
             if (Date.now() - l.timestamp > zweiTage) {
-                bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id).catch(() => {});
+                if (!l.appOnly) bot.telegram.deleteMessage(l.chat_id, l.counter_msg_id).catch(() => {});
                 const mk = String(l.counter_msg_id);
                 if (d.dmNachrichten?.[mk]) {
                     for (const [uid2, dmId] of Object.entries(d.dmNachrichten[mk])) bot.telegram.deleteMessage(Number(uid2), dmId).catch(() => {});
@@ -3073,6 +3803,8 @@ async function cleanupDeletedLinks() {
     for (const key of batch) {
         const link = d.links[key];
         if (!link?.chat_id || !link?.counter_msg_id) { delete d.links[key]; changed = true; continue; }
+        // App-only Links haben kein Telegram-Message → Cleanup würde sie sonst löschen.
+        if (link.appOnly) continue;
         try {
             await bot.telegram.editMessageReplyMarkup(
                 link.chat_id, link.counter_msg_id, null,
@@ -3202,6 +3934,7 @@ app.post('/bridge-event', async (req, res) => {
                 const linkData = { chat_id: event.meta.groupBChatId, user_id: Number(event.userId), user_name: event.userName, text: event.meta.linkText || '', likes: new Set(), likerNames: {}, counter_msg_id: msgId, timestamp: Date.now(), origin: 'telegram', likeSource: { app: 0, telegram: 0 } };
                 const mapKey = MEINE_GRUPPE + '_' + msgId;
                 d.links[mapKey] = linkData;
+                tryFetchThumbnail(linkData, 'text');
                 const url = event.meta.linkText || '';
                 if (url && !d.gepostet.includes(url)) { d.gepostet.push(url); if (d.gepostet.length > 2000) d.gepostet.shift(); }
                 if (uid && !istAdminId(Number(uid))) { d.users[uid].links = (d.users[uid].links || 0) + 1; updateStreak(uid); }
@@ -3296,39 +4029,67 @@ app.post('/xp-event-announced', (req, res) => {
     speichern(); res.json({ ok: true });
 });
 
-app.post('/gewinnspiel-abschluss', async (req, res) => {
+// Wochen-Gewinnspiel: Vollständige Auswertung in EINEM Endpoint.
+// Trigger: creatorboost-app cron (Sonntag 20:00 Berlin TZ) ruft das via fetch auf.
+// Vorher: Announcer-Bot pickte den Gewinner und rief /gewinnspiel-abschluss.
+// Der Announcer ist abgeschaltet — die Logik (inkl. Random-Winner-Wahl) lebt jetzt hier.
+app.post('/run-wochen-gewinnspiel-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const { winnerId, winnerName } = req.body || {};
-    if (winnerId) {
-        const uid = String(winnerId);
-        if (!d.bonusLinks[uid]) d.bonusLinks[uid] = 0;
-        d.bonusLinks[uid] += 1;
-        d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid, datum: new Date().toLocaleDateString() });
-        d.wochenGewinnspiel.letzteAuslosung = Date.now();
-    }
-    // 💎 Wochen-Superlink-Engagement: wer ALLE Superlinks dieser Woche geliked hat → +1 Diamant.
-    // Auswertung am Wochenreset, weil dann der Zeitraum klar abgeschlossen ist.
     try {
-        const woche = Object.values(d.superlinks||{}).filter(sl => sl && sl.likes !== undefined);
-        if (woche.length >= 2) {
-            const slLikersPerSl = woche.map(sl => new Set((Array.isArray(sl.likes)?sl.likes:[]).map(String)));
-            const slPosters = new Set(woche.map(sl => String(sl.uid||sl.user_id||'')));
-            for (const [uid, u] of Object.entries(d.users||{})) {
-                if (!u || istAdminId(uid) || u.parent_uid || u.inGruppe===false || !u.started) continue;
-                if (slPosters.has(String(uid))) continue; // Eigene zählen nicht
-                const allEngaged = slLikersPerSl.every(set => set.has(String(uid)));
-                if (allEngaged) {
-                    addDiamond(uid, 1);
-                    dmUser(uid, '💎 *Wochenengagement-Bonus!*\n\nDu hast diese Woche ALLE Superlinks engagiert. +1 Diamant 🙏\nAktuell: ' + (d.users[uid].diamonds||0) + ' 💎', { parse_mode: 'Markdown' });
+        // 1) Random-Winner aus weeklyXP (gefiltert wie früher im Announcer)
+        const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+        const isBot = (u) => !!(u && (u.is_bot === true || (u.username && /bot$/i.test(u.username))));
+        const teilnehmer = Object.entries(d.weeklyXP || {})
+            .filter(([uid]) => {
+                const u = d.users[uid];
+                if (!u || !u.started || u.inGruppe === false) return false;
+                if (adminIds.includes(Number(uid)) || istAdminId(uid)) return false;
+                if (isBot(u)) return false;
+                return d.weeklyXP[uid] > 0;
+            })
+            .map(([uid]) => uid);
+        let winnerId = null, winnerName = null;
+        if (teilnehmer.length) {
+            winnerId = teilnehmer[Math.floor(Math.random() * teilnehmer.length)];
+            const winner = d.users[winnerId];
+            winnerName = winner ? winner.name : '?';
+            if (!d.bonusLinks[winnerId]) d.bonusLinks[winnerId] = 0;
+            d.bonusLinks[winnerId] += 1;
+            if (!d.wochenGewinnspiel) d.wochenGewinnspiel = { gewinner: [] };
+            if (!Array.isArray(d.wochenGewinnspiel.gewinner)) d.wochenGewinnspiel.gewinner = [];
+            d.wochenGewinnspiel.gewinner.push({ name: winnerName, uid: winnerId, datum: new Date().toLocaleDateString() });
+            d.wochenGewinnspiel.letzteAuslosung = Date.now();
+            try { await dmUser(winnerId, '🎉 *Du hast das Wochen-Gewinnspiel gewonnen!*\n\n🎁 1 Extra Link nächste Woche!', { parse_mode: 'Markdown' }); } catch (e) {}
+        } else {
+            console.log('❌ Wochen-Gewinnspiel: keine Teilnehmer');
+        }
+
+        // 2) Wochen-Superlink-Engagement-Diamanten (wer alle Superlinks der Woche engagiert hat → +1 💎)
+        try {
+            const woche = Object.values(d.superlinks||{}).filter(sl => sl && sl.likes !== undefined);
+            if (woche.length >= 2) {
+                const slLikersPerSl = woche.map(sl => new Set((Array.isArray(sl.likes)?sl.likes:[]).map(String)));
+                const slPosters = new Set(woche.map(sl => String(sl.uid||sl.user_id||'')));
+                for (const [uid, u] of Object.entries(d.users||{})) {
+                    if (!u || istAdminId(uid) || u.parent_uid || u.inGruppe===false || !u.started) continue;
+                    if (slPosters.has(String(uid))) continue;
+                    const allEngaged = slLikersPerSl.every(set => set.has(String(uid)));
+                    if (allEngaged) {
+                        addDiamond(uid, 1);
+                        dmUser(uid, '💎 *Wochenengagement-Bonus!*\n\nDu hast diese Woche ALLE Superlinks engagiert. +1 Diamant 🙏\nAktuell: ' + (d.users[uid].diamonds||0) + ' 💎', { parse_mode: 'Markdown' });
+                    }
                 }
             }
-        }
-    } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
-    archiveWeeklyXP('gewinnspiel');
-    d.weeklyXP = {}; d.weeklyReset = Date.now();
-    speichern();
-    await weeklyRankingDM();
-    res.json({ ok: true });
+        } catch(e) { console.log('Wochen-Engagement-Diamant Fehler:', e.message); }
+
+        // weeklyXP wird hier NICHT resettet — Reset läuft Montag 00:05 (wochenReset).
+        speichern();
+        await weeklyRankingDM();
+        res.json({ ok: true, winnerId, winnerName, teilnehmer: teilnehmer.length });
+    } catch (e) {
+        console.log('Wochen-Gewinnspiel Fehler:', e.message);
+        res.status(500).json({ ok: false, error: e.message });
+    }
 });
 
 function archiveWeeklyXP(reason='auto') {
@@ -3628,13 +4389,61 @@ app.get('/delete-link', async (req, res) => {
     const msgId = req.query.id;
     if (d.links[msgId]) {
         const link = d.links[msgId];
-        if (link.chat_id && link.counter_msg_id) {
-            bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{});
-        }
-        // Remove from dmNachrichten
+        const heuteStr = new Date().toDateString();
+        const isToday = link.timestamp && new Date(link.timestamp).toDateString() === heuteStr;
+
+        // 0. XP/Daily-Counter zurückrechnen (Like = 5 XP, Post = 1 XP).
+        try {
+            const likers = Array.from(link.likes instanceof Set ? link.likes : (Array.isArray(link.likes) ? link.likes : []));
+            for (const lUid of likers) {
+                if (!lUid || lUid === CREATORBOOST_UID || istAdminId(lUid)) continue;
+                const lu = d.users[lUid];
+                if (!lu) continue;
+                lu.xp = Math.max(0, (lu.xp||0) - 5);
+                lu.level = level(lu.xp); lu.role = badge(lu.xp);
+                lu.totalLikes = Math.max(0, (lu.totalLikes||0) - 1);
+                if (isToday) {
+                    if (d.dailyXP) d.dailyXP[lUid] = Math.max(0, (d.dailyXP[lUid]||0) - 5);
+                    if (d.missionen?.[lUid]?.date === heuteStr) {
+                        d.missionen[lUid].likesGegeben = Math.max(0, (d.missionen[lUid].likesGegeben||0) - 1);
+                    }
+                }
+                if (d.weeklyXP) d.weeklyXP[lUid] = Math.max(0, (d.weeklyXP[lUid]||0) - 5);
+            }
+            // Poster: -1 XP + -1 Link-Count (war beim Posten via xpAddMitDaily(uid, 1) gegeben).
+            const posterUid = String(link.user_id||'');
+            if (posterUid && d.users[posterUid] && !istAdminId(posterUid)) {
+                const pu = d.users[posterUid];
+                pu.xp = Math.max(0, (pu.xp||0) - 1);
+                pu.level = level(pu.xp); pu.role = badge(pu.xp);
+                pu.links = Math.max(0, (pu.links||0) - 1);
+                if (isToday && d.dailyXP) d.dailyXP[posterUid] = Math.max(0, (d.dailyXP[posterUid]||0) - 1);
+                if (d.weeklyXP) d.weeklyXP[posterUid] = Math.max(0, (d.weeklyXP[posterUid]||0) - 1);
+            }
+        } catch(e) { console.log('[DELETE-LINK] XP-Rollback Fehler:', e.message); }
+
+        // 1. Telegram-Nachricht in der Link-Gruppe löschen (sowohl Original-Msg als auch Counter-Msg).
+        try { if (link.chat_id && link.counter_msg_id) await bot.telegram.deleteMessage(link.chat_id, link.counter_msg_id).catch(()=>{}); } catch(e){}
+        try { if (link.chat_id && msgId && /^\d+$/.test(String(msgId))) await bot.telegram.deleteMessage(link.chat_id, Number(msgId)).catch(()=>{}); } catch(e){}
+        // 2. Counter-Mapping aus dmNachrichten räumen.
         if (d.dmNachrichten) delete d.dmNachrichten[String(link.counter_msg_id)];
+        // 3. Comments zum Link löschen (auch unter counter_msg_id Schlüssel).
+        if (d.comments) {
+            delete d.comments[msgId];
+            if (link.counter_msg_id) delete d.comments[String(link.counter_msg_id)];
+        }
+        // 4. Tracker/Counter-Referenzen aufräumen falls vorhanden.
+        if (d.likerNames) delete d.likerNames[msgId];
+        // 5. Aus pinnedEngages entfernen falls dort referenziert.
+        if (d.pinnedEngages) {
+            for (const k of Object.keys(d.pinnedEngages)) {
+                if (String(d.pinnedEngages[k]?.linkId||'') === String(msgId)) delete d.pinnedEngages[k];
+            }
+        }
+        // 6. Den Link selbst löschen.
         delete d.links[msgId];
         speichern();
+        console.log('[DELETE-LINK] Link', msgId, 'komplett gelöscht (TG + Comments + DMs + XP-Rollback)');
     }
     res.json({ ok: true });
 });
@@ -3708,6 +4517,71 @@ app.get('/manual-backup-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     await backup();
     res.json({ ok: true });
+});
+
+// ─── Sub-Account-Wiederherstellung aus Backup ────────────────────────────────
+// Listet alle Backup-Dateien auf (datum + #subs darin).
+app.get('/list-backups', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    try {
+        const dir = require('path').dirname(DATA_FILE);
+        const base = require('path').basename(DATA_FILE).replace('.json', '');
+        const files = fs.readdirSync(dir)
+            .filter(f => f.startsWith(base + '_backup_') && f.endsWith('.json'))
+            .sort()
+            .reverse();
+        const out = files.map(f => {
+            try {
+                const full = require('path').join(dir, f);
+                const stat = fs.statSync(full);
+                const data = JSON.parse(fs.readFileSync(full, 'utf8'));
+                const subs = Object.entries(data.users || {}).filter(([,u]) => u && u.parent_uid).length;
+                const users = Object.keys(data.users || {}).length;
+                return { file: f, mtime: stat.mtime.toISOString(), users, subs };
+            } catch(e) { return { file: f, error: e.message }; }
+        });
+        res.json({ ok: true, backups: out });
+    } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Stellt nur die fehlenden Sub-Accounts aus einem Backup wieder her — überschreibt
+// nichts an aktuellen Daten. Query-Param ?date=2026-05-09 (default = heute).
+// Optional ?dry=1 → zeigt nur was wiederhergestellt würde, ohne zu schreiben.
+app.get('/restore-subs-only', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    try {
+        const dryRun = req.query.dry === '1';
+        const today = new Date().toISOString().slice(0, 10);
+        const date = String(req.query.date || today);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: 'date format YYYY-MM-DD' });
+        const backupFile = DATA_FILE.replace('.json', '_backup_' + date + '.json');
+        if (!fs.existsSync(backupFile)) {
+            return res.status(404).json({ ok: false, error: 'Backup-Datei nicht gefunden: ' + backupFile });
+        }
+        const backup = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+        const restored = [];
+        const skipped = [];
+        const orphaned = [];
+        for (const [uid, u] of Object.entries(backup.users || {})) {
+            if (!u || !u.parent_uid) continue; // nur Subs
+            if (d.users[uid]) {
+                skipped.push({ sub_uid: uid, reason: 'sub already exists in current data' });
+                continue;
+            }
+            const parentUid = String(u.parent_uid);
+            if (!d.users[parentUid]) {
+                orphaned.push({ sub_uid: uid, parent_uid: parentUid, reason: 'parent missing — sub kann nicht relinkt werden' });
+                continue;
+            }
+            if (!dryRun) {
+                d.users[uid] = u;
+                d.users[parentUid].subUid = uid;
+            }
+            restored.push({ sub_uid: uid, parent_uid: parentUid, name: u.name, spitzname: u.spitzname || null, xp: u.xp || 0 });
+        }
+        if (!dryRun && restored.length) speichern();
+        res.json({ ok: true, dryRun, fromBackup: backupFile, restored: restored.length, skipped: skipped.length, orphaned: orphaned.length, details: { restored, skipped, orphaned } });
+    } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/add-xp', async (req, res) => {
@@ -3791,6 +4665,43 @@ app.post('/update-profile-api', (req, res) => {
         if (req.body.youtube !== undefined) d.users[uid].youtube = req.body.youtube.replace('@','').slice(0,50);
         if (req.body.twitter !== undefined) d.users[uid].twitter = req.body.twitter.replace('@','').slice(0,50);
         if (req.body.instagram !== undefined) d.users[uid].instagram = String(req.body.instagram||'').replace(/^@/,'').replace(/[^a-zA-Z0-9._]/g,'').slice(0,50);
+        if (req.body.email !== undefined) {
+            const newEmail = String(req.body.email||'').toLowerCase().trim();
+            if (newEmail === '') {
+                delete d.users[uid].email;
+                delete d.users[uid].pendingEmail;
+            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) && newEmail.length <= 200) {
+                // Wenn unverändert → no-op
+                if (String(d.users[uid].email||'').toLowerCase() === newEmail) {
+                    delete d.users[uid].pendingEmail;
+                } else {
+                    // Eindeutigkeit prüfen — eine Email darf nur einem Account gehören.
+                    const taken = Object.entries(d.users || {}).find(([oid, x]) =>
+                        String(oid) !== String(uid) &&
+                        (String(x.email||'').toLowerCase() === newEmail || String(x.pendingEmail||'').toLowerCase() === newEmail));
+                    if (!taken) {
+                        // Speichern als PENDING — wird erst nach Confirm zur echten email
+                        d.users[uid].pendingEmail = newEmail;
+                    }
+                }
+            }
+        }
+        // Direktes Setzen der bestätigten email (nach Confirm-Click — nur intern via Bridge)
+        if (req.body.confirmEmail !== undefined && req.body.confirmEmail) {
+            const conf = String(req.body.confirmEmail).toLowerCase().trim();
+            d.users[uid].email = conf;
+            d.users[uid].emailConfirmedAt = Date.now();
+            delete d.users[uid].pendingEmail;
+        }
+        // Welcome-Briefing dismiss-flag (App-Modal beim ersten Login).
+        if (req.body.appBriefingSeenV2 !== undefined) {
+            d.users[uid].appBriefingSeenV2 = !!req.body.appBriefingSeenV2;
+        }
+        // Regeln-Akzeptanz-Timestamp (von Tour-Ende → Pflicht-Bestätigung)
+        if (req.body.rulesAcceptedAt !== undefined) {
+            const ts = Number(req.body.rulesAcceptedAt) || 0;
+            if (ts > 0) d.users[uid].rulesAcceptedAt = ts;
+        }
         // Bilder separat speichern
         if (banner !== undefined) {
             if (banner.startsWith('data:image')) {
@@ -3843,6 +4754,126 @@ app.post('/auth/code', (req, res) => {
     });
 });
 
+// ─── Email-Passwort-Login (App-Bridge) ───────────────────────────────────────
+// Hash mit PBKDF2 + 100k iter SHA-256 — keine ext. Dependencies, ausreichend
+// für unsere Größenordnung (alternativ argon2/bcrypt).
+function hashPasswordPBKDF2(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(String(password), salt, 100000, 64, 'sha256').toString('hex');
+    return 'pbkdf2$100000$' + salt + '$' + hash;
+}
+function verifyPasswordPBKDF2(password, stored) {
+    if (!stored || typeof stored !== 'string') return false;
+    const parts = stored.split('$');
+    if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+    const iter = parseInt(parts[1], 10) || 100000;
+    const salt = parts[2], hash = parts[3];
+    if (!salt || !hash) return false;
+    try {
+        const compare = crypto.pbkdf2Sync(String(password), salt, iter, 64, 'sha256').toString('hex');
+        return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(compare, 'hex'));
+    } catch { return false; }
+}
+
+// Setzt das Passwort für einen User. Bridge-Secret-geschützt.
+app.post('/set-user-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { uid, password } = req.body || {};
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    const pw = String(password || '');
+    if (pw === '') {
+        delete d.users[uid].password_hash;
+        speichern();
+        return res.json({ ok: true, cleared: true });
+    }
+    if (pw.length < 6) return res.status(400).json({ ok: false, error: 'Passwort muss mindestens 6 Zeichen haben' });
+    if (pw.length > 200) return res.status(400).json({ ok: false, error: 'Passwort zu lang' });
+    d.users[uid].password_hash = hashPasswordPBKDF2(pw);
+    speichern();
+    res.json({ ok: true });
+});
+
+// Setzt einen vom User selbst gewählten appCode. Bridge-Secret-geschützt.
+// Validiert: lowercase a-z 0-9 _ -, 4–30 chars, eindeutig.
+app.post('/set-app-code-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '').trim();
+    const raw = String((req.body && req.body.code) || '').toLowerCase().trim();
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!/^[a-z0-9_-]{4,30}$/.test(raw)) {
+        return res.status(400).json({ ok: false, error: 'Code: 4–30 Zeichen, nur a–z, 0–9, _ oder -' });
+    }
+    // Reservierte Wörter blockieren (typische Routen / Verwechslungsgefahr).
+    const reserved = new Set(['admin','root','system','api','login','logout','feed','auth','signup','register','help','test']);
+    if (reserved.has(raw)) return res.status(400).json({ ok: false, error: 'Code reserviert — bitte anderen wählen' });
+    // Eindeutigkeit
+    const taken = Object.entries(d.users || {}).find(([oid, x]) => String(oid) !== uid && String(x.appCode||'').toLowerCase() === raw);
+    if (taken) return res.status(409).json({ ok: false, error: 'Code schon vergeben — bitte anderen wählen' });
+    d.users[uid].appCode = raw;
+    d.users[uid].appCodeChosenAt = Date.now();
+    speichern();
+    res.json({ ok: true, code: raw });
+});
+
+// Email-Only Signup: erstellt einen neuen User-Account mit nur Email als Identifier.
+// Wird vom App-Magic-Link-Flow aufgerufen wenn Email noch nicht existiert.
+app.post('/create-email-user-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    const password = String((req.body && req.body.password) || '');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
+        return res.status(400).json({ ok: false, error: 'Ungültige Email' });
+    }
+    // Doppelte Email blockieren — auch in pendingEmail
+    const existing = Object.entries(d.users || {}).find(([, u]) =>
+        String(u.email || '').toLowerCase() === email ||
+        String(u.pendingEmail || '').toLowerCase() === email
+    );
+    if (existing) return res.json({ ok: true, uid: String(existing[0]), existed: true });
+    // Passwort-Validierung wenn übergeben
+    if (password && (password.length < 6 || password.length > 200)) {
+        return res.status(400).json({ ok: false, error: 'Passwort muss 6–200 Zeichen lang sein' });
+    }
+    // Neue UID generieren — synthetisch (Date.now()), kollisionssicher
+    let uid = String(Date.now());
+    let attempts = 0;
+    while (d.users[uid] && attempts++ < 50) uid = String(Date.now()) + Math.floor(Math.random() * 1000);
+    if (d.users[uid]) return res.status(500).json({ ok: false, error: 'UID-Kollision' });
+    d.users[uid] = {
+        name: email.split('@')[0].slice(0, 30),
+        username: null, instagram: null, bio: null, nische: null, spitzname: null,
+        email: email,
+        emailConfirmedAt: Date.now(),
+        trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,
+        role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(),
+        inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false,
+        inventory: [], activeRing: null, followers: [], following: [],
+        appUser: true,
+        appLastSeen: Date.now(),
+        signupSource: 'email'
+    };
+    if (password) {
+        d.users[uid].password_hash = hashPasswordPBKDF2(password);
+    }
+    speichern();
+    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)');
+    res.json({ ok: true, uid, existed: false });
+});
+
+// Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.
+app.post('/auth-email-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    const password = String((req.body && req.body.password) || '');
+    if (!email || !password) return res.status(400).json({ ok: false, error: 'Email und Passwort erforderlich' });
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
+    const [uid, u] = found;
+    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'noch kein Passwort gesetzt', noPassword: true });
+    if (!verifyPasswordPBKDF2(password, u.password_hash)) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
+    res.json({ ok: true, uid: String(uid), hasPassword: true });
+});
+
 
 app.get('/auth/code-check', (req, res) => {
     const code = (req.query.code||'').toLowerCase().trim();
@@ -3875,8 +4906,9 @@ app.get('/like-from-app', async (req, res) => {
         // Bereits geliked - kein Unlike möglich
         return res.json({ok:true, liked:true, likes: lnk.likes.size});
     } else {
-        // Like
-        if (String(uidNum) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
+        // Like — Sub-Account-safe: String(uid) statt String(uidNum) damit
+        // non-numeric IDs (Number → NaN) nicht den Self-Check umgehen.
+        if (String(uid) === String(lnk.user_id)) return res.json({ok:false, error:'Kein Self-Like'});
         if (String(getRootUid(uid)) === String(getRootUid(lnk.user_id))) return res.json({ok:false, error:'Kein Self-Like (eigener Account)'});
         lnk.likes.add(String(uid));
         const u = d.users[uid];
@@ -3915,6 +4947,9 @@ app.get('/like-from-app', async (req, res) => {
     const liked = !wasLiked;
     res.json({ok:true, liked, likes: lnk.likes.size});
 
+    // App-only Links haben keine Telegram-Message → Sync-Updates überspringen.
+    if (lnk.appOnly) return;
+
     // Telegram Counter + Feedback asynchron (kein await → blockiert Response nicht)
     const anz = lnk.likes.size;
     const poster = d.users[String(lnk.user_id)] || {};
@@ -3952,8 +4987,16 @@ app.post('/create-subaccount-api', (req, res) => {
     if (d.users[parent_uid].subUid && d.users[d.users[parent_uid].subUid]) {
         return res.json({ok:false, error:'Du hast schon einen Sub-Account', sub_uid: String(d.users[parent_uid].subUid)});
     }
-    // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision
-    const sub_uid = String(Date.now());
+    // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision.
+    // Plus Kollisions-Check: zwei Parents im selben Millisekunden würden sonst die gleiche UID kriegen.
+    let sub_uid = String(Date.now());
+    let attempts = 0;
+    while (d.users[sub_uid] && attempts++ < 50) {
+        sub_uid = String(Date.now()) + Math.floor(Math.random() * 1000);
+    }
+    if (d.users[sub_uid]) {
+        return res.json({ok:false, error:'Sub-UID-Kollision — bitte gleich nochmal versuchen'});
+    }
     d.users[sub_uid] = {
         name, username: null, instagram: null, bio: null, nische: null, spitzname: null,
         trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,
@@ -4123,19 +5166,22 @@ app.post('/delete-comment-api', (req, res) => {
 
 
 app.post('/post-link-from-app', async (req, res) => {
+    // Notes: Frühe Returns nutzen jetzt {ok:false, error} (vorher nur {error}).
+    // Caller in App prüfte 'result.ok !== false' — undefined !== false war true →
+    // hat Web-Push auch bei Fehlern abgefeuert + 'success' an User retourniert.
     if (!checkBridgeSecret(req, res)) return;
     const { uid, name, url, caption } = req.body || {};
-    if (!uid || !url) return res.json({error:'Ungültig'});
+    if (!uid || !url) return res.json({ok:false, error:'Ungültig'});
     console.log('[APP-LINK] uid:', uid, 'url:', url?.slice(0,30), 'GROUP_A_ID:', GROUP_A_ID);
 
     const u = d.users[uid];
-    if (!u) return res.json({error:'User nicht gefunden'});
+    if (!u) return res.json({ok:false, error:'User nicht gefunden'});
 
     // Duplikat Check
     const heute = new Date().toDateString();
     const norm = (t) => t.toLowerCase().replace(/\?.*$/, '').replace(/\/$/, '').trim();
     const isDuplicate = Object.values(d.links).some(l => norm(l.text) === norm(url));
-    if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({error:'Dieser Link wurde bereits gepostet!'}); }
+    if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({ok:false, error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check - Admins haben kein Limit
     let usedBonusLink = false;
@@ -4147,7 +5193,7 @@ app.post('/post-link-from-app', async (req, res) => {
         const bonusAvail = d.bonusLinks?.[uid] || 0;
         const badgeBonus = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
         const maxLinks = 1 + bonusAvail + badgeBonus;
-        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
+        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({ok:false, error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
         if (todayLinks >= 1) {
             if (bonusAvail > 0) usedBonusLink = true;
             else usedBadgeBonus = true;
@@ -4156,49 +5202,51 @@ app.post('/post-link-from-app', async (req, res) => {
     console.log('[APP-LINK] Checks OK - sende Link...');
 
     try {
-        // Link in Gruppe senden (gleiche Formatierung wie Telegram-Post)
-        console.log('[APP-LINK] Sende Link an GROUP_A_ID:', GROUP_A_ID);
-        const isAdmin = istAdminId(uid);
-        const botMsg = await bot.telegram.sendMessage(
-            GROUP_A_ID,
-            buildLinkKarte(u.spitzname||u.name||name, u.role||'🆕 New', url, 0, u.xp||0, isAdmin) + (caption ? '\n💬 ' + caption : ''),
-            { reply_markup: buildLinkButtons(0, 0) }
-        );
-        console.log('[APP-LINK] Gesendet an Gruppe A, msgId:', botMsg.message_id);
-
-        // Button mit echter msgId updaten
-        const mapKey = 'A_' + botMsg.message_id;
-        await bot.telegram.editMessageReplyMarkup(GROUP_A_ID, botMsg.message_id, null,
-            buildLinkButtons(botMsg.message_id, 0)
-        );
-
-        // Warnung als Reply auf Link senden - nur wenn nicht Admin
-        if (!istAdminId(uid)) {
-            try {
-                const warnMsg = await bot.telegram.sendMessage(GROUP_A_ID,
-                    '⚠️ Mindestens 5 Links liken (M1) — sonst Verwarnung!',
-                    { reply_to_message_id: botMsg.message_id }
-                );
-                setTimeout(async () => { try { await bot.telegram.deleteMessage(GROUP_A_ID, warnMsg.message_id); } catch(e) {} }, 10000);
-            } catch(e) { console.log('[APP-LINK] Warnung Fehler:', e.message); }
-        }
-
-        // Link speichern
+        // App-only Flow: kein Telegram-Group-Post, nur d.links + Confirmation-DM.
+        // Link erscheint im App-Feed und wird via 30-Min-Batch-DM angekündigt.
+        const linkId = generateSyntheticLinkId();
+        const mapKey = linkId;
         const linkData = {
             chat_id: GROUP_A_ID,
-            user_id: Number(uid),
+            // Sub-Account-Safe: uid bleibt String (Number('sub_xyz') = NaN würde
+            // String(link.user_id)===String(myUid) Self-Check brechen).
+            user_id: /^\d+$/.test(String(uid)) ? Number(uid) : String(uid),
             user_name: u.spitzname||u.name||name,
             text: url,
             caption: caption||'',
             likes: new Set(),
             likerNames: {},
-            counter_msg_id: botMsg.message_id,
+            counter_msg_id: linkId,
             timestamp: Date.now(),
             origin: 'app',
+            appOnly: true,
             likeSource: { app: 0, telegram: 0 }
         };
         d.links[mapKey] = linkData;
-        console.log('[APP-LINK] Link gespeichert als:', mapKey);
+        tryFetchThumbnail(linkData, 'text');
+        console.log('[APP-LINK] Link gespeichert als:', mapKey, '(app-only)');
+
+        // Confirmation-DM an Poster mit Magic-Link in den App-Feed.
+        try {
+            const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=heute');
+            await bot.telegram.sendMessage(Number(uid),
+                '✅ *Dein Link ist im Feed!*\n\nDein Instagram-Link ist jetzt im App-Feed sichtbar. Andere User werden in der nächsten 30-Min-DM-Welle benachrichtigt.\n\n💡 *Vergiss nicht*: andere Links liken & mit 2 Wörtern kommentieren — Pflicht!',
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Feed engagen', url: magicUrl }]] } }
+            );
+        } catch (e) { console.log('[APP-LINK] DM-Bestätigung Fehler:', e.message); }
+
+        // App-DM (CreatorBoost) mit Link-Regeln — User sieht das auch wenn er kein Telegram offen hat.
+        try {
+            const rulesUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/explore?tab=regeln#r-links';
+            const linkRules = '✅ Dein Link ist gepostet!\n\n' +
+                '📋 *Link-Regeln (kurz):*\n' +
+                '• 1 Link pro Tag (Bonus-Links optional)\n' +
+                '• Andere Links musst du liken (Mission M1: 5 Likes/Tag)\n' +
+                '• Erst Insta-Reel öffnen, dann liken (Visit-before-Like)\n' +
+                '• 2-Wort-Kommentar = Pflicht (M2/M3 Missionen)\n' +
+                '• Mission-Auswertung 12:00 — sonst Verwarnung';
+            sendCreatorBoostDM(uid, linkRules, { link: { url: rulesUrl, label: '📖 Alle Link-Regeln' } });
+        } catch(e) {}
 
         // Bonus-Link verbrauchen falls verwendet
         if (usedBonusLink && d.bonusLinks?.[uid] > 0) {
@@ -4221,31 +5269,15 @@ app.post('/post-link-from-app', async (req, res) => {
         if (istInstagramLink(url)) mission.linksGepostet++;
         await checkMissionen(uid, u.name||name);
 
-        // DM an alle User senden
-        await sendeLinkAnAlle(linkData);
-
-        // Bridge Bot informieren
-        try {
-            const burl = BRIDGE_BOT_URL;
-            const lib2 = burl.startsWith('https') ? https : http;
-            const bdata = JSON.stringify({
-                fromGroup: 'A', msgId: botMsg.message_id, botMsgId: botMsg.message_id,
-                chatId: GROUP_A_ID, linkText: url,
-                userName: u.spitzname||u.name||name, userId: Number(uid), username: u.username||null
-            });
-            const urlObj2 = new URL(burl);
-            const req2 = lib2.request({
-                hostname: urlObj2.hostname, path: urlObj2.pathname, method: 'POST',
-                headers: {'Content-Type':'application/json','x-bridge-secret':BRIDGE_SECRET,'Content-Length':Buffer.byteLength(bdata)}
-            }, r=>{r.on('data',()=>{});r.on('end',()=>{});});
-            req2.on('error',()=>{}); req2.write(bdata); req2.end();
-        } catch(e) { console.log('Bridge Fehler:', e.message); }
+        // App-only Flow: kein sendeLinkAnAlle (replaced durch 30-Min Feed-Batch)
+        // und kein Bridge-Notify (Bridge erwartet einen echten Group-Post den
+        // wir hier nicht mehr machen).
 
         speichern();
-        res.json({ok:true, msgId: botMsg.message_id});
+        res.json({ok:true, msgId: linkId});
     } catch(e) {
         console.log('post-link-from-app Fehler:', e.message);
-        res.json({error:'Fehler: '+e.message});
+        res.json({ok:false, error:'Fehler: '+e.message});
     }
 });
 
@@ -4908,11 +5940,282 @@ app.post('/mark-read', (req, res) => {
     res.json({ ok: true });
 });
 
+// ─── App-Community-Chat: globale Chat-Gruppe für alle App-User ────────────
+// Storage: d.appChat = [{uid, name, text, image?, ts, deleted?}], FIFO max 1000.
+// Read-Tracking: d.appChatLastRead[uid] = ts.
+app.get('/app-chat', (req, res) => {
+    const uid = String(req.query.uid || '');
+    const since = Number(req.query.since || 0);
+    if (!d.appChat) d.appChat = [];
+    if (!d.appChatLastRead) d.appChatLastRead = {};
+    // User der den Chat aufruft ist garantiert in der App → als Member markieren
+    if (uid && d.users[uid]) { d.users[uid].appLastSeen = Date.now(); speichernDebounced(); }
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    // Lightweight Polling: bei since>0 nur neue Messages zurückgeben (Bandwidth/Speed)
+    let msgs = since > 0 ? d.appChat.filter(m => (m.ts||0) > since) : d.appChat.slice(-limit);
+    const lastRead = uid ? (d.appChatLastRead[uid] || 0) : 0;
+    const unread = uid ? d.appChat.filter(m => (m.ts||0) > lastRead && String(m.uid) !== uid && !m.deleted).length : 0;
+    // Member = User mit u.appUser-Flag (permanent gesetzt sobald User irgendeinen
+    // App-Endpoint hittet). Sub-Accounts werden nicht doppelt gezählt.
+    // Fallback für alte Daten: appLastSeen / password_hash / d.appActivity-Eintrag.
+    const memberCount = Object.entries(d.users || {}).filter(([uid, u]) => {
+        if (!u) return false;
+        if (u.parent_uid) return false;
+        if (u.appUser) return true;
+        if (u.appLastSeen) return true;
+        if (u.password_hash) return true;
+        if (d.appActivity && d.appActivity[uid]) return true;
+        return false;
+    }).length;
+    res.json({ ok: true, messages: msgs, lastRead, unread, memberCount });
+});
+
+app.post('/app-chat-send', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const text = String((req.body && req.body.text) || '').trim().slice(0, 2000);
+    const image = (req.body && req.body.image) ? String(req.body.image).slice(0, 500000) : null;
+    const replyToTs = Number((req.body && req.body.replyToTs) || 0);
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!text && !image) return res.status(400).json({ ok: false, error: 'Leer' });
+    if (!d.appChat) d.appChat = [];
+    const u = d.users[uid];
+    u.appLastSeen = Date.now();
+    const msg = {
+        uid,
+        name: u.spitzname || u.name || 'User',
+        text,
+        image: image || null,
+        ts: Date.now()
+    };
+    // Reply-Snapshot: wir speichern die Original-Werte direkt mit, damit ein
+    // späteres Delete des Parents den Quote nicht zerstört.
+    if (replyToTs) {
+        const parent = d.appChat.find(x => Number(x.ts) === replyToTs);
+        if (parent) {
+            msg.replyTo = {
+                ts: Number(parent.ts),
+                uid: String(parent.uid),
+                name: parent.name || 'User',
+                text: (parent.text || '').slice(0, 200),
+                hasImage: !!parent.image
+            };
+        }
+    }
+    d.appChat.push(msg);
+    if (d.appChat.length > 1000) d.appChat = d.appChat.slice(-1000);
+    speichernDebounced();
+    res.json({ ok: true, message: msg });
+});
+
+app.post('/app-chat-mark-read', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid) return res.status(400).json({ ok: false });
+    if (!d.appChatLastRead) d.appChatLastRead = {};
+    d.appChatLastRead[uid] = Date.now();
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
+app.post('/app-chat-delete', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    if (!uid || !ts) return res.status(400).json({ ok: false });
+    if (!d.appChat) d.appChat = [];
+    const idx = d.appChat.findIndex(m => Number(m.ts) === ts);
+    if (idx < 0) return res.status(404).json({ ok: false, error: 'Nicht gefunden' });
+    const m = d.appChat[idx];
+    const isOwner = String(m.uid) === uid;
+    const isAdmin = istAdminId(Number(uid));
+    if (!isOwner && !isAdmin) return res.status(403).json({ ok: false, error: 'Kein Zugriff' });
+    // Soft-Delete: NUR Flag setzen, Text + Image bleiben erhalten (Recovery möglich).
+    m.deleted = true;
+    m.deletedAt = Date.now();
+    m.deletedBy = uid;
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
+// Admin-Endpoint: Soft-deleted Messages wiederherstellen.
+// body: { uid, ts? (einzelne), all? (alle deleted), sinceTs? (alle deleted seit) }
+app.post('/app-chat-restore', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    const sinceTs = Number((req.body && req.body.sinceTs) || 0);
+    if (!uid || !istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Nur Admin' });
+    if (!d.appChat) d.appChat = [];
+    let restored = 0;
+    for (const m of d.appChat) {
+        if (!m.deleted) continue;
+        if (ts && Number(m.ts) !== ts) continue;
+        if (sinceTs && (m.deletedAt || 0) < sinceTs) continue;
+        if (!m.text && !m.image) continue; // Hart-zerstörte können nicht über diesen Pfad
+        delete m.deleted;
+        delete m.deletedAt;
+        delete m.deletedBy;
+        restored++;
+    }
+    if (restored > 0) speichernDebounced();
+    const recoverable = d.appChat.filter(m => m.deleted && (m.text || m.image)).length;
+    const lost = d.appChat.filter(m => m.deleted && !m.text && !m.image).length;
+    res.json({ ok: true, restored, recoverable, lost });
+});
+
+// Auto-Restore beim Bot-Start: stellt Messages wieder her die durch das alte
+// destruktive Delete (text='', image=null) zerstört wurden — sucht im letzten
+// Backup nach den Originalen.
+function autoRestoreAppChatFromBackup() {
+    try {
+        if (!d.appChat || !d.appChat.length) return;
+        const lostMsgs = d.appChat.filter(m => m.deleted && !m.text && !m.image);
+        if (!lostMsgs.length) { console.log('🔄 App-Chat Auto-Restore: keine zerstörten Messages'); return; }
+        console.log('🔄 App-Chat Auto-Restore: ' + lostMsgs.length + ' zerstörte Messages — suche Backup…');
+        const path = require('path');
+        const dataDir = path.dirname(DATA_FILE);
+        const baseName = path.basename(DATA_FILE, '.json');
+        let files = [];
+        try { files = fs.readdirSync(dataDir).filter(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json')).sort().reverse(); } catch(e) {}
+        if (!files.length) { console.log('  → kein Backup gefunden'); return; }
+        let totalRestored = 0;
+        for (const f of files) {
+            try {
+                const bk = JSON.parse(fs.readFileSync(path.join(dataDir, f), 'utf8'));
+                const bkChat = bk.appChat || [];
+                const bkMap = new Map(bkChat.map(m => [Number(m.ts), m]));
+                let restoredFromThis = 0;
+                for (const m of d.appChat) {
+                    if (!m.deleted || m.text || m.image) continue;
+                    const orig = bkMap.get(Number(m.ts));
+                    if (orig && (orig.text || orig.image) && !orig.deleted) {
+                        m.text = orig.text || '';
+                        m.image = orig.image || null;
+                        delete m.deleted;
+                        delete m.deletedAt;
+                        delete m.deletedBy;
+                        restoredFromThis++;
+                        totalRestored++;
+                    }
+                }
+                if (restoredFromThis > 0) console.log('  ✅ ' + restoredFromThis + ' aus ' + f);
+                if (!d.appChat.find(m => m.deleted && !m.text && !m.image)) break;
+            } catch (e) { console.log('  Backup-Parse-Fehler ' + f + ':', e.message); }
+        }
+        if (totalRestored > 0) { speichern(); console.log('🎉 Total: ' + totalRestored + ' App-Chat-Messages wiederhergestellt'); }
+        else console.log('  → kein passender Eintrag im Backup (Backup älter als Messages)');
+    } catch(e) { console.log('Auto-Restore Fehler:', e.message); }
+}
+
+// Reaction toggle: User klickt Emoji unter Message → add/remove
+app.post('/app-chat-react', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const ts = Number((req.body && req.body.ts) || 0);
+    const emoji = String((req.body && req.body.emoji) || '').slice(0, 8);
+    if (!uid || !ts || !emoji) return res.status(400).json({ ok: false });
+    if (!/[\p{Emoji}‍]+/u.test(emoji)) return res.status(400).json({ ok: false, error: 'Kein Emoji' });
+    if (!d.appChat) d.appChat = [];
+    const m = d.appChat.find(x => Number(x.ts) === ts);
+    if (!m) return res.status(404).json({ ok: false, error: 'Nicht gefunden' });
+    if (!m.reactions) m.reactions = {};
+    // 1 User = 1 Reaction pro Message: User aus ALLEN anderen Emojis entfernen.
+    let hadSameEmoji = false;
+    for (const e of Object.keys(m.reactions)) {
+        const i = m.reactions[e].indexOf(uid);
+        if (i >= 0) {
+            m.reactions[e].splice(i, 1);
+            if (e === emoji) hadSameEmoji = true;
+            if (m.reactions[e].length === 0) delete m.reactions[e];
+        }
+    }
+    // Wenn User dasselbe Emoji nochmal antippt → Toggle (entfernt). Sonst → neues setzen.
+    if (!hadSameEmoji) {
+        if (!m.reactions[emoji]) m.reactions[emoji] = [];
+        m.reactions[emoji].push(uid);
+    }
+    if (d.users[uid]) d.users[uid].appLastSeen = Date.now();
+    speichernDebounced();
+    res.json({ ok: true, reactions: m.reactions });
+});
+
+// ─── Funnel-Tracking (Landing → Login → Telegram → Email-Login) ─────────────
+// Speichert Events als rolling 60-Tage-Liste in d.funnel.events
+// + aggregierte Counter pro Tag in d.funnel.daily[YYYY-MM-DD]
+// Plus Email-Login-Audit-Log in d.emailLoginLog (welche Email wann eingeloggt)
+function ensureFunnelStore() {
+    if (!d.funnel) d.funnel = { events: [], daily: {} };
+    if (!d.emailLoginLog) d.emailLoginLog = [];
+}
+function trackFunnel(event, meta) {
+    ensureFunnelStore();
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    d.funnel.events.push({ event: String(event||'').slice(0,40), ts: now, meta: meta || {} });
+    // Rolling 60 Tage
+    const cutoff = now - 60 * 24 * 60 * 60 * 1000;
+    if (d.funnel.events.length > 5000 || d.funnel.events.length % 100 === 0) {
+        d.funnel.events = d.funnel.events.filter(e => (e.ts||0) >= cutoff);
+    }
+    if (!d.funnel.daily[day]) d.funnel.daily[day] = {};
+    d.funnel.daily[day][event] = (d.funnel.daily[day][event] || 0) + 1;
+    // Daily-Map auch nach 90 Tagen aufräumen
+    const keepDays = 90;
+    const keepCutoff = new Date(now - keepDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    for (const k of Object.keys(d.funnel.daily)) {
+        if (k < keepCutoff) delete d.funnel.daily[k];
+    }
+}
+app.post('/track-funnel', (req, res) => {
+    const event = String((req.body && req.body.event) || '').trim();
+    if (!event) return res.status(400).json({ ok: false });
+    const meta = (req.body && typeof req.body.meta === 'object') ? req.body.meta : {};
+    // Optional UID — wenn vorhanden + bekannt → mitspeichern (sonst anonym)
+    const uid = String((req.body && req.body.uid) || '');
+    if (uid && d.users[uid]) meta.uid = uid;
+    // Light Sanitization auf häufige Felder
+    if (meta.ua) meta.ua = String(meta.ua).slice(0, 200);
+    if (meta.ref) meta.ref = String(meta.ref).slice(0, 300);
+    if (meta.path) meta.path = String(meta.path).slice(0, 200);
+    trackFunnel(event, meta);
+    speichernDebounced();
+    res.json({ ok: true });
+});
+// Email-Login-Audit: wird vom App-Bridge auf Erfolg/Misserfolg aufgerufen
+app.post('/log-email-login', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    ensureFunnelStore();
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim().slice(0, 200);
+    const success = !!(req.body && req.body.success);
+    const method = String((req.body && req.body.method) || 'magic-link').slice(0, 30);
+    const uid = String((req.body && req.body.uid) || '');
+    const ip = String((req.body && req.body.ip) || '').slice(0, 64);
+    const ua = String((req.body && req.body.ua) || '').slice(0, 200);
+    if (!email) return res.status(400).json({ ok: false });
+    d.emailLoginLog.push({ email, success, method, uid, ip, ua, ts: Date.now() });
+    // Rolling 1000 Einträge
+    if (d.emailLoginLog.length > 1000) d.emailLoginLog = d.emailLoginLog.slice(-1000);
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
 app.post('/track-login', (req, res) => {
     const { uid } = req.body || {};
     if (!uid || !d.users[String(uid)]) return res.json({ ok: false });
     if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
     d.dailyLogins[uid]++;
+    d.users[String(uid)].appLastSeen = Date.now();
+    speichernDebounced();
+    res.json({ ok: true });
+});
+
+// Leichtgewichtiges Heartbeat: App pingt das alle paar Minuten — markiert User als aktiv.
+app.post('/app-presence', (req, res) => {
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid || !d.users[uid]) return res.json({ ok: false });
+    d.users[uid].appLastSeen = Date.now();
+    speichernDebounced();
     res.json({ ok: true });
 });
 
@@ -5065,15 +6368,18 @@ app.post('/like-superlink-api', async (req, res) => {
     if (!Array.isArray(sl.likes)) sl.likes = [];
     if (!sl.likerNames) sl.likerNames = {};
     const idx = sl.likes.indexOf(String(uid));
+    // Engagement-Pflicht: einmal geliked = erfüllt. Unlike NICHT erlaubt (analog zum
+    // Telegram-Button-Callback Line 2233 + zur /like-from-app Logik). Vorher konnte
+    // App-User über direkten API-Hit den Like wieder entfernen → Pflicht-Bypass.
     if (idx >= 0) {
-        sl.likes.splice(idx, 1);
-        delete sl.likerNames[String(uid)];
-    } else {
+        return res.json({ok:true, liked:true, likes: sl.likes.length});
+    }
+    {
         sl.likes.push(String(uid));
         const u = d.users[String(uid)];
         sl.likerNames[String(uid)] = u?.spitzname||u?.name||'User';
         addNotification(String(sl.uid), '❤️', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked!');
-        sendAppPush(String(sl.uid), '⭐ Superlink geliked!', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked', '/feed').catch(()=>{});
+        sendAppPush(String(sl.uid), '⭐ Superlink geliked!', (u?.spitzname||u?.name||'User') + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
         // Reminder-DM in Liker-Chat löschen
         if (sl.dmNotifications && sl.dmNotifications[String(uid)]) {
             bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[String(uid)]).catch(()=>{});
@@ -5117,29 +6423,31 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks = d.superlinks || {};
         const newSL = { id: slId, uid: String(uid), url, caption: caption||'', msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
         d.superlinks[slId] = newSL;
+        tryFetchThumbnail(newSL, 'url');
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
         speichern();
         // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).
         // Telegram-DM bewusst weggelassen — Telegram-Bot deckt seinen Flow selbst ab.
         try {
-            const rulesUrl = (APP_URL || 'https://creatorx.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
+            const rulesUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/explore?tab=regeln#r-superlinks';
             sendCreatorBoostDM(uid,
-                '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.\n\n📖 Regeln: ' + rulesUrl);
+                '⭐ Dein Superlink wurde gepostet!\n\nDu hast heute einen Superlink gepostet — vergiss nicht: Du musst alle Superlinks dieser Woche engagieren (Liken, Kommentieren, Teilen, Speichern) bis Sonntag 23:59 Uhr.',
+                { link: { url: rulesUrl, label: '📖 Superlink-Regeln' } });
         } catch(e) {}
-        // DM an alle anderen Poster dieser Woche
+        // DM an alle anderen Poster dieser Woche → führt direkt in den Engagement-Feed der App
         const posterUser = d.users[String(uid)];
         const otherPosters2 = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== String(uid));
-        const threadUrl2 = getFullEngagementThreadUrl();
         const slApi = d.superlinks[slId];
         if (slApi) slApi.dmNotifications = slApi.dmNotifications || {};
         for (const other of otherPosters2) {
             try {
+                const magicUrl2 = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
                 const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — *direkt im Thread*!`,
-                    threadUrl2 ? { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Zum Full-Engagement-Thread', url: threadUrl2 }]] } } : { parse_mode: 'Markdown' }
+                    `⭐ *Neuer Superlink!*\n\n👤 ${posterUser?.spitzname||posterUser?.name||'Ein User'} hat einen Superlink gepostet.\n🔗 ${url}\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl2 }]] } }
                 );
                 if (slApi && dmMsg?.message_id) slApi.dmNotifications[String(other.uid)] = dmMsg.message_id;
-                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (posterUser?.spitzname||posterUser?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed').catch(()=>{});
+                sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (posterUser?.spitzname||posterUser?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
             } catch(e) {}
         }
         res.json({ok:true, slId});
@@ -5165,6 +6473,40 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch().then(() => {
+    // App-Chat Auto-Restore: zerstörte Messages aus letztem Backup wiederherstellen
+    try { autoRestoreAppChatFromBackup(); } catch(e) {}
+    // One-time Cleanup: User die mehrere Reactions auf gleicher Message haben →
+    // nur die ERSTE behalten (Migration zur 1-Reaction-pro-User-Regel)
+    try {
+        let cleanedMsgs = 0, removed = 0;
+        for (const m of (d.appChat || [])) {
+            if (!m.reactions) continue;
+            const seen = new Set();
+            let touched = false;
+            for (const e of Object.keys(m.reactions)) {
+                m.reactions[e] = m.reactions[e].filter(uid => {
+                    if (seen.has(String(uid))) { removed++; touched = true; return false; }
+                    seen.add(String(uid));
+                    return true;
+                });
+                if (m.reactions[e].length === 0) { delete m.reactions[e]; touched = true; }
+            }
+            if (touched) cleanedMsgs++;
+        }
+        if (cleanedMsgs > 0) { speichern(); console.log('🧹 Reaction-Cleanup: ' + cleanedMsgs + ' Messages, ' + removed + ' Mehrfach-Reactions entfernt'); }
+    } catch(e) { console.log('Reaction-Cleanup Fehler:', e.message); }
+    // One-time Backfill: u.appUser=true für alle User mit historischer App-Aktivität
+    try {
+        let backfilled = 0;
+        for (const [uid, e] of Object.entries(d.appActivity || {})) {
+            if (d.users[uid] && !d.users[uid].appUser) { d.users[uid].appUser = true; backfilled++; }
+        }
+        for (const [uid, u] of Object.entries(d.users || {})) {
+            if (!u || u.appUser) continue;
+            if (u.password_hash || u.appLastSeen) { u.appUser = true; backfilled++; }
+        }
+        if (backfilled > 0) { speichern(); console.log('📡 appUser-Flag Backfill: ' + backfilled + ' User markiert'); }
+    } catch(e) { console.log('appUser-Backfill Fehler:', e.message); }
     setTimeout(async () => {
         if (!GROUP_B_ID) { console.log('⚠️ GROUP_B_ID nicht gesetzt – Full Engagement Thread übersprungen'); return; }
         try {

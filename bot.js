@@ -4346,8 +4346,13 @@ app.get('/data', (req, res) => {
     for (const [k, v] of Object.entries(d.links)) {
         const url = (v.text||'').trim();
         const merged = likesByUrl[url] || { likes: new Set(), likerNames: {} };
+        const likesArr = Array.from(merged.likes);
+        // Auto-include poster in their own likes for display (self-like is blocked,
+        // but own post should count as "done" in feed progress calculations).
+        const posterId = String(v.user_id);
+        if (posterId && !likesArr.includes(posterId)) likesArr.push(posterId);
         out.links[k] = Object.assign({}, v, {
-            likes: Array.from(merged.likes),
+            likes: likesArr,
             likerNames: merged.likerNames
         });
     }
@@ -6360,6 +6365,10 @@ app.get('/mission-status-api', (req, res) => {
     const gesamt = heuteLinks.length;
     const geliked = heuteLinks.filter(l => l.likes && l.likes.has(String(uid))).length;
     const prozent = gesamt > 0 ? Math.round((geliked / gesamt) * 100) : 0;
+    // Count user's own Instagram posts today (excluded from gesamt since self-like is blocked)
+    const eigenePosts = Object.values(d.links).filter(l =>
+        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(getRootUid(l.user_id)) === String(getRootUid(uid))
+    ).length;
     res.json({
         ok: true,
         daily: {
@@ -6369,7 +6378,10 @@ app.get('/mission-status-api', (req, res) => {
             m3: mission.m3 || false,
             gesamtLinks: gesamt,
             gelikedLinks: geliked,
-            prozent
+            prozent,
+            eigenePosts,
+            totalInklEigene: gesamt + eigenePosts,
+            alleGeliked: gesamt > 0 && geliked === gesamt
         },
         weekly: {
             m1Tage: wMission.m1Tage || 0,

@@ -53,6 +53,20 @@ app.use((req, res, next) => {
     next();
 });
 
+// Root-Route: vermeidet "weiße 404-Seite" und gibt einen klaren Einstieg zur App.
+app.get('/', (req, res) => {
+    const appBase = String(APP_URL || '').trim().replace(/\/$/, '');
+    if (!appBase) return res.status(200).send('CreatorBoost API läuft.');
+    const appHref = appBase + '/auth';
+    res.status(200).send(
+        '<!doctype html><html><head><meta charset="utf-8"><title>CreatorBoost</title>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:system-ui,Arial,sans-serif;padding:24px">' +
+        '<h1>CreatorBoost</h1><p>API läuft. Öffne die App über den Button:</p>' +
+        '<p><a href="' + appHref + '" style="display:inline-block;padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:8px">App öffnen</a></p>' +
+        '</body></html>'
+    );
+});
+
 function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 
 // System-User für In-App DMs (CreatorBoost). Hier oben definiert damit laden() unten

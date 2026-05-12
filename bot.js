@@ -857,6 +857,15 @@ function getWochenMission(uid) {
     return d.wochenMissionen[uid];
 }
 
+function addWeeklyMissionDay(wMission, counterKey, dayKey) {
+    const lastKey = counterKey + 'LetzterTag';
+    if (wMission[lastKey] === dayKey) return false;
+    wMission[counterKey] = (wMission[counterKey] || 0) + 1;
+    wMission[lastKey] = dayKey;
+    wMission.letzterTag = dayKey;
+    return true;
+}
+
 async function checkMissionen(uid, name) {
     if (istAdminId(uid)) return;
     const heute = new Date().toDateString();
@@ -893,23 +902,26 @@ async function missionenAuswerten() {
         const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(String(uid))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
         const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
-        const mission = getMission(uid);
+        const storedMission = d.missionen?.[uid]?.date === gestern ? d.missionen[uid] : null;
+        const m1Done = !!queue.m1Pending || !!storedMission?.m1;
+        const m2Done = gesamtGestern > 0 && prozentGestern >= 0.8;
+        const m3Done = gesamtGestern > 0 && gelikedGestern === gesamtGestern;
+        const anyDailyMissionDone = m1Done || m2Done || m3Done;
 
-        if (queue.m1Pending) {
+        if (m1Done) {
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 1!*\n5 Links geliked → +5 XP');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m1Tage++;
+        }
+        if (anyDailyMissionDone) {
+            if (addWeeklyMissionDay(wMission, 'm1Tage', gestern)) {
                 if (wMission.m1Tage >= 7) { xpAdd(uid, 10, name); meldungen.push('🏆 *Wochen-M1!* +10 XP'); wMission.m1Tage = 0; }
             }
         }
         // FIX 5: gesamtGestern > 0 statt minLinksVorhanden — M2/M3 braucht nicht 5 Links
-        if (gesamtGestern > 0 && prozentGestern >= 0.8) {
-            mission.m2 = true;
+        if (m2Done) {
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m2Tage++;
+            if (addWeeklyMissionDay(wMission, 'm2Tage', gestern)) {
                 if (wMission.m2Tage >= 7) {
                     xpAdd(uid, 15, name);
                     addDiamond(uid, 1);
@@ -920,13 +932,11 @@ async function missionenAuswerten() {
             }
         }
         // FIX 5: gesamtGestern > 0 statt minLinksVorhanden
-        if (gesamtGestern > 0 && gelikedGestern === gesamtGestern) {
-            mission.m3 = true;
+        if (m3Done) {
             xpAdd(uid, 5, name);
             addDiamond(uid, 1);
             meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP + 💎 1 Diamant');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m3Tage++;
+            if (addWeeklyMissionDay(wMission, 'm3Tage', gestern)) {
                 if (wMission.m3Tage >= 7) {
                     xpAdd(uid, 20, name);
                     addDiamond(uid, 2);
@@ -937,12 +947,10 @@ async function missionenAuswerten() {
             }
         }
 
-        wMission.letzterTag = gestern;
-
         const hatGesternLink = Object.values(d.links).some(l => istInstagramLink(l.text) && String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
 
         if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
-        if (queue.m1Pending) {
+        if (m1Done) {
             d.m1Streak[uid].count++;
             d.m1Streak[uid].letzterTag = gestern;
             if (d.m1Streak[uid].count >= 5 && d.users[uid]?.warnings > 0) {
@@ -4231,9 +4239,9 @@ async function zeitCheck() {
         };
         if (h === 3  && m < 5)  taeglich('backup',       () => backup());
         if (h === 4  && m < 5)  taeglich('memberCheck', () => gruppenMitgliederPruefen());
-        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
+        if (jetzt.getDay() === 1 && h === 0 && m < 10) taeglich('wochenReset', () => {
             d.wochenMissionen = {};
-            // Wochen-Reset findet IMMER Mo 00:05 statt. Die Woche läuft Mo 00:00 - So 23:59
+            // Weekly reset runs once at the start of Monday in Berlin time.
             // (Berlin TZ). Vorher wurde das fälschlicherweise Sonntag 20:00 via /gewinnspiel-abschluss
             // gemacht — dadurch zeigte das Wochen-Ranking ab So 20:00 schon eine "neue Woche".
             if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');

@@ -28,6 +28,17 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Browser/App-Clients laufen teils auf einer anderen Domain als dieser Bot-Service.
+// Ohne Preflight-Antwort bleibt die App vor dem Login/Bootstrap im Browser hängen.
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bridge-secret');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
+
 // App-Usage-Tracking: erfasst wer wann welche Endpoints in der CreatorBoost-App benutzt
 app.use((req, res, next) => {
     try {
@@ -4361,6 +4372,52 @@ app.get('/data', (req, res) => {
     res.json(out);
 });
 
+function collectionCount(value) {
+    if (!value) return 0;
+    if (value instanceof Set) return value.size;
+    if (Array.isArray(value)) return value.length;
+    if (typeof value === 'object') return Object.keys(value).length;
+    return 0;
+}
+
+function isPublicCommunityUser(uid, u) {
+    if (!u || uid === CREATORBOOST_UID || u.isSystem || u.parent_uid) return false;
+    if (u.inGruppe === false) return false;
+    if (istAdminId(Number(uid))) return false;
+    if (u.is_bot === true || (u.username && /bot$/i.test(String(u.username)))) return false;
+    return true;
+}
+
+function buildCommunityStats() {
+    const users = Object.entries(d.users || {}).filter(([uid, u]) => isPublicCommunityUser(uid, u));
+    const links = Object.values(d.links || {});
+    const superlinks = Object.values(d.superlinks || {});
+    const likes = links.reduce((sum, l) => sum + collectionCount(l && l.likes), 0) +
+        superlinks.reduce((sum, sl) => sum + collectionCount(sl && sl.likes), 0);
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const activeToday = users.filter(([uid, u]) => {
+        const activityTs = Number(d.appActivity?.[uid]?.lastSeen || u.appLastSeen || 0);
+        return activityTs >= since;
+    }).length;
+    return {
+        ok: true,
+        members: users.length,
+        activeToday,
+        posts: links.length + superlinks.length,
+        likes
+    };
+}
+
+app.get('/community-stats-api', (req, res) => {
+    res.json(buildCommunityStats());
+});
+
+// Public app alias used by the browser landing/login app. This intentionally
+// avoids loading /data, which can be large enough to make the UI appear blank.
+app.get('/api/community-stats', (req, res) => {
+    res.json(buildCommunityStats());
+});
+
 function checkBridgeSecret(req, res) {
     if (req.headers['x-bridge-secret'] !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
@@ -5274,6 +5331,23 @@ function verifyPasswordPBKDF2(password, stored) {
     } catch { return false; }
 }
 
+function authenticateEmailPassword(emailInput, passwordInput) {
+    const email = String(emailInput || '').toLowerCase().trim();
+    const password = String(passwordInput || '');
+    if (!email || !password) return { status: 400, body: { ok: false, error: 'Email und Passwort erforderlich' } };
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return { status: 401, body: { ok: false, error: 'Email oder Passwort falsch', notRegistered: true } };
+    const [uid, u] = found;
+    if (!u.password_hash) return { status: 401, body: { ok: false, error: 'noch kein Passwort gesetzt', noPassword: true } };
+    if (!verifyPasswordPBKDF2(password, u.password_hash)) {
+        return { status: 401, body: { ok: false, error: 'Email oder Passwort falsch' } };
+    }
+    u.appLastSeen = Date.now();
+    u.appUser = true;
+    speichernDebounced();
+    return { status: 200, body: { ok: true, uid: String(uid), hasPassword: true } };
+}
+
 // Setzt das Passwort für einen User. Bridge-Secret-geschützt.
 app.post('/set-user-password', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -5362,15 +5436,15 @@ app.post('/create-email-user-api', (req, res) => {
 // Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.
 app.post('/auth-email-password', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
-    const password = String((req.body && req.body.password) || '');
-    if (!email || !password) return res.status(400).json({ ok: false, error: 'Email und Passwort erforderlich' });
-    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
-    if (!found) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
-    const [uid, u] = found;
-    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'noch kein Passwort gesetzt', noPassword: true });
-    if (!verifyPasswordPBKDF2(password, u.password_hash)) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
-    res.json({ ok: true, uid: String(uid), hasPassword: true });
+    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password);
+    res.status(result.status).json(result.body);
+});
+
+// Browser-facing alias for the app login form. The bridge endpoint above remains
+// available for server-to-server callers that still send x-bridge-secret.
+app.post('/api/auth/email-password', (req, res) => {
+    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password);
+    res.status(result.status).json(result.body);
 });
 
 
@@ -6673,7 +6747,7 @@ function trackFunnel(event, meta) {
         if (k < keepCutoff) delete d.funnel.daily[k];
     }
 }
-app.post('/track-funnel', (req, res) => {
+function handleTrackFunnel(req, res) {
     const event = String((req.body && req.body.event) || '').trim();
     if (!event) return res.status(400).json({ ok: false });
     const meta = (req.body && typeof req.body.meta === 'object') ? req.body.meta : {};
@@ -6687,7 +6761,9 @@ app.post('/track-funnel', (req, res) => {
     trackFunnel(event, meta);
     speichernDebounced();
     res.json({ ok: true });
-});
+}
+app.post('/track-funnel', handleTrackFunnel);
+app.post('/api/track-funnel', handleTrackFunnel);
 // Email-Login-Audit: wird vom App-Bridge auf Erfolg/Misserfolg aufgerufen
 app.post('/log-email-login', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

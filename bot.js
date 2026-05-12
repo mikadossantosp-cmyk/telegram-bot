@@ -7030,9 +7030,12 @@ app.post('/admin/delete-user', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
+const server = app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 
 bot.launch().then(() => {
+    botStarted = true;
+    botLaunchError = null;
+    console.log('🤖 Bot läuft!');
     // App-Chat Auto-Restore: zerstörte Messages aus letztem Backup wiederherstellen
     try { autoRestoreAppChatFromBackup(); } catch(e) {}
     // One-time Cleanup: User die mehrere Reactions auf gleicher Message haben →
@@ -7095,8 +7098,14 @@ bot.launch().then(() => {
             if (threadId) console.log('✅ Full Engagement Thread bereit:', threadId);
         } catch(e) { console.log('Startup Engagement Fehler:', e.message); }
     }, 5000);
+}).catch((e) => {
+    botStarted = false;
+    botLaunchError = e?.message || e?.description || String(e);
+    const code = e?.code || e?.response?.error_code || '';
+    const desc = e?.response?.description || '';
+    console.log('🔴 Telegram-Start fehlgeschlagen:', code, botLaunchError, desc ? ('| ' + desc) : '');
+    if (e?.stack) console.log(e.stack);
 });
-console.log('🤖 Bot läuft!');
 
 // Migrate communityFeed → threadMessages['general'] on startup
 function migriereAlteDaten() {
@@ -7154,9 +7163,25 @@ process.on('uncaughtException', (error) => {
     console.log('🔴 Uncaught:', error.message);
     if (error.stack) console.log(error.stack);
 });
-process.once('SIGINT',  () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`🛑 ${signal} empfangen, fahre herunter...`);
+    if (botStarted) {
+        try { bot.stop(signal); }
+        catch (e) { console.log('Bot-Stop Fehler:', e.message); }
+    }
+    server.close((err) => {
+        if (err) console.log('HTTP-Server Stop Fehler:', err.message);
+        process.exit(err ? 1 : 0);
+    });
+    setTimeout(() => process.exit(0), 5000).unref();
+}
+process.once('SIGINT',  () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
-(async () => { await checkInstagramForAllUsers(); })();
+(async () => { await checkInstagramForAllUsers(); })().catch((e) => {
+    console.log('Instagram-Startup-Check Fehler:', e?.message || e);
+});
 
 

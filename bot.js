@@ -25,6 +25,9 @@ process.env.TZ = 'Europe/Berlin';
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
+let botStarted = false;
+let botLaunchError = null;
+let shuttingDown = false;
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -490,7 +493,7 @@ async function cleanupOldSuperlinks() {
     speichern();
     console.log(`🧹 Superlinks-Cleanup: TG ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen, Data-Records ${removed} > 8 Wochen alt entfernt`);
     if (failures.length) console.log('Telegram-Löschfehler:', failures.slice(0,5).join(' | '));
-    return { totalOld: oldIds.length, removed, tgDeleted, tgFailed, failures };
+    return { totalOld: new Set([...tgDeleteIds, ...dataDeleteIds]).size, removed, tgDeleted, tgFailed, failures };
 }
 
 function getFullEngagementThreadUrl() {
@@ -4365,6 +4368,19 @@ function checkBridgeSecret(req, res) {
     if (req.headers['x-bridge-secret'] !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
 }
+
+function getHealthStatus() {
+    return {
+        ok: true,
+        service: 'creatorboost-bot',
+        uptime: Math.round(process.uptime()),
+        bot: botStarted ? 'running' : (botLaunchError ? 'error' : 'starting'),
+        botError: botLaunchError
+    };
+}
+
+app.get('/', (req, res) => { res.json(getHealthStatus()); });
+app.get('/health', (req, res) => { res.json(getHealthStatus()); });
 
 app.get('/xp-event-status', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

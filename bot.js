@@ -4362,7 +4362,8 @@ app.get('/data', (req, res) => {
 });
 
 function checkBridgeSecret(req, res) {
-    if (req.headers['x-bridge-secret'] !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
+    const secret = req.headers['x-bridge-secret'] || req.query?.secret;
+    if (secret !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
 }
 

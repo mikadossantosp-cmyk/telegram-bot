@@ -5176,6 +5176,7 @@ app.post('/add-xp', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const amount = Number(req.body && req.body.amount);
+    const noRanking = req.body?.noRanking === true;
     const u = d.users[uid];
     if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
     if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
@@ -5183,6 +5184,10 @@ app.post('/add-xp', (req, res) => {
     if (u.xp < 0) u.xp = 0;
     u.level = level(u.xp);
     u.role = badge(u.xp);
+    if (!noRanking) {
+        if (!d.weeklyXP) d.weeklyXP = {};
+        d.weeklyXP[uid] = Math.max(0, (d.weeklyXP[uid] || 0) + amount);
+    }
     speichern();
     res.json({ ok: true, newXp: u.xp });
 });

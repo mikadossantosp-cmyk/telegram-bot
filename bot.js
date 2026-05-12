@@ -2047,6 +2047,37 @@ bot.command('deleteuser', async (ctx) => {
     }
 });
 
+function _generatePassword() {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let pw = '';
+    for (let i = 0; i < 10; i++) pw += chars[crypto.randomInt(chars.length)];
+    return pw;
+}
+
+bot.command('resetpw', async (ctx) => {
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 1) return ctx.reply('❌ Nutzung: /resetpw <uid oder name oder email>\n\nGeneriert ein neues Passwort und schickt es dem User per DM.');
+        const uid = _findUser(args[0]);
+        if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
+        const u = d.users[uid];
+        if (!u.email) return ctx.reply('❌ User ' + (u.spitzname || u.name || uid) + ' hat keine Email — kein Passwort-Login möglich.');
+        const newPw = _generatePassword();
+        u.password_hash = hashPasswordPBKDF2(newPw);
+        speichern();
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.');
+        } catch (e) {}
+        await ctx.reply('✅ Passwort zurückgesetzt für ' + (u.spitzname || u.name || uid) + ' (' + u.email + ')\nNeues Passwort: ' + newPw);
+        console.log('[RESETPW] Admin ' + ctx.from.id + ' hat Passwort für ' + uid + ' (' + u.email + ') zurückgesetzt');
+    } catch (e) {
+        console.log('[RESETPW] Fehler:', e.message);
+        try { await ctx.reply('❌ Fehler: ' + e.message); } catch(_) {}
+    }
+});
+
 bot.command('dellink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
     const suche = ctx.message.text.replace('/dellink', '').trim().toLowerCase();
@@ -5374,6 +5405,40 @@ app.post('/set-user-password', (req, res) => {
     d.users[uid].password_hash = hashPasswordPBKDF2(pw);
     speichern();
     res.json({ ok: true });
+});
+
+// Admin: reset password and generate a new one. Supports browser GET.
+app.all('/admin/reset-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = String(req.body?.uid || req.query?.uid || '');
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    const u = d.users[uid];
+    if (!u.email) return res.status(400).json({ ok: false, error: 'User hat keine Email' });
+    const newPw = _generatePassword();
+    u.password_hash = hashPasswordPBKDF2(newPw);
+    speichern();
+    try { bot.telegram.sendMessage(Number(uid), '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.'); } catch(e) {}
+    const name = u.spitzname || u.name || uid;
+    console.log('[RESET-PW-API] ' + name + ' (' + u.email + ') — neues Passwort generiert');
+    res.json({ ok: true, uid, name, email: u.email, newPassword: newPw });
+});
+
+// User self-service: request password reset by email. Returns new password
+// directly (no email service needed). Also sends via Telegram DM if possible.
+app.post('/api/auth/reset-password', (req, res) => {
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    if (!email) return res.status(400).json({ ok: false, error: 'Email erforderlich' });
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return res.status(404).json({ ok: false, error: 'Kein Account mit dieser Email gefunden' });
+    const [uid, u] = found;
+    const newPw = _generatePassword();
+    u.password_hash = hashPasswordPBKDF2(newPw);
+    speichern();
+    try { bot.telegram.sendMessage(Number(uid), '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.'); } catch(e) {}
+    console.log('[RESET-PW-SELF] ' + (u.spitzname || u.name) + ' (' + email + ') — neues Passwort generiert');
+    res.json({ ok: true, newPassword: newPw, message: 'Dein neues Passwort wurde generiert. Falls du Telegram nutzt, wurde es dir auch per DM geschickt.' });
 });
 
 // Setzt einen vom User selbst gewählten appCode. Bridge-Secret-geschützt.

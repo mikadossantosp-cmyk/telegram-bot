@@ -4404,7 +4404,11 @@ function buildCommunityStats() {
         members: users.length,
         activeToday,
         posts: links.length + superlinks.length,
-        likes
+        likes,
+        currentPosts: links.length + superlinks.length,
+        totalPosts: links.length + superlinks.length,
+        currentLikes: likes,
+        totalLikes: likes
     };
 }
 
@@ -5331,7 +5335,7 @@ function verifyPasswordPBKDF2(password, stored) {
     } catch { return false; }
 }
 
-function authenticateEmailPassword(emailInput, passwordInput) {
+function authenticateEmailPassword(emailInput, passwordInput, opts = {}) {
     const email = String(emailInput || '').toLowerCase().trim();
     const password = String(passwordInput || '');
     if (!email || !password) return { status: 400, body: { ok: false, error: 'Email und Passwort erforderlich' } };
@@ -5345,7 +5349,12 @@ function authenticateEmailPassword(emailInput, passwordInput) {
     u.appLastSeen = Date.now();
     u.appUser = true;
     speichernDebounced();
-    return { status: 200, body: { ok: true, uid: String(uid), hasPassword: true } };
+    const body = { ok: true, uid: String(uid), hasPassword: true };
+    if (opts.includeRedirect) {
+        const code = ensureAppCode(String(uid), u);
+        body.redirect = '/auth/auto?code=' + encodeURIComponent(code) + '&redirect=' + encodeURIComponent('/feed');
+    }
+    return { status: 200, body };
 }
 
 // Setzt das Passwort für einen User. Bridge-Secret-geschützt.
@@ -5443,7 +5452,7 @@ app.post('/auth-email-password', (req, res) => {
 // Browser-facing alias for the app login form. The bridge endpoint above remains
 // available for server-to-server callers that still send x-bridge-secret.
 app.post('/api/auth/email-password', (req, res) => {
-    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password);
+    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password, { includeRedirect: true });
     res.status(result.status).json(result.body);
 });
 

@@ -5172,6 +5172,54 @@ app.get('/add-xp', async (req, res) => {
     res.json({ ok: true });
 });
 
+app.post('/add-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const amount = Number(req.body && req.body.amount);
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    u.xp = (u.xp || 0) + amount;
+    if (u.xp < 0) u.xp = 0;
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    speichern();
+    res.json({ ok: true, newXp: u.xp });
+});
+
+app.post('/add-extra-link', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!d.bonusLinks) d.bonusLinks = {};
+    d.bonusLinks[uid] = (d.bonusLinks[uid] || 0) + 1;
+    speichern();
+    res.json({ ok: true });
+});
+
+app.post('/add-superlink', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    u.superlinks = (u.superlinks || 0) + 1;
+    speichern();
+    res.json({ ok: true });
+});
+
+app.post('/add-diamonds', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const amount = Number(req.body && req.body.amount);
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    u.diamonds = (u.diamonds || 0) + amount;
+    if (u.diamonds < 0) u.diamonds = 0;
+    speichern();
+    res.json({ ok: true, newDiamonds: u.diamonds });
+});
+
 app.get('/reset-daily-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     d.dailyXP={}; d.tracker={}; d.counter={}; d.badgeTracker={};

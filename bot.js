@@ -58,6 +58,285 @@ function istAdminId(uid) { return ADMIN_IDS.has(Number(uid)); }
 // System-User für In-App DMs (CreatorBoost). Hier oben definiert damit laden() unten
 // safely darauf referenzieren kann (vorher: TDZ-ReferenceError wenn man's bräuchte).
 const CREATORBOOST_UID = 'creatorboost';
+const APP_SESSION_COOKIE = 'creatorboost_session';
+const APP_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || (BRIDGE_SECRET + '|' + BOT_TOKEN);
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+function parseCookies(req) {
+    const raw = String(req.headers.cookie || '');
+    const out = {};
+    raw.split(';').forEach(part => {
+        const idx = part.indexOf('=');
+        if (idx <= 0) return;
+        const key = part.slice(0, idx).trim();
+        const val = part.slice(idx + 1).trim();
+        if (!key) return;
+        try { out[key] = decodeURIComponent(val); }
+        catch { out[key] = val; }
+    });
+    return out;
+}
+function signAppSession(uid, expiresAt) {
+    return crypto.createHmac('sha256', APP_SESSION_SECRET).update(String(uid) + '.' + String(expiresAt)).digest('hex');
+}
+function buildAppSessionToken(uid) {
+    const expiresAt = Date.now() + APP_SESSION_TTL_MS;
+    const payload = [String(uid), String(expiresAt), signAppSession(uid, expiresAt)].join('.');
+    return Buffer.from(payload).toString('base64url');
+}
+function readAppSessionUid(req) {
+    try {
+        const token = parseCookies(req)[APP_SESSION_COOKIE];
+        if (!token) return null;
+        const decoded = Buffer.from(token, 'base64url').toString('utf8');
+        const parts = decoded.split('.');
+        if (parts.length !== 3) return null;
+        const [uid, expiresAtRaw, signature] = parts;
+        if (!uid || !/^\d+$/.test(uid)) return null;
+        const expiresAt = Number(expiresAtRaw);
+        if (!expiresAt || Date.now() > expiresAt) return null;
+        const expected = signAppSession(uid, expiresAt);
+        const a = Buffer.from(signature, 'hex');
+        const b = Buffer.from(expected, 'hex');
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+        return d.users?.[uid] ? uid : null;
+    } catch {
+        return null;
+    }
+}
+function setAppSession(req, res, uid) {
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const cookie = [
+        APP_SESSION_COOKIE + '=' + buildAppSessionToken(uid),
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        'Max-Age=' + Math.floor(APP_SESSION_TTL_MS / 1000)
+    ];
+    if (proto === 'https') cookie.push('Secure');
+    res.setHeader('Set-Cookie', cookie.join('; '));
+}
+function clearAppSession(req, res) {
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const cookie = [
+        APP_SESSION_COOKIE + '=',
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        'Max-Age=0'
+    ];
+    if (proto === 'https') cookie.push('Secure');
+    res.setHeader('Set-Cookie', cookie.join('; '));
+}
+function safeRedirectPath(value) {
+    const path = String(value || '/feed').trim();
+    if (!path.startsWith('/') || path.startsWith('//')) return '/feed';
+    if (path === '/' || path === '/login' || path === '/signup' || path === '/register') return '/feed';
+    return path;
+}
+function findUserByAppCode(code) {
+    const normalized = String(code || '').toLowerCase().trim();
+    if (!normalized) return null;
+    return Object.entries(d.users || {}).find(([, u]) => String(u.appCode || '').toLowerCase() === normalized) || null;
+}
+function findUserByEmail(email) {
+    const normalized = String(email || '').toLowerCase().trim();
+    if (!normalized) return null;
+    return Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === normalized) || null;
+}
+function renderBrowserPage(title, body) {
+    return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at top,#1f2a44 0,#111827 40%,#09090b 100%);color:#f9fafb;min-height:100vh}
+a{color:inherit}
+.wrap{max-width:920px;margin:0 auto;padding:28px 18px 54px}
+.hero{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+.brand{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#a5b4fc;margin-bottom:8px}
+h1{font-size:clamp(28px,5vw,42px);margin:0 0 10px}
+.sub{color:#cbd5e1;max-width:650px;line-height:1.55}
+.panel{background:rgba(17,24,39,.82);backdrop-filter:blur(16px);border:1px solid rgba(148,163,184,.18);border-radius:24px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.card{background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.12);border-radius:18px;padding:16px}
+.muted{color:#94a3b8}
+.alert{padding:14px 16px;border-radius:16px;margin:0 0 18px;font-size:14px;line-height:1.45}
+.alert.err{background:rgba(239,68,68,.13);border:1px solid rgba(248,113,113,.32);color:#fecaca}
+.alert.ok{background:rgba(34,197,94,.13);border:1px solid rgba(74,222,128,.32);color:#bbf7d0}
+.forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:18px}
+form{display:flex;flex-direction:column;gap:10px}
+label{font-size:14px;color:#cbd5e1}
+input{width:100%;padding:14px 15px;border-radius:14px;border:1px solid rgba(148,163,184,.2);background:#0f172a;color:#f8fafc;font-size:15px}
+input:focus{outline:none;border-color:#818cf8;box-shadow:0 0 0 3px rgba(99,102,241,.2)}
+button,.btn{display:inline-flex;justify-content:center;align-items:center;gap:8px;padding:13px 16px;border-radius:14px;border:none;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;text-decoration:none;font-weight:700;font-size:15px;cursor:pointer}
+.btn.secondary,button.secondary{background:#1f2937;border:1px solid rgba(148,163,184,.16)}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:10px 13px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.18);font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.stat{padding:16px;border-radius:18px;background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.12)}
+.stat strong{display:block;font-size:26px;margin-top:4px}
+.progress{height:10px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
+.progress > span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#22c55e,#3b82f6)}
+.list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.list li{padding:12px 14px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.1)}
+.split{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
+.small{font-size:13px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:8px}
+@media (max-width:720px){.split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">${body}</div>
+</body>
+</html>`;
+}
+function renderLoginPage(options = {}) {
+    const errorText = options.errorText ? `<div class="alert err">${escapeHtml(options.errorText)}</div>` : '';
+    const infoText = options.infoText ? `<div class="alert ok">${escapeHtml(options.infoText)}</div>` : '';
+    const codeValue = escapeHtml(options.codeValue || '');
+    const emailValue = escapeHtml(options.emailValue || '');
+    return renderBrowserPage('CreatorBoost Login', `
+<section class="hero">
+  <div>
+    <div class="brand">CreatorBoost</div>
+    <h1>Login funktioniert wieder</h1>
+    <div class="sub">Falls du bisher nur einen weissen Bildschirm gesehen hast: Der Browser-Einstieg fehlte komplett. Hier kannst du dich jetzt direkt per App-Code oder mit Email + Passwort anmelden.</div>
+  </div>
+  <div class="pill">✨ /auth/auto, /feed und / sind aktiv</div>
+</section>
+<section class="panel">
+  ${errorText}
+  ${infoText}
+  <div class="forms">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Mit App-Code</h3>
+      <p class="muted small" style="margin:0 0 12px">Das ist der Code aus dem Bot bzw. dein Magic-Link-Code.</p>
+      <form method="POST" action="/login/code">
+        <label for="code">App-Code</label>
+        <input id="code" name="code" type="text" placeholder="z. B. max1234abcd" value="${codeValue}" autocomplete="username" required>
+        <button type="submit">Mit Code einloggen</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">Mit Email + Passwort</h3>
+      <p class="muted small" style="margin:0 0 12px">Funktioniert für Accounts, die bereits einen Email-Login eingerichtet haben.</p>
+      <form method="POST" action="/login/email">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" placeholder="name@example.com" value="${emailValue}" autocomplete="email" required>
+        <label for="password">Passwort</label>
+        <input id="password" name="password" type="password" placeholder="Dein Passwort" autocomplete="current-password" required>
+        <button type="submit">Mit Email einloggen</button>
+      </form>
+    </div>
+  </div>
+</section>`);
+}
+function renderFeedPage(uid, u, options = {}) {
+    const today = new Date().toDateString();
+    const mission = getMission(uid);
+    updateMissionProgress(uid);
+    const weekly = getWochenMission(uid);
+    const completedMissions = Number(!!mission.m1) + Number(!!mission.m2) + Number(!!mission.m3);
+    const ownTodayLinks = Object.values(d.links || {}).filter(l =>
+        String(getRootUid(l.user_id)) === String(getRootUid(uid)) &&
+        new Date(l.timestamp).toDateString() === today
+    ).length;
+    const availableLinks = Object.values(d.links || {}).filter(l =>
+        istInstagramLink(l.text) &&
+        new Date(l.timestamp).toDateString() === today &&
+        String(getRootUid(l.user_id)) !== String(getRootUid(uid))
+    );
+    const likedTodayLinks = availableLinks.filter(l => {
+        if (!l.likes) return false;
+        if (l.likes instanceof Set) return l.likes.has(String(uid));
+        return Array.isArray(l.likes) ? l.likes.map(String).includes(String(uid)) : false;
+    }).length;
+    const progressPct = availableLinks.length ? Math.round((likedTodayLinks / availableLinks.length) * 100) : 0;
+    const notifications = (d.notifications?.[uid] || []).slice(-5).reverse();
+    const unreadNotifications = (d.notifications?.[uid] || []).filter(n => !n.read).length;
+    let unreadMessages = 0;
+    for (const [chatKey, msgs] of Object.entries(d.messages || {})) {
+        if (!chatKey.split('_').includes(String(uid))) continue;
+        unreadMessages += (msgs || []).filter(m => String(m.to || '') === String(uid) && !m.read).length;
+    }
+    const bonusLinks = d.bonusLinks?.[uid] || 0;
+    const badgeBonus = !istAdminId(Number(uid)) && badgeBonusLinks(u?.xp || 0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== today) ? 1 : 0;
+    const maxLinks = istAdminId(Number(uid)) ? 999 : 1 + bonusLinks + badgeBonus;
+    const appCode = ensureAppCode(uid, u);
+    const tabLabel = options.tab ? `<div class="pill">Aktueller Tab: ${escapeHtml(options.tab)}</div>` : '';
+    const groupLinks = [
+        GROUP_A_INVITE ? `<a class="btn secondary" href="${escapeHtml(GROUP_A_INVITE)}" target="_blank" rel="noreferrer">Link-Gruppe öffnen</a>` : '',
+        GROUP_B_INVITE ? `<a class="btn secondary" href="${escapeHtml(GROUP_B_INVITE)}" target="_blank" rel="noreferrer">Community öffnen</a>` : ''
+    ].filter(Boolean).join('');
+    return renderBrowserPage('CreatorBoost Feed', `
+<section class="topbar">
+  <div>
+    <div class="brand">CreatorBoost Feed</div>
+    <h1 style="margin:4px 0 6px">${escapeHtml(u.spitzname || u.name || 'User')}</h1>
+    <div class="sub">Eingeloggt als ${escapeHtml(u.email || u.username || uid)}.</div>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    ${tabLabel}
+    <a class="btn secondary" href="/feed">Neu laden</a>
+    <a class="btn secondary" href="/logout">Abmelden</a>
+  </div>
+</section>
+<section class="panel">
+  <div class="grid">
+    <div class="card">
+      <div class="muted small">Status</div>
+      <div style="font-size:22px;font-weight:800;margin-top:6px">${escapeHtml(u.role || '🆕 New')}</div>
+      <div class="small muted" style="margin-top:10px">UID <code>${escapeHtml(uid)}</code></div>
+    </div>
+    <div class="card">
+      <div class="muted small">XP</div>
+      <div style="font-size:30px;font-weight:800;margin-top:6px">${Number(u.xp || 0)}</div>
+      <div class="small muted">Level ${Number(u.level || 1)}</div>
+    </div>
+    <div class="card">
+      <div class="muted small">Dein Login-Code</div>
+      <div style="font-size:24px;font-weight:800;margin-top:6px"><code>${escapeHtml(appCode)}</code></div>
+      <div class="small muted">Funktioniert auch wieder fuer Magic-Links.</div>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="muted small">Heute geliked</span><strong>${likedTodayLinks}/${availableLinks.length}</strong><div class="progress"><span style="width:${Math.min(progressPct, 100)}%"></span></div></div>
+    <div class="stat"><span class="muted small">Eigene Links heute</span><strong>${ownTodayLinks}/${maxLinks}</strong><div class="small muted">Bonus: ${bonusLinks} · Badge: ${badgeBonus}</div></div>
+    <div class="stat"><span class="muted small">Missionen heute</span><strong>${completedMissions}/3</strong><div class="small muted">M1 ${mission.m1 ? '✅' : '⬜'} · M2 ${mission.m2 ? '✅' : '⬜'} · M3 ${mission.m3 ? '✅' : '⬜'}</div></div>
+    <div class="stat"><span class="muted small">Inbox</span><strong>${unreadMessages + unreadNotifications}</strong><div class="small muted">${unreadMessages} ungelesene Nachrichten · ${unreadNotifications} Benachrichtigungen</div></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <h3 style="margin:0 0 10px">Dein Fortschritt</h3>
+      <ul class="list">
+        <li>Likes heute: <strong>${Number(mission.likesGegeben || 0)}</strong> · Ziel fuer Mission 1: 5</li>
+        <li>Wochenmissionen: M1 ${Number(weekly.m1Tage || 0)} Tage · M2 ${Number(weekly.m2Tage || 0)} Tage · M3 ${Number(weekly.m3Tage || 0)} Tage</li>
+        <li>Instagram: ${escapeHtml(u.instagram || 'Noch nicht gesetzt')}</li>
+        <li>Email: ${escapeHtml(u.email || 'nicht hinterlegt')}</li>
+      </ul>
+      ${groupLinks ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">${groupLinks}</div>` : ''}
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 10px">Letzte Benachrichtigungen</h3>
+      ${notifications.length ? `<ul class="list">${notifications.map(n => `<li><strong>${escapeHtml(n.icon || '🔔')} ${escapeHtml(n.text || '')}</strong><div class="small muted">${new Date(n.timestamp || Date.now()).toLocaleString('de-DE')}</div></li>`).join('')}</ul>` : `<div class="muted">Noch keine Benachrichtigungen vorhanden.</div>`}
+    </div>
+  </div>
+</section>`);
+}
 
 let d = {
     users: {}, chats: {}, links: {},
@@ -5381,6 +5660,97 @@ app.get('/auth/code-check', (req, res) => {
     if (!found) return res.status(401).json({ error: 'Ungültig' });
     const [uid, u] = found;
     res.json({ ok: true, uid, name: u.name, username: u.username||null, role: u.role, xp: u.xp });
+});
+
+app.get(['/', '/login', '/signup', '/register'], (req, res) => {
+    const uid = readAppSessionUid(req);
+    if (uid) return res.redirect('/feed');
+    const errors = {
+        invalid_code: 'Der App-Code wurde nicht gefunden.',
+        invalid_credentials: 'Email oder Passwort stimmen nicht.',
+        missing_password: 'Fuer diesen Account wurde noch kein Passwort gesetzt.',
+        login_required: 'Bitte zuerst einloggen.',
+        invalid_magic_link: 'Dieser Magic-Link ist ungueltig oder abgelaufen.'
+    };
+    const errorText = errors[String(req.query.error || '')] || '';
+    const infoText = String(req.query.info || '') === 'logged_out' ? 'Du wurdest erfolgreich abgemeldet.' : '';
+    res.status(errorText ? 401 : 200).send(renderLoginPage({
+        errorText,
+        infoText,
+        codeValue: req.query.code || '',
+        emailValue: req.query.email || ''
+    }));
+});
+
+app.post('/login/code', (req, res) => {
+    const found = findUserByAppCode(req.body?.code);
+    if (!found) return res.status(401).send(renderLoginPage({
+        errorText: 'Der App-Code wurde nicht gefunden.',
+        codeValue: req.body?.code || ''
+    }));
+    const [uid] = found;
+    setAppSession(req, res, uid);
+    res.redirect('/feed');
+});
+
+app.post('/login/email', (req, res) => {
+    const email = String(req.body?.email || '').toLowerCase().trim();
+    const password = String(req.body?.password || '');
+    const found = findUserByEmail(email);
+    if (!found || !password) {
+        return res.status(401).send(renderLoginPage({
+            errorText: 'Email oder Passwort stimmen nicht.',
+            emailValue: email
+        }));
+    }
+    const [uid, u] = found;
+    if (!u.password_hash) {
+        return res.status(401).send(renderLoginPage({
+            errorText: 'Fuer diesen Account wurde noch kein Passwort gesetzt.',
+            emailValue: email
+        }));
+    }
+    if (!verifyPasswordPBKDF2(password, u.password_hash)) {
+        return res.status(401).send(renderLoginPage({
+            errorText: 'Email oder Passwort stimmen nicht.',
+            emailValue: email
+        }));
+    }
+    setAppSession(req, res, uid);
+    res.redirect('/feed');
+});
+
+app.get('/auth/auto', (req, res) => {
+    const found = findUserByAppCode(req.query.code);
+    if (!found) {
+        return res.status(401).send(renderLoginPage({
+            errorText: 'Dieser Magic-Link ist ungueltig oder abgelaufen.'
+        }));
+    }
+    const [uid] = found;
+    setAppSession(req, res, uid);
+    res.redirect(safeRedirectPath(req.query.redirect));
+});
+
+app.get('/feed', (req, res) => {
+    const uid = readAppSessionUid(req);
+    if (!uid) return res.redirect('/?error=login_required');
+    const u = d.users?.[uid];
+    if (!u) {
+        clearAppSession(req, res);
+        return res.redirect('/?error=login_required');
+    }
+    res.send(renderFeedPage(uid, u, { tab: req.query.tab || '' }));
+});
+
+app.get('/logout', (req, res) => {
+    clearAppSession(req, res);
+    res.redirect('/?info=logged_out');
+});
+
+app.post('/logout', (req, res) => {
+    clearAppSession(req, res);
+    res.redirect('/?info=logged_out');
 });
 
 

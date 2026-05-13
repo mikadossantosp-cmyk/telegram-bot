@@ -5316,6 +5316,29 @@ app.post('/remove-xp', async (req, res) => {
     res.json({ ok: true, newXp: u.xp });
 });
 
+app.post('/add-warn', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    u.warnings = (u.warnings||0) + 1;
+    speichern();
+    try { await dmUser(uid, `⚠️ *Verwarnung!*\n\nWarn: ${u.warnings}/5${reason?'\n\nGrund: '+reason:''}`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true, warnings: u.warnings });
+});
+
+app.post('/remove-warn', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    u.warnings = Math.max(0, (u.warnings||0) - 1);
+    speichern();
+    try { await dmUser(uid, `✅ *Verwarnung entfernt*\n\nWarn: ${u.warnings}/5`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true, warnings: u.warnings });
+});
+
 app.post('/add-extra-link', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
@@ -5405,6 +5428,7 @@ app.get('/admin-userlist-api', (req, res) => {
             signupSource: u.signupSource||'telegram',
             superlinkCredits: u.superlinkCredits||0,
             bonusLinks: d.bonusLinks?.[uid]||0,
+            warnings: u.warnings||0,
             appLastSeen: u.appLastSeen||null,
             isAdmin: adminIds.includes(Number(uid)) || String(u.role||'').includes('Admin'),
         });
@@ -7191,8 +7215,90 @@ app.post('/engage-pinned-post-api', (req, res) => {
     // Belohnung an den ENGAGER (= der den pinned-link geliked hat) — nicht an den Owner
     addDiamond(engagerUid, 1);
     addNotification(engagerUid, '💎', 'Du hast einen Pinned-Post engagiert! +1 Diamant');
+    // Bestätigungs-DM pro Like (jedes Mal, nicht nur einmalig — soll als Audit-Trail dienen)
+    sendInAppDM(engagerUid,
+        '📌 Pinned-Post engagiert\n\n' +
+        'Du hast einen pinned Link engagiert und 1 💎 Diamant erhalten.\n\n' +
+        'Du bestätigst hiermit den Post geliked, kommentiert, geteilt und gespeichert zu haben. ' +
+        'Dies wird kontrolliert. Bei Schein-Engagement folgen Sanktionen.\n\n' +
+        'Mehr im Explore → Regeln.');
+    // Audit-Trail: Timestamp + ownerUid pro Engagement (für Dashboard-Anzeige)
+    if (!d.pinnedEngageLog) d.pinnedEngageLog = [];
+    d.pinnedEngageLog.push({ engagerUid: String(engagerUid), ownerUid: String(ownerUid), ts: Date.now() });
+    if (d.pinnedEngageLog.length > 2000) d.pinnedEngageLog = d.pinnedEngageLog.slice(-2000);
     speichern();
     res.json({ok:true});
+});
+
+// Report a user (z.B. fake-pinned-like, fake-collab-like). Geht als
+// Audit-Log + Admin-Notification, der Admin entscheidet manuell.
+app.post('/report-user-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const { reporterUid, targetUid, reason, context } = req.body || {};
+    if (!reporterUid || !targetUid) return res.json({ok:false, error:'reporterUid+targetUid erforderlich'});
+    if (reporterUid === targetUid) return res.json({ok:false, error:'Self-Report nicht erlaubt'});
+    if (!d.users[reporterUid] || !d.users[targetUid]) return res.json({ok:false, error:'User nicht gefunden'});
+    if (!d.reports) d.reports = [];
+    d.reports.push({
+        id: 'rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        reporterUid: String(reporterUid), targetUid: String(targetUid),
+        reason: String(reason||'').slice(0,200),
+        context: String(context||'').slice(0,200),
+        ts: Date.now(), status: 'open',
+    });
+    if (d.reports.length > 1000) d.reports = d.reports.slice(-1000);
+    // Admins benachrichtigen
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds : [];
+    const reporterName = d.users[reporterUid].spitzname || d.users[reporterUid].name || reporterUid;
+    const targetName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+    for (const aId of adminIds) {
+        addNotification(String(aId), '🚩', reporterName + ' meldet ' + targetName + (reason?' ('+String(reason).slice(0,40)+')':''), String(reporterUid));
+    }
+    speichern();
+    res.json({ok:true});
+});
+
+// Dashboard-Datenquelle: alle Pinned-Engagements + Kollab-Likes mit Timestamps.
+// Erlaubt Admin, im App-Dashboard zu sehen wer was wann engagiert hat.
+app.get('/admin-engagement-log-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    // Pinned-Log: aus pinnedEngageLog (neuere) + Fallback aus pinnedEngages (ältere, ohne TS)
+    const pinned = [];
+    for (const e of (d.pinnedEngageLog || []).slice(-500).reverse()) {
+        const eu = d.users[e.engagerUid] || {};
+        const ou = d.users[e.ownerUid] || {};
+        const pinnedUrl = ou.pinnedReel || null;
+        pinned.push({
+            engagerUid: e.engagerUid,
+            engagerName: eu.spitzname || eu.name || 'User ' + e.engagerUid,
+            engagerInstagram: eu.instagram || '',
+            ownerUid: e.ownerUid,
+            ownerName: ou.spitzname || ou.name || 'User ' + e.ownerUid,
+            ownerInstagram: ou.instagram || '',
+            ts: e.ts,
+            pinnedUrl,
+        });
+    }
+    // Kollab-Likes mit Timestamps (best-effort — likes-Array hat keine ts, also Post-Timestamps).
+    const collabs = [];
+    for (const p of Object.values(d.collabPosts || {})) {
+        const a = d.users[p.uid] || {}, b = d.users[p.partnerUid] || {};
+        for (const lUid of (Array.isArray(p.likes) ? p.likes : [])) {
+            const lu = d.users[lUid] || {};
+            collabs.push({
+                postId: p.id, url: p.url, caption: (p.caption||'').slice(0, 100),
+                authorA: { uid: p.uid, name: a.spitzname || a.name || 'User', instagram: a.instagram || '' },
+                authorB: { uid: p.partnerUid, name: b.spitzname || b.name || 'User', instagram: b.instagram || '' },
+                engagerUid: String(lUid),
+                engagerName: lu.spitzname || lu.name || 'User ' + lUid,
+                engagerInstagram: lu.instagram || '',
+                createdAt: p.createdAt,
+                week: p.week,
+            });
+        }
+    }
+    collabs.sort((a, b) => (b.createdAt||0) - (a.createdAt||0));
+    res.json({ ok:true, pinned: pinned.slice(0, 500), collabs: collabs.slice(0, 500), reports: (d.reports||[]).slice(-200).reverse() });
 });
 
 app.post('/add-newsletter-api', (req, res) => {

@@ -7410,6 +7410,243 @@ app.post('/admin/delete-user', (req, res) => {
     res.json({ ok: true, uid, name: userName });
 });
 
+// ════════════════════════════════════════════════════════════════
+//  COLLABORATION-POSTS
+// ════════════════════════════════════════════════════════════════
+//  Datenmodell:
+//    u.collaborations = [{ partnerUid, since }]
+//    u.collabPostThisWeek = berlin-week-key (block double-post pro Woche)
+//    u.collabFeedRulesAcceptedAt = ts (1× Modal abgehakt)
+//    u.collabRulesDMSent = ts (1× DM beim ersten Engage)
+//    d.collabRequests[reqId] = { fromUid, toUid, ts, status: 'pending'|'accepted'|'declined' }
+//    d.collabPosts[postId] = { id, uid, partnerUid, url, caption, likes:Set, likeCount,
+//                              createdAt, week, comments:[], shares:[] }
+// ════════════════════════════════════════════════════════════════
+
+function _collabEnsure() {
+    if (!d.collabRequests) d.collabRequests = {};
+    if (!d.collabPosts) d.collabPosts = {};
+}
+function _collabPartnerLink(uid) {
+    const u = d.users[uid]; if (!u) return [];
+    return Array.isArray(u.collaborations) ? u.collaborations.slice() : [];
+}
+function _collabHasPair(uidA, uidB) {
+    const a = _collabPartnerLink(uidA);
+    return a.some(c => String(c.partnerUid) === String(uidB));
+}
+function _collabValidUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /https?:\/\/(www\.)?instagram\.com\//i.test(url) && url.length <= 500;
+}
+
+// Anfrage an einen User
+app.post('/collab-request-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const fromUid = String((req.body && req.body.fromUid) || '');
+    const toUid = String((req.body && req.body.toUid) || '');
+    if (!fromUid || !toUid) return res.json({ ok:false, error:'fromUid + toUid erforderlich' });
+    if (fromUid === toUid) return res.json({ ok:false, error:'Self-Collab nicht erlaubt' });
+    if (!d.users[fromUid] || !d.users[toUid]) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (_collabHasPair(fromUid, toUid)) return res.json({ ok:false, error:'Ihr seid bereits Kollab-Partner' });
+    // Existierender Pending-Request in eine Richtung blockieren
+    const existing = Object.entries(d.collabRequests).find(([, r]) =>
+        r.status === 'pending' && ((String(r.fromUid)===fromUid && String(r.toUid)===toUid) || (String(r.fromUid)===toUid && String(r.toUid)===fromUid)));
+    if (existing) return res.json({ ok:false, error:'Anfrage existiert bereits', reqId: existing[0] });
+
+    const reqId = 'cr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    d.collabRequests[reqId] = { id: reqId, fromUid, toUid, ts: Date.now(), status: 'pending' };
+    speichern();
+
+    const fromName = d.users[fromUid]?.spitzname || d.users[fromUid]?.name || 'Ein User';
+    addNotification(toUid, '🤝', fromName + ' möchte mit dir eine Kollaboration eingehen', fromUid);
+    try {
+        await dmUser(toUid,
+            '🤝 *Kollab-Anfrage*\n\n' + fromName + ' möchte mit dir eine Kollaboration eingehen.\n' +
+            'Wenn du akzeptierst, dürft ihr gemeinsam 1× pro Woche einen Kollab-Post veröffentlichen.\n\n' +
+            '→ App öffnen → Benachrichtigungen',
+            { parse_mode: 'Markdown' });
+    } catch(e) {}
+    res.json({ ok:true, reqId });
+});
+
+// Antwort auf Anfrage
+app.post('/collab-respond-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const reqId = String((req.body && req.body.reqId) || '');
+    const accept = !!(req.body && req.body.accept);
+    const callerUid = String((req.body && req.body.callerUid) || '');
+    const r = d.collabRequests[reqId];
+    if (!r) return res.json({ ok:false, error:'Anfrage nicht gefunden' });
+    if (r.status !== 'pending') return res.json({ ok:false, error:'Anfrage schon beantwortet' });
+    if (String(r.toUid) !== callerUid) return res.json({ ok:false, error:'Nur der Empfänger kann antworten' });
+
+    r.status = accept ? 'accepted' : 'declined';
+    r.respondedAt = Date.now();
+    const fromU = d.users[r.fromUid];
+    const toU = d.users[r.toUid];
+
+    if (accept && fromU && toU) {
+        if (!Array.isArray(fromU.collaborations)) fromU.collaborations = [];
+        if (!Array.isArray(toU.collaborations)) toU.collaborations = [];
+        if (!_collabHasPair(r.fromUid, r.toUid)) fromU.collaborations.push({ partnerUid: r.toUid, since: Date.now() });
+        if (!_collabHasPair(r.toUid, r.fromUid)) toU.collaborations.push({ partnerUid: r.fromUid, since: Date.now() });
+        const fromName = fromU.spitzname || fromU.name || 'Partner';
+        const toName = toU.spitzname || toU.name || 'Partner';
+        addNotification(r.fromUid, '🎉', toName + ' hat deine Kollab-Anfrage angenommen', r.toUid);
+        try {
+            await dmUser(r.fromUid, '🎉 *Kollaboration aktiv!*\n\nDu bist jetzt Kollab-Partner mit ' + toName + '.\nIhr könnt im +Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.', { parse_mode: 'Markdown' });
+            await dmUser(r.toUid, '🎉 *Kollaboration aktiv!*\n\nDu bist jetzt Kollab-Partner mit ' + fromName + '.\nIhr könnt im +Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.', { parse_mode: 'Markdown' });
+        } catch(e) {}
+    } else if (!accept && fromU) {
+        const toName = toU?.spitzname || toU?.name || 'Der User';
+        addNotification(r.fromUid, '❌', toName + ' hat deine Kollab-Anfrage abgelehnt', r.toUid);
+    }
+    speichern();
+    res.json({ ok:true, status: r.status });
+});
+
+// Liste Partner + pending requests für UID
+app.get('/collab-list-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const uid = String(req.query.uid || '');
+    if (!uid) return res.json({ ok:false, error:'uid fehlt' });
+    const u = d.users[uid] || {};
+    const partners = (u.collaborations||[]).map(c => {
+        const p = d.users[c.partnerUid] || {};
+        return { uid: c.partnerUid, name: p.spitzname || p.name || 'User', since: c.since, instagram: p.instagram || '' };
+    });
+    const pendingIn = Object.values(d.collabRequests).filter(r => r.status==='pending' && String(r.toUid)===uid).map(r => {
+        const f = d.users[r.fromUid] || {};
+        return { reqId: r.id, fromUid: r.fromUid, name: f.spitzname || f.name || 'User', instagram: f.instagram || '', ts: r.ts };
+    });
+    const pendingOut = Object.values(d.collabRequests).filter(r => r.status==='pending' && String(r.fromUid)===uid).map(r => {
+        const t = d.users[r.toUid] || {};
+        return { reqId: r.id, toUid: r.toUid, name: t.spitzname || t.name || 'User', instagram: t.instagram || '', ts: r.ts };
+    });
+    const week = getBerlinWeekKey();
+    const postedThisWeek = u.collabPostThisWeek === week;
+    res.json({ ok:true, partners, pendingIn, pendingOut, postedThisWeek, currentWeek: week, rulesAccepted: !!u.collabFeedRulesAcceptedAt });
+});
+
+// Kollab-Post erstellen
+app.post('/collab-create-post-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const uid = String((req.body && req.body.uid) || '');
+    const partnerUid = String((req.body && req.body.partnerUid) || '');
+    const url = String((req.body && req.body.url) || '').trim();
+    const caption = String((req.body && req.body.caption) || '').slice(0, 500);
+    if (!d.users[uid]) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!d.users[partnerUid]) return res.json({ ok:false, error:'Partner nicht gefunden' });
+    if (!_collabHasPair(uid, partnerUid)) return res.json({ ok:false, error:'Keine Kollaboration mit diesem User' });
+    if (!_collabValidUrl(url)) return res.json({ ok:false, error:'Ungültige Instagram-URL' });
+    const week = getBerlinWeekKey();
+    const u = d.users[uid], p = d.users[partnerUid];
+    if (u.collabPostThisWeek === week) return res.json({ ok:false, error:'Du hast diese Woche schon einen Kollab-Post veröffentlicht' });
+    if (p.collabPostThisWeek === week) return res.json({ ok:false, error:'Dein Partner hat diese Woche schon einen Kollab-Post veröffentlicht' });
+
+    const postId = 'cp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    d.collabPosts[postId] = {
+        id: postId, uid, partnerUid, url, caption,
+        likes: [], likeCount: 0,
+        createdAt: Date.now(), week,
+    };
+    u.collabPostThisWeek = week;
+    p.collabPostThisWeek = week;
+    speichern();
+
+    const fromName = u.spitzname || u.name || 'Dein Partner';
+    addNotification(partnerUid, '🤝', fromName + ' hat euren Kollab-Post veröffentlicht', uid);
+    try {
+        await dmUser(partnerUid, '🤝 *Kollab-Post live!*\n\n' + fromName + ' hat euren gemeinsamen Kollab-Post veröffentlicht.\nUser können ihn jetzt im Feed → 🤝 Kollabs engagieren.', { parse_mode: 'Markdown' });
+    } catch(e) {}
+    res.json({ ok:true, postId });
+});
+
+// Feed: alle aktiven Kollab-Posts
+app.get('/collab-feed-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const callerUid = String(req.query.uid || '');
+    const week = getBerlinWeekKey();
+    const out = Object.values(d.collabPosts || {})
+        .sort((a, b) => (b.createdAt||0) - (a.createdAt||0))
+        .slice(0, 100)
+        .map(p => {
+            const likes = Array.isArray(p.likes) ? p.likes.map(String) : [];
+            const a = d.users[p.uid] || {}, b = d.users[p.partnerUid] || {};
+            return {
+                id: p.id, uid: p.uid, partnerUid: p.partnerUid, url: p.url, caption: p.caption,
+                likeCount: likes.length,
+                liked: callerUid ? likes.includes(callerUid) : false,
+                isSelf: callerUid && (callerUid === String(p.uid) || callerUid === String(p.partnerUid)),
+                createdAt: p.createdAt, week: p.week,
+                authorA: { uid: p.uid, name: a.spitzname || a.name || 'User', instagram: a.instagram || '' },
+                authorB: { uid: p.partnerUid, name: b.spitzname || b.name || 'User', instagram: b.instagram || '' },
+            };
+        });
+    res.json({ ok:true, posts: out, currentWeek: week });
+});
+
+// Like + 1 Diamant
+app.post('/collab-like-post-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _collabEnsure();
+    const uid = String((req.body && req.body.uid) || '');
+    const postId = String((req.body && req.body.postId) || '');
+    const p = d.collabPosts[postId];
+    if (!p) return res.json({ ok:false, error:'Post nicht gefunden' });
+    const u = d.users[uid];
+    if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (uid === String(p.uid) || uid === String(p.partnerUid)) {
+        return res.json({ ok:false, error:'collaborator-self-like', message:'Kein Self-Like für Kollaboratoren' });
+    }
+    if (!Array.isArray(p.likes)) p.likes = [];
+    if (p.likes.includes(uid)) return res.json({ ok:true, liked:true, likeCount: p.likes.length, already:true });
+    p.likes.push(uid);
+    p.likeCount = p.likes.length;
+    addDiamond(uid, 1);
+    addNotification(p.uid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
+    addNotification(p.partnerUid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
+
+    // Regel-DM einmalig
+    let dmSentNow = false;
+    if (!u.collabRulesDMSent) {
+        try {
+            await dmUser(uid,
+                '🤝 *Kollab-Post engagiert*\n\n' +
+                'Du hast deinen ersten Kollab-Post engagiert! Die Regeln nochmal kurz:\n\n' +
+                '• Zuerst auf Instagram öffnen → LIKEN, KOMMENTIEREN, SPEICHERN und TEILEN\n' +
+                '• Dann hier in der App ✅ tippen\n' +
+                '• Pro engagiertem Kollab-Post bekommst du 1 💎 Diamant\n' +
+                '• Reine Schein-Likes werden geprüft und sanktioniert\n\n' +
+                'Mehr im Explore → Regeln → Kollaborations-Posts. Viel Erfolg!',
+                { parse_mode: 'Markdown' });
+            u.collabRulesDMSent = Date.now();
+            dmSentNow = true;
+        } catch(e) {}
+    }
+    speichern();
+    res.json({ ok:true, liked:true, likeCount: p.likes.length, diamondsTotal: u.diamonds || 0, rulesDmSent: dmSentNow });
+});
+
+// Feed-Regeln akzeptieren (1× pro User)
+app.post('/collab-accept-feed-rules-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!u.collabFeedRulesAcceptedAt) {
+        u.collabFeedRulesAcceptedAt = Date.now();
+        speichern();
+    }
+    res.json({ ok:true, acceptedAt: u.collabFeedRulesAcceptedAt });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => { console.log('🌐 Dashboard läuft auf Port ' + PORT); });
 

@@ -5339,6 +5339,119 @@ app.post('/remove-warn', async (req, res) => {
     res.json({ ok:true, warnings: u.warnings });
 });
 
+app.post('/reset-user', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    u.xp = 0; u.level = 1; u.role = badge(0);
+    if (d.dailyXP) delete d.dailyXP[uid];
+    if (d.weeklyXP) delete d.weeklyXP[uid];
+    speichern();
+    try { await dmUser(uid, `♻️ *XP zurückgesetzt*\n\nEin Admin hat deinen XP-Stand auf 0 zurückgesetzt.`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true, xp: 0 });
+});
+
+app.post('/ban-user-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) {
+        return res.status(400).json({ ok:false, error:'Admins können nicht gebannt werden' });
+    }
+    u.banned = true; u.bannedAt = Date.now();
+    u.inGruppe = false;
+    speichern();
+    try { await dmUser(uid, `🚫 *Du wurdest gebannt*\n\nEin Admin hat dich aus der Community entfernt.`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true });
+});
+
+app.post('/unban-user-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    u.banned = false; delete u.bannedAt;
+    if (u.email) u.inGruppe = true;
+    speichern();
+    try { await dmUser(uid, `✅ *Bann aufgehoben*\n\nDu bist wieder Teil der Community. Willkommen zurück!`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true });
+});
+
+app.post('/send-dm-single-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.json({ ok:false, error:'Text fehlt' });
+    if (text.length > 1500) return res.json({ ok:false, error:'Max 1500 Zeichen' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    try { await dmUser(uid, text, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok:true });
+});
+
+app.post('/send-dm-all-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.json({ ok:false, error:'Text fehlt' });
+    if (text.length > 1500) return res.json({ ok:false, error:'Max 1500 Zeichen' });
+    let sent = 0;
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || !u.started || u.banned || u.parent_uid) continue;
+        if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) continue;
+        try { await dmUser(uid, text, { parse_mode:'Markdown' }); sent++; } catch(e) {}
+    }
+    res.json({ ok:true, sent });
+});
+
+// Dashboard-Stats: online (App-Presence ≤ 5min), today/week landing visits, signup-source breakdown, top stats.
+app.get('/admin-stats-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const now = Date.now();
+    const ONLINE_THRESHOLD = 5 * 60 * 1000;
+    let online = 0, app7d = 0, app30d = 0;
+    const sources = { telegram: 0, email: 0 };
+    let banned = 0;
+    for (const u of Object.values(d.users||{})) {
+        if (!u || u.parent_uid) continue;
+        if (u.appLastSeen && (now - u.appLastSeen) <= ONLINE_THRESHOLD) online++;
+        if (u.appLastSeen && (now - u.appLastSeen) <= 7*24*60*60*1000) app7d++;
+        if (u.appLastSeen && (now - u.appLastSeen) <= 30*24*60*60*1000) app30d++;
+        const src = u.signupSource || 'telegram';
+        sources[src] = (sources[src]||0) + 1;
+        if (u.banned) banned++;
+    }
+    const todayStr = new Date().toISOString().slice(0,10);
+    const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0,10);
+    const daily = d.funnel?.daily || {};
+    const last7Days = [];
+    for (let i = 6; i >= 0; i--) {
+        const day = new Date(Date.now() - i*86400000).toISOString().slice(0,10);
+        last7Days.push({ day, events: daily[day] || {} });
+    }
+    const last7DaysAggregated = {};
+    for (const d2 of last7Days) {
+        for (const [evt, count] of Object.entries(d2.events)) {
+            last7DaysAggregated[evt] = (last7DaysAggregated[evt]||0) + count;
+        }
+    }
+    res.json({
+        ok: true,
+        online,
+        app7d,
+        app30d,
+        sources,
+        banned,
+        landingToday: (daily[todayStr]?.['landing-view'])||0,
+        landingYesterday: (daily[yesterdayStr]?.['landing-view'])||0,
+        signupToday: (daily[todayStr]?.['signup'])||0 + (daily[todayStr]?.['email-signup'])||0,
+        last7Days,
+        last7DaysAggregated,
+        totalUsers: Object.values(d.users||{}).filter(u => u && !u.parent_uid).length,
+    });
+});
+
 app.post('/add-extra-link', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');

@@ -28,6 +28,17 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Browser/App-Clients laufen teils auf einer anderen Domain als dieser Bot-Service.
+// Ohne Preflight-Antwort bleibt die App vor dem Login/Bootstrap im Browser hängen.
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bridge-secret');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
+
 // App-Usage-Tracking: erfasst wer wann welche Endpoints in der CreatorBoost-App benutzt
 app.use((req, res, next) => {
     try {
@@ -114,6 +125,12 @@ function laden() {
             link.msgId = Number(k);
             if (!link.likerNames) link.likerNames = {};
             if (!link.counter_msg_id || !link.chat_id) { delete d.links[k]; continue; }
+        }
+        // Gleiche String-Normalisierung für sl.likes — legacy Number-Einträge würden sonst
+        // beim Engagement-Check via .includes(stringUid) silent failen.
+        for (const k of Object.keys(d.superlinks||{})) {
+            const sl = d.superlinks[k];
+            if (sl && Array.isArray(sl.likes)) sl.likes = sl.likes.map(String);
         }
         const defaults = {
             dailyXP: {}, weeklyXP: {}, bonusLinks: {}, missionen: {}, wochenMissionen: {},
@@ -242,110 +259,13 @@ async function updateSuperLinkCard(slId) {
 }
 
 async function handleSuperlink(ctx, senderUid, senderUser, text) {
-    const uidStr = String(senderUid);
-    if (!senderUser?.instagram) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Zuerst Instagram verbinden! Schreibe /setinsta'); } catch(e) {}
-        return;
-    }
-    if (!isSuperLinkPostingAllowed()) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Superlinks können nur Montag bis Samstag (bis 23:58 Uhr) gepostet werden! Sonntag ist Auswertungstag.'); } catch(e) {}
-        return;
-    }
-    const week = getBerlinWeekKey();
-    const isElitePlus = d.users[uidStr]?.role === '🌟 Elite+';
-    const maxSuperlinks = isElitePlus ? 2 : 1;
-    const slThisWeek = Object.values(d.superlinks||{}).filter(s => s.uid === uidStr && s.week === week);
-    const userCredits = d.users[uidStr]?.superlinkCredits || 0;
-    const isExtraSlotTG = slThisWeek.length > 0;
-    if (slThisWeek.length >= maxSuperlinks && userCredits <= 0) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Du hast diese Woche bereits ' + maxSuperlinks + ' Superlink(s) gepostet! Limit: ' + maxSuperlinks + 'x pro Woche.'); } catch(e) {}
-        return;
-    }
-    const uCheck = d.users[uidStr];
-    if (!istAdminId(Number(senderUid)) && isExtraSlotTG && (uCheck?.diamonds||0) < 10 && userCredits <= 0) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Für einen Extra-Superlink benötigst du 💎 10 Diamanten oder einen Admin-Slot. Du hast ' + (uCheck?.diamonds||0) + ' 💎.'); } catch(e) {}
-        return;
-    }
-    const useCredit = (slThisWeek.length >= maxSuperlinks || isExtraSlotTG) && userCredits > 0;
-    // Strip /superlink command prefix if user sent it together with the URL
-    const cleanText = text.replace(/^\/superlink\s*/i, '').trim();
-    const urlMatch = cleanText.match(/(?:https?:\/\/)?((?:www\.)?instagram\.com\/[^\s]+)/i);
-    let url = null;
-    if (urlMatch) {
-        url = urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0];
-        url = url.replace(/[.,;!?]+$/, '');
-    }
-    if (!url || !url.includes('instagram.com')) {
-        try { await ctx.deleteMessage(); } catch(e) {}
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Bitte sende einen gültigen Instagram-Link (instagram.com/...)'); } catch(e) {}
-        return;
-    }
-    const caption = cleanText.replace(urlMatch[0], '').trim();
-    let feThreadId;
-    try { feThreadId = await ensureFullEngagementThread(); } catch(e) {}
-    if (!feThreadId) {
-        try { await bot.telegram.sendMessage(Number(senderUid), '❌ Full Engagement Thread nicht verfügbar. Bitte Admin kontaktieren.'); } catch(e) {}
-        return;
-    }
+    // Superlinks werden nicht mehr über Telegram gepostet — alles nur noch in der App.
+    // Der Engagement-Check liest weiterhin d.superlinks (gespeist von /post-superlink-api).
     try { await ctx.deleteMessage(); } catch(e) {}
-    const slId = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    const u = d.users[uidStr];
-    const cardText = buildSuperLinkKarte(u?.spitzname||u?.name||ctx.from.first_name||'User', u?.instagram, url, caption, 0, {});
-    const sent = await bot.telegram.sendMessage(GROUP_B_ID, cardText, {
-        parse_mode: 'HTML',
-        message_thread_id: Number(feThreadId),
-        reply_markup: buildSuperLinkButtons(slId, 0)
-    });
-    d.superlinks = d.superlinks || {};
-    d.superlinks[slId] = { id: slId, uid: uidStr, url, caption, msg_id: sent.message_id, timestamp: Date.now(), week, likes: [], likerNames: {} };
-    tryFetchThumbnail(d.superlinks[slId], 'url');
-    if (useCredit && d.users[uidStr]) {
-        d.superlinks[slId].adminCredit = true;
-        d.users[uidStr].superlinkCredits = Math.max(0, (d.users[uidStr].superlinkCredits||0) - 1);
-    } else if (!istAdminId(Number(senderUid)) && isExtraSlotTG && d.users[uidStr]) {
-        d.users[uidStr].diamonds = (d.users[uidStr].diamonds||0) - 10;
-    }
-    // Superlink-Karte im Web-Thread speichern
-    const feThreadKey = String(feThreadId);
-    if (!d.threadMessages[feThreadKey]) d.threadMessages[feThreadKey] = [];
-    const u2 = d.users[uidStr];
-    d.threadMessages[feThreadKey].unshift({
-        uid: uidStr, tgName: u2?.username ? '@'+u2.username : null,
-        name: u2?.spitzname || u2?.name || ctx.from.first_name || 'User',
-        role: u2?.role || null, type: 'text',
-        text: '🔗 ' + url + (caption ? '\n' + caption : '') + '\n👍 0 Likes',
-        mediaId: null, timestamp: Date.now(), msg_id: sent.message_id, slId
-    });
-    if (d.threadMessages[feThreadKey].length > 100) d.threadMessages[feThreadKey] = d.threadMessages[feThreadKey].slice(0, 100);
-    const feThr = (d.threads||[]).find(t => String(t.id) === feThreadKey);
-    if (feThr) { feThr.last_msg = d.threadMessages[feThreadKey][0]; feThr.msg_count = d.threadMessages[feThreadKey].length; }
-    speichern();
-    // DM an Poster
-    try {
-        const maxMsg = isElitePlus ? 2 : 1;
-        await bot.telegram.sendMessage(Number(senderUid),
-            '⭐ *Dein Superlink wurde gepostet!*\n\nSuperlinks können ' + maxMsg + '× pro Woche gepostet werden. Wenn du einen postest, verpflichtest du dich, *die ganze Woche alle anderen Superlinks zu engagieren* (Liken, Kommentieren, Teilen, Speichern).',
-            { parse_mode: 'Markdown' });
-    } catch(e) {}
-    // DM an alle anderen Superlink-Poster dieser Woche → sie müssen jetzt engagen
-    const otherPosters = Object.values(d.superlinks).filter(s => s.week === week && s.uid !== uidStr);
-    const sl = d.superlinks[slId];
-    if (sl) sl.dmNotifications = sl.dmNotifications || {};
-    for (const other of otherPosters) {
-        try {
-            const magicUrl = buildMagicLinkUrl(other.uid, '/feed?tab=engagement');
-            const dmMsg = await bot.telegram.sendMessage(Number(other.uid),
-                `⭐ *Neuer Superlink!*\n\n👤 ${u?.spitzname||u?.name||'Ein User'} hat einen neuen Superlink gepostet.\n🔗 ${url}\n\n⚠️ *Vergiss nicht:* Liken, Kommentieren, Teilen & Speichern ist Pflicht!`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } }
-            );
-            if (sl && dmMsg?.message_id) sl.dmNotifications[String(other.uid)] = dmMsg.message_id;
-            sendAppPush(String(other.uid), '⭐ Neuer Superlink!', (u?.spitzname||u?.name||'Jemand') + ' hat einen Superlink gepostet — engagen!', '/feed?tab=engagement').catch(()=>{});
-        } catch(e) {}
-    }
+    try { await bot.telegram.sendMessage(Number(senderUid),
+        '⭐ Superlinks werden jetzt direkt über die App gepostet.\n\n' +
+        '📲 Öffne die App → Feed → ⭐ Superlink posten',
+    ); } catch(e) {}
 }
 
 async function runEngagementCheck(isReminder = false) {
@@ -361,16 +281,18 @@ async function runEngagementCheck(isReminder = false) {
         const fam = new Set(familyUids(uid));
         const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
         if (!otherLinks.length) continue;
-        const likedAll = otherLinks.every(s => Array.isArray(s.likes) && s.likes.includes(uid));
+        // Family-aware Like-Check: zählt wenn IRGENDEIN Family-Mitglied (Parent oder Sub)
+        // den Link geliked hat — sonst wird User penalized obwohl er von seinem Sub aus geliked hat.
+        const likedAll = otherLinks.every(s => {
+            if (!Array.isArray(s.likes)) return false;
+            for (const f of fam) if (s.likes.includes(f)) return true;
+            return false;
+        });
         if (!likedAll) {
             warned++;
             const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
-            const isNumericUid = /^\d+$/.test(String(uid));
             if (isReminder) {
                 const reminderText = '⚠️ Erinnerung: Full Engagement\n\nDu hast diese Woche noch nicht alle Superlinks geliked! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern. Sonst gibt es um 23:59 Uhr −50 XP.';
-                if (isNumericUid) {
-                    try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Erinnerung: Full Engagement*\n\nDu hast diese Woche noch nicht alle Superlinks geliked\\! Vergiss nicht: Liken, Kommentieren, Teilen und Speichern\\. Sonst gibt es um 23:59 Uhr \\-50 XP\\.', { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 Jetzt im Feed engagen', url: magicUrl }]] } }); } catch(e) {}
-                }
                 try { sendCreatorBoostDM(uid, reminderText, { link: { url: magicUrl, label: '📲 Jetzt engagen' } }); } catch(e) {}
             } else {
                 u.xp = Math.max(0, (u.xp||0) - 50);
@@ -378,9 +300,6 @@ async function runEngagementCheck(isReminder = false) {
                 const warnCount = u.warnings;
                 const violationText = `⚠️ Full Engagement Pflicht verletzt!\n\nDu hast diese Woche nicht alle Superlinks geliked.\n\n📉 −50 XP\n⚠️ Verwarnung #${warnCount} (insgesamt)`;
                 addNotification(uid, '⚠️', `Full Engagement Pflicht verletzt — −50 XP, Verwarnung #${warnCount}`);
-                if (isNumericUid) {
-                    try { await bot.telegram.sendMessage(Number(uid), `⚠️ *Full Engagement Pflicht verletzt\\!*\n\nDu hast diese Woche nicht alle Superlinks geliked\\.\n📉 −50 XP\n⚠️ Verwarnung \\#${warnCount} (insgesamt)`, { parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: [[{ text: '📲 In der App ansehen', url: magicUrl }]] } }); } catch(e) {}
-                }
                 try { sendCreatorBoostDM(uid, violationText, { link: { url: magicUrl, label: '📲 In der App ansehen' } }); } catch(e) {}
             }
         }
@@ -517,26 +436,21 @@ async function superlinkDailyReminder() {
         if (!u || u.isSystem || uid === CREATORBOOST_UID) continue;
         // Family-Filter: nicht für ungelinkte Posts der eigenen Family (Parent ↔ Sub) erinnern.
         const fam = new Set(familyUids(uid));
+        const familyHasLiked = (likes) => {
+            if (!Array.isArray(likes)) return false;
+            for (const f of fam) if (likes.includes(f)) return true;
+            return false;
+        };
         const offen = weekSuperlinks.filter(s =>
-            !fam.has(String(s.uid)) &&
-            !(Array.isArray(s.likes) && s.likes.includes(uid))
+            !fam.has(String(s.uid)) && !familyHasLiked(s.likes)
         ).length;
         if (offen === 0) continue;
-        const tgText = `⭐ *Superlink-Erinnerung*\n\nDu hast noch *${offen}* offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
-        const magicUrl = buildMagicLinkUrl(uid, '/feed?tab=engagement');
-        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '📲 Im Engagement-Feed öffnen', url: magicUrl }]] } };
-        // Telegram-DM nur an numerische UIDs (Sub-Accounts haben keine TG-Identität).
-        if (/^\d+$/.test(String(uid))) {
-            try {
-                await bot.telegram.sendMessage(Number(uid), tgText, opts);
-                sent++;
-            } catch(e) {}
-        }
-        // App-DM auch für Subs OK.
+        // Nur noch In-App-DM — Superlinks laufen vollständig über die App.
         try {
             const inappText = `⭐ Superlink-Erinnerung\n\nDu hast noch ${offen} offene${offen===1?'n':''} Superlink${offen===1?'':'s'} dieser Woche.\n\n⚠️ Liken, Kommentieren, Teilen & Speichern ist Pflicht — sonst Sonntag 23:59 Uhr −50 XP.`;
             const engageUrl = (APP_URL || 'https://web-production-7981d.up.railway.app').replace(/\/$/,'') + '/feed?tab=engagement';
             sendCreatorBoostDM(uid, inappText, { link: { url: engageUrl, label: '📲 Jetzt engagen' } });
+            sent++;
         } catch(e) {}
     }
     if (sent) console.log(`📨 Daily Superlink Reminder: ${sent} DMs gesendet`);
@@ -546,30 +460,46 @@ async function superlinkDailyReminder() {
 async function cleanupOldSuperlinks() {
     const currentWeek = getBerlinWeekKey();
     const all = d.superlinks || {};
-    const oldIds = Object.keys(all).filter(id => all[id]?.week !== currentWeek);
-    if (!oldIds.length) return { totalOld: 0, removed: 0, tgDeleted: 0, tgFailed: 0, failures: [] };
+    // Behalte die letzten 8 Wochen für /admin/superlinks-debug Analyse (Penalty-Diagnose).
+    // Ältere Wochen: Datenrecord komplett raus.
+    const keepWeeks = new Set();
+    {
+        const now = new Date();
+        for (let i = 0; i < 8; i++) {
+            const d2 = new Date(now);
+            const day = d2.getDay() || 7;
+            d2.setDate(d2.getDate() - (day - 1) - i*7);
+            keepWeeks.add(d2.getFullYear() + '-' + String(d2.getMonth()+1).padStart(2,'0') + '-' + String(d2.getDate()).padStart(2,'0'));
+        }
+    }
+    const allIds = Object.keys(all);
+    const tgDeleteIds = allIds.filter(id => all[id]?.week !== currentWeek && !all[id]?.tgDeleted);   // TG-Message weg, Data bleibt
+    const dataDeleteIds = allIds.filter(id => all[id]?.week && !keepWeeks.has(all[id].week));         // > 8 Wochen alt → ganz weg
+    if (!tgDeleteIds.length && !dataDeleteIds.length) return { totalOld: 0, removed: 0, tgDeleted: 0, tgFailed: 0, failures: [] };
     let removed = 0, tgDeleted = 0, tgFailed = 0;
     const failures = [];
-    for (const id of oldIds) {
+    for (const id of tgDeleteIds) {
         const sl = all[id];
-        let tgOk = !sl?.msg_id; // ohne msg_id direkt aufräumen
         if (sl?.msg_id && GROUP_B_ID) {
             try {
                 await bot.telegram.deleteMessage(GROUP_B_ID, sl.msg_id);
-                tgOk = true;
+                sl.tgDeleted = true;
                 tgDeleted++;
             } catch(e) {
                 tgFailed++;
                 failures.push(`${id}: ${e.description || e.message}`);
+                sl.tgDeleted = true; // Markieren, sonst Re-Try in jedem Cleanup
             }
-        }
-        if (tgOk) {
-            delete d.superlinks[id];
-            removed++;
+        } else {
+            sl.tgDeleted = true;
         }
     }
+    for (const id of dataDeleteIds) {
+        delete d.superlinks[id];
+        removed++;
+    }
     speichern();
-    console.log(`🧹 Alte Superlinks: ${removed}/${oldIds.length} entfernt, Telegram ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen`);
+    console.log(`🧹 Superlinks-Cleanup: TG ${tgDeleted} gelöscht / ${tgFailed} fehlgeschlagen, Data-Records ${removed} > 8 Wochen alt entfernt`);
     if (failures.length) console.log('Telegram-Löschfehler:', failures.slice(0,5).join(' | '));
     return { totalOld: oldIds.length, removed, tgDeleted, tgFailed, failures };
 }
@@ -648,23 +578,7 @@ setInterval(async () => {
     const h = now.getHours(), m = now.getMinutes();
     if (!d._seenEngagementJobs) d._seenEngagementJobs = {};
 
-    // Montag 08:00 → Neue Engagement-Woche ankündigen
-    if (day === 1 && h === 8 && m === 0 && !d._seenEngagementJobs[wk+'_open']) {
-        d._seenEngagementJobs[wk+'_open'] = true;
-        speichern();
-        try {
-            const threadId = await ensureFullEngagementThread();
-            if (threadId && GROUP_B_ID) {
-                await bot.telegram.sendMessage(GROUP_B_ID,
-                    '⭐ *Neue Full Engagement Woche gestartet!*\n\n' +
-                    'Ihr könnt jetzt eure Superlinks posten.\n\n' +
-                    '📌 *Regeln:*\n• 1–2 Superlinks pro Person pro Woche (Elite+ = 2)\n• Wer postet, muss ALLE anderen Superlinks liken, kommentieren, teilen & speichern\n• Sonst: -50 XP am Sonntag\n\n' +
-                    '📲 Link hier in diesen Thread posten oder per /superlink im Bot.',
-                    { parse_mode: 'Markdown', message_thread_id: Number(threadId) }
-                );
-            }
-        } catch(e) { console.log('Engagement Ankündigung Fehler:', e.message); }
-    }
+    // Montag 08:00 — TG-Wochen-Ankündigung deaktiviert (Superlinks laufen jetzt App-only).
 
     // Mo-Sa 20:00 → Tägliche Erinnerung an Poster mit noch offenen Superlinks
     if (day !== 0 && h === 20 && m === 0 && !d._seenEngagementJobs[wk+'_dr_'+day]) {
@@ -943,6 +857,15 @@ function getWochenMission(uid) {
     return d.wochenMissionen[uid];
 }
 
+function addWeeklyMissionDay(wMission, counterKey, dayKey) {
+    const lastKey = counterKey + 'LetzterTag';
+    if (wMission[lastKey] === dayKey) return false;
+    wMission[counterKey] = (wMission[counterKey] || 0) + 1;
+    wMission[lastKey] = dayKey;
+    wMission.letzterTag = dayKey;
+    return true;
+}
+
 async function checkMissionen(uid, name) {
     if (istAdminId(uid)) return;
     const heute = new Date().toDateString();
@@ -979,23 +902,26 @@ async function missionenAuswerten() {
         const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(String(uid))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
         const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
-        const mission = getMission(uid);
+        const storedMission = d.missionen?.[uid]?.date === gestern ? d.missionen[uid] : null;
+        const m1Done = !!queue.m1Pending || !!storedMission?.m1;
+        const m2Done = gesamtGestern > 0 && prozentGestern >= 0.8;
+        const m3Done = gesamtGestern > 0 && gelikedGestern === gesamtGestern;
+        const anyDailyMissionDone = m1Done || m2Done || m3Done;
 
-        if (queue.m1Pending) {
+        if (m1Done) {
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 1!*\n5 Links geliked → +5 XP');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m1Tage++;
+        }
+        if (anyDailyMissionDone) {
+            if (addWeeklyMissionDay(wMission, 'm1Tage', gestern)) {
                 if (wMission.m1Tage >= 7) { xpAdd(uid, 10, name); meldungen.push('🏆 *Wochen-M1!* +10 XP'); wMission.m1Tage = 0; }
             }
         }
         // FIX 5: gesamtGestern > 0 statt minLinksVorhanden — M2/M3 braucht nicht 5 Links
-        if (gesamtGestern > 0 && prozentGestern >= 0.8) {
-            mission.m2 = true;
+        if (m2Done) {
             xpAdd(uid, 5, name);
             meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m2Tage++;
+            if (addWeeklyMissionDay(wMission, 'm2Tage', gestern)) {
                 if (wMission.m2Tage >= 7) {
                     xpAdd(uid, 15, name);
                     addDiamond(uid, 1);
@@ -1006,13 +932,11 @@ async function missionenAuswerten() {
             }
         }
         // FIX 5: gesamtGestern > 0 statt minLinksVorhanden
-        if (gesamtGestern > 0 && gelikedGestern === gesamtGestern) {
-            mission.m3 = true;
+        if (m3Done) {
             xpAdd(uid, 5, name);
             addDiamond(uid, 1);
             meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP + 💎 1 Diamant');
-            if (wMission.letzterTag !== gestern) {
-                wMission.m3Tage++;
+            if (addWeeklyMissionDay(wMission, 'm3Tage', gestern)) {
                 if (wMission.m3Tage >= 7) {
                     xpAdd(uid, 20, name);
                     addDiamond(uid, 2);
@@ -1023,12 +947,10 @@ async function missionenAuswerten() {
             }
         }
 
-        wMission.letzterTag = gestern;
-
         const hatGesternLink = Object.values(d.links).some(l => istInstagramLink(l.text) && String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
 
         if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
-        if (queue.m1Pending) {
+        if (m1Done) {
             d.m1Streak[uid].count++;
             d.m1Streak[uid].letzterTag = gestern;
             if (d.m1Streak[uid].count >= 5 && d.users[uid]?.warnings > 0) {
@@ -1516,6 +1438,653 @@ bot.command('resetmycode', async (ctx) => {
     await ctx.reply(`✅ AppCode gelöscht für ${target}. User soll /mycode neu schreiben.`);
 });
 bot.command('testreset', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; d.dailyXP = {}; d.weeklyXP = {}; d.missionen = {}; d.wochenMissionen = {}; d.missionQueue = {}; d.tracker = {}; d.counter = {}; d.badgeTracker = {}; speichern(); await ctx.reply('✅ Reset!'); });
+
+
+async function _adminAddXp(ctx) {
+    if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+    const args = (ctx.message.text || '').split(/\s+/).slice(1);
+    const menge = parseInt(args[0], 10);
+    if (!menge || isNaN(menge)) return ctx.reply('❌ Nutzung: Antworte auf einen User mit /addxp <menge>\nz.B. /addxp 1000\n\nNegative Werte ziehen XP ab.');
+    if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht des Users.');
+    const targetId = ctx.message.reply_to_message.from.id;
+    const targetName = ctx.message.reply_to_message.from.first_name || 'User';
+    if (istAdminId(targetId)) return ctx.reply('❌ Admins haben kein XP-Konto.');
+    const u = user(targetId, targetName);
+    const alteBadge = u.role;
+    let finalXP = menge;
+    if (menge > 0 && d.xpEvent && d.xpEvent.aktiv && d.xpEvent.multiplier > 1) finalXP = Math.round(menge * d.xpEvent.multiplier);
+    u.xp = Math.max(0, (u.xp || 0) + finalXP);
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    // Admin-XP deliberately excluded from weekly/daily rankings
+    speichern();
+    const sign = finalXP >= 0 ? '+' : '';
+    await ctx.reply('✅ ' + sign + finalXP + ' XP an *' + u.name + '*\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role + (alteBadge !== u.role ? '\n🎉 Badge: ' + alteBadge + ' → ' + u.role : ''), { parse_mode: 'Markdown' });
+    try {
+        const dmText = finalXP >= 0
+            ? '🎁 *Geschenk vom Admin!*\n\n+' + finalXP + ' XP\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role
+            : '⚠️ *XP angepasst*\n\n' + finalXP + ' XP\n⭐ Gesamt: ' + u.xp + ' XP  ·  ' + u.role;
+        await bot.telegram.sendMessage(targetId, dmText, { parse_mode: 'Markdown' });
+    } catch (e) {}
+}
+bot.command('addxp', _adminAddXp);
+bot.command('xpadd', _adminAddXp);
+bot.command('givexp', _adminAddXp);
+bot.command('version', async (ctx) => { if (!await istAdmin(ctx, ctx.from.id)) return; await ctx.reply('🔨 Patch-Build: ' + (process.env.PATCH_TIME || '2026-05-11T18:08:32.896Z') + '\n✅ /addxp + /xpadd + /givexp registriert'); });
+console.log('\n🔨 [PATCHED-BUILD] /addxp + /xpadd + /givexp + /version registriert  (Build: ' + (process.env.PATCH_TIME || '2026-05-11T18:08:32.896Z') + ')\n');
+
+// ── ADMIN: /merge-user + /delete-user ──────────────────────────────────
+
+function _purgeUidFromCollections(uid) {
+    const id = String(uid);
+
+    // Scalar maps keyed by uid
+    for (const key of [
+        'dailyXP','weeklyXP','gesternDailyXP','tracker','counter','badgeTracker',
+        'bonusLinks','missionen','wochenMissionen','missionQueue','m1Streak',
+        'dailyLogins','dailyGroupMsgs','threadLastRead','warteNachricht',
+        'instaWarte','dmNachrichten','appActivity','_smartReminderSent'
+    ]) {
+        if (d[key] && d[key][id] !== undefined) delete d[key][id];
+    }
+
+    if (d.notifications) delete d.notifications[id];
+    if (d.appChatLastRead) delete d.appChatLastRead[id];
+    if (d.posts) delete d.posts[id];
+    if (d.pinnedEngages) delete d.pinnedEngages[id];
+
+    // Remove uid from followers/following of all other users
+    for (const u of Object.values(d.users || {})) {
+        if (Array.isArray(u.followers)) u.followers = u.followers.filter(x => String(x) !== id);
+        if (Array.isArray(u.following)) u.following = u.following.filter(x => String(x) !== id);
+    }
+
+    // Links (object keyed by msgId): remove as poster, remove from likers
+    for (const [k, l] of Object.entries(d.links || {})) {
+        if (String(l.user_id) === id) { delete d.links[k]; continue; }
+        if (l.likes) {
+            if (typeof l.likes.delete === 'function') l.likes.delete(id);
+            else if (Array.isArray(l.likes)) l.likes = l.likes.filter(x => String(x) !== id);
+        }
+        if (l.likerNames && l.likerNames[id]) delete l.likerNames[id];
+    }
+
+    // Superlinks (object keyed by slId): remove as poster, remove from likers
+    for (const [k, sl] of Object.entries(d.superlinks || {})) {
+        if (String(sl.uid) === id) { delete d.superlinks[k]; continue; }
+        if (Array.isArray(sl.likes)) sl.likes = sl.likes.filter(x => String(x) !== id);
+        if (sl.likerNames && sl.likerNames[id]) delete sl.likerNames[id];
+    }
+
+    // Comments (object keyed by linkId): remove comments authored by uid
+    if (d.comments && typeof d.comments === 'object') {
+        for (const cKey of Object.keys(d.comments)) {
+            if (Array.isArray(d.comments[cKey])) {
+                d.comments[cKey] = d.comments[cKey].filter(c => String(c.uid) !== id);
+            }
+        }
+    }
+
+    // App chat messages: mark as deleted (preserve history)
+    if (Array.isArray(d.appChat)) {
+        for (const m of d.appChat) {
+            if (String(m.uid) === id) { m.deleted = true; m.deletedAt = Date.now(); }
+            if (m.reactions) {
+                for (const emoji of Object.keys(m.reactions)) {
+                    if (Array.isArray(m.reactions[emoji])) {
+                        m.reactions[emoji] = m.reactions[emoji].filter(x => String(x) !== id);
+                        if (m.reactions[emoji].length === 0) delete m.reactions[emoji];
+                    }
+                }
+            }
+        }
+    }
+
+    // Thread messages: remove authored messages
+    if (d.threadMessages && typeof d.threadMessages === 'object') {
+        for (const tk of Object.keys(d.threadMessages)) {
+            if (Array.isArray(d.threadMessages[tk])) {
+                d.threadMessages[tk] = d.threadMessages[tk].filter(m => String(m.uid) !== id);
+            }
+        }
+    }
+
+    // DMs (d.messages): remove chats where uid is participant
+    if (d.messages && typeof d.messages === 'object') {
+        for (const chatKey of Object.keys(d.messages)) {
+            if (chatKey.split('_').includes(id)) {
+                delete d.messages[chatKey];
+            }
+        }
+    }
+
+    // Notifications: remove uid as actorUid from other users' notifications
+    if (d.notifications && typeof d.notifications === 'object') {
+        for (const nk of Object.keys(d.notifications)) {
+            if (Array.isArray(d.notifications[nk])) {
+                d.notifications[nk] = d.notifications[nk].filter(n => String(n.actorUid || '') !== id);
+            }
+        }
+    }
+
+    // PinnedEngages: remove uid from other users' pinned lists
+    if (d.pinnedEngages && typeof d.pinnedEngages === 'object') {
+        for (const pk of Object.keys(d.pinnedEngages)) {
+            if (Array.isArray(d.pinnedEngages[pk])) {
+                d.pinnedEngages[pk] = d.pinnedEngages[pk].filter(x => String(x) !== id);
+            }
+        }
+    }
+
+    // Email login log: remove entries referencing this uid
+    if (Array.isArray(d.emailLoginLog)) {
+        d.emailLoginLog = d.emailLoginLog.filter(e => String(e.uid || '') !== id);
+    }
+
+    // Mindset stories
+    if (d.mindsetStories) {
+        if (d.mindsetStories.waitlist) delete d.mindsetStories.waitlist[id];
+        if (d.mindsetStories.rejected) delete d.mindsetStories.rejected[id];
+        if (d.mindsetStories.done) delete d.mindsetStories.done[id];
+        if (d.mindsetStories.weeklyState && String(d.mindsetStories.weeklyState.pickedUid) === id) {
+            d.mindsetStories.weeklyState.pickedUid = null;
+        }
+    }
+
+    // Sub-account link: clear parent reference
+    const u = d.users[id];
+    if (u && u.parent_uid && d.users[u.parent_uid]) {
+        delete d.users[u.parent_uid].subUid;
+    }
+    if (u && u.subUid && d.users[u.subUid]) {
+        delete d.users[u.subUid].parent_uid;
+    }
+}
+
+function _mergeUserData(sourceUid, targetUid) {
+    const src = d.users[String(sourceUid)];
+    const tgt = d.users[String(targetUid)];
+    if (!src || !tgt) return { ok: false, error: 'User nicht gefunden' };
+
+    const sId = String(sourceUid);
+    const tId = String(targetUid);
+    const log = [];
+
+    // Transfer profile fields (only if target is empty/missing)
+    const profileFields = ['email','emailConfirmedAt','pendingEmail','password_hash',
+        'instagram','bio','nische','spitzname','website','tiktok','youtube','twitter',
+        'banner','profilePic','accentColor','appCode','appCodeChosenAt','signupSource'];
+    for (const f of profileFields) {
+        if (src[f] && !tgt[f]) { tgt[f] = src[f]; log.push('Profil: ' + f + ' übertragen'); }
+    }
+
+    // Merge XP (additive)
+    if (src.xp > 0) {
+        const oldXp = tgt.xp || 0;
+        tgt.xp = (tgt.xp || 0) + src.xp;
+        tgt.level = level(tgt.xp);
+        tgt.role = badge(tgt.xp);
+        log.push('XP: ' + oldXp + ' + ' + src.xp + ' = ' + tgt.xp);
+    }
+
+    // Merge diamonds
+    if (src.diamonds > 0) {
+        tgt.diamonds = (tgt.diamonds || 0) + src.diamonds;
+        log.push('Diamonds: +' + src.diamonds + ' = ' + tgt.diamonds);
+    }
+
+    // Merge link/like counters
+    if (src.links > 0) { tgt.links = (tgt.links || 0) + src.links; log.push('Links: +' + src.links); }
+    if (src.totalLikes > 0) { tgt.totalLikes = (tgt.totalLikes || 0) + src.totalLikes; log.push('TotalLikes: +' + src.totalLikes); }
+
+    // Merge followers/following (deduplicated)
+    if (Array.isArray(src.followers)) {
+        if (!Array.isArray(tgt.followers)) tgt.followers = [];
+        const existing = new Set(tgt.followers.map(String));
+        for (const f of src.followers) {
+            if (String(f) !== tId && !existing.has(String(f))) {
+                tgt.followers.push(String(f));
+                existing.add(String(f));
+            }
+        }
+        // Update reverse references: followers of source now follow target
+        for (const fUid of src.followers) {
+            const fUser = d.users[String(fUid)];
+            if (fUser && Array.isArray(fUser.following)) {
+                fUser.following = fUser.following.filter(x => String(x) !== sId);
+                if (!fUser.following.map(String).includes(tId)) fUser.following.push(tId);
+            }
+        }
+        log.push('Followers: ' + src.followers.length + ' zusammengeführt');
+    }
+    if (Array.isArray(src.following)) {
+        if (!Array.isArray(tgt.following)) tgt.following = [];
+        const existing = new Set(tgt.following.map(String));
+        for (const f of src.following) {
+            if (String(f) !== tId && !existing.has(String(f))) {
+                tgt.following.push(String(f));
+                existing.add(String(f));
+            }
+        }
+        // Update reverse references: users followed by source now have target as follower
+        for (const fUid of src.following) {
+            const fUser = d.users[String(fUid)];
+            if (fUser && Array.isArray(fUser.followers)) {
+                fUser.followers = fUser.followers.filter(x => String(x) !== sId);
+                if (!fUser.followers.map(String).includes(tId)) fUser.followers.push(tId);
+            }
+        }
+        log.push('Following: ' + src.following.length + ' zusammengeführt');
+    }
+
+    // Remove self-follow after merge
+    if (Array.isArray(tgt.followers)) tgt.followers = tgt.followers.filter(x => String(x) !== tId);
+    if (Array.isArray(tgt.following)) tgt.following = tgt.following.filter(x => String(x) !== tId);
+
+    // Merge trophies (deduplicated)
+    if (Array.isArray(src.trophies) && src.trophies.length > 0) {
+        if (!Array.isArray(tgt.trophies)) tgt.trophies = [];
+        const existingT = new Set(tgt.trophies.map(JSON.stringify));
+        for (const t of src.trophies) {
+            if (!existingT.has(JSON.stringify(t))) tgt.trophies.push(t);
+        }
+        log.push('Trophies: zusammengeführt');
+    }
+
+    // Merge inventory
+    if (Array.isArray(src.inventory) && src.inventory.length > 0) {
+        if (!Array.isArray(tgt.inventory)) tgt.inventory = [];
+        tgt.inventory = tgt.inventory.concat(src.inventory);
+        log.push('Inventar: +' + src.inventory.length + ' Items');
+    }
+
+    // Merge projects
+    if (Array.isArray(src.projects) && src.projects.length > 0) {
+        if (!Array.isArray(tgt.projects)) tgt.projects = [];
+        tgt.projects = tgt.projects.concat(src.projects);
+        log.push('Projekte: +' + src.projects.length);
+    }
+
+    // Transfer scalar XP maps (additive)
+    for (const key of ['dailyXP','weeklyXP','gesternDailyXP']) {
+        if (d[key] && d[key][sId]) {
+            d[key][tId] = (d[key][tId] || 0) + d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': zusammengeführt');
+        }
+    }
+
+    // Transfer other scalar maps
+    for (const key of ['tracker','counter','badgeTracker','bonusLinks','dailyLogins','dailyGroupMsgs','m1Streak']) {
+        if (d[key] && d[key][sId] !== undefined && d[key][tId] === undefined) {
+            d[key][tId] = d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': übertragen');
+        } else if (d[key] && d[key][sId] !== undefined) {
+            delete d[key][sId];
+        }
+    }
+
+    // Transfer mission data
+    for (const key of ['missionen','wochenMissionen','missionQueue']) {
+        if (d[key] && d[key][sId] && !d[key][tId]) {
+            d[key][tId] = d[key][sId];
+            delete d[key][sId];
+            log.push(key + ': übertragen');
+        } else if (d[key] && d[key][sId]) {
+            delete d[key][sId];
+        }
+    }
+
+    // Transfer thread read state
+    if (d.threadLastRead && d.threadLastRead[sId]) {
+        if (!d.threadLastRead[tId]) d.threadLastRead[tId] = {};
+        Object.assign(d.threadLastRead[tId], d.threadLastRead[sId]);
+        delete d.threadLastRead[sId];
+        log.push('ThreadLastRead: übertragen');
+    }
+
+    // Transfer notifications
+    if (d.notifications && Array.isArray(d.notifications[sId])) {
+        if (!d.notifications[tId]) d.notifications[tId] = [];
+        d.notifications[tId] = d.notifications[tId].concat(d.notifications[sId]);
+        if (d.notifications[tId].length > 50) d.notifications[tId] = d.notifications[tId].slice(-50);
+        delete d.notifications[sId];
+        log.push('Benachrichtigungen: zusammengeführt');
+    }
+
+    // Transfer app activity
+    if (d.appActivity && d.appActivity[sId]) {
+        if (!d.appActivity[tId]) d.appActivity[tId] = d.appActivity[sId];
+        else {
+            const t = d.appActivity[tId], s = d.appActivity[sId];
+            t.firstSeen = Math.min(t.firstSeen || Infinity, s.firstSeen || Infinity);
+            t.lastSeen = Math.max(t.lastSeen || 0, s.lastSeen || 0);
+            t.sessions = (t.sessions || 0) + (s.sessions || 0);
+            t.totalCalls = (t.totalCalls || 0) + (s.totalCalls || 0);
+        }
+        delete d.appActivity[sId];
+        log.push('AppActivity: zusammengeführt');
+    }
+
+    // Transfer appChatLastRead
+    if (d.appChatLastRead && d.appChatLastRead[sId]) {
+        if (!d.appChatLastRead[tId] || d.appChatLastRead[sId] > d.appChatLastRead[tId]) {
+            d.appChatLastRead[tId] = d.appChatLastRead[sId];
+        }
+        delete d.appChatLastRead[sId];
+    }
+
+    // Re-assign links ownership
+    let linksReassigned = 0;
+    for (const l of Object.values(d.links || {})) {
+        if (String(l.user_id) === sId) { l.user_id = /^\d+$/.test(tId) ? Number(tId) : tId; l.user_name = tgt.name; linksReassigned++; }
+        if (l.likes) {
+            if (typeof l.likes.delete === 'function' && l.likes.has(sId)) { l.likes.delete(sId); l.likes.add(tId); }
+            else if (Array.isArray(l.likes)) l.likes = l.likes.map(x => String(x) === sId ? tId : String(x));
+        }
+        if (l.likerNames && l.likerNames[sId]) {
+            l.likerNames[tId] = l.likerNames[sId];
+            delete l.likerNames[sId];
+        }
+    }
+    if (linksReassigned > 0) log.push('Links: ' + linksReassigned + ' umgeschrieben');
+
+    // Re-assign superlinks ownership
+    let slReassigned = 0;
+    for (const sl of Object.values(d.superlinks || {})) {
+        if (String(sl.uid) === sId) { sl.uid = tId; slReassigned++; }
+        if (Array.isArray(sl.likes)) sl.likes = sl.likes.map(x => String(x) === sId ? tId : String(x));
+        if (sl.likerNames && sl.likerNames[sId]) {
+            sl.likerNames[tId] = sl.likerNames[sId];
+            delete sl.likerNames[sId];
+        }
+    }
+    if (slReassigned > 0) log.push('Superlinks: ' + slReassigned + ' umgeschrieben');
+
+    // Re-assign comments
+    if (d.comments) {
+        let cReassigned = 0;
+        for (const arr of Object.values(d.comments)) {
+            if (Array.isArray(arr)) {
+                for (const c of arr) {
+                    if (String(c.uid) === sId) { c.uid = tId; c.name = tgt.name; cReassigned++; }
+                }
+            }
+        }
+        if (cReassigned > 0) log.push('Kommentare: ' + cReassigned + ' umgeschrieben');
+    }
+
+    // Re-assign posts
+    if (d.posts && d.posts[sId]) {
+        if (!d.posts[tId]) d.posts[tId] = [];
+        d.posts[tId] = d.posts[tId].concat(d.posts[sId]);
+        delete d.posts[sId];
+        log.push('Posts: zusammengeführt');
+    }
+
+    // Re-assign app chat messages
+    if (Array.isArray(d.appChat)) {
+        let chatReassigned = 0;
+        for (const m of d.appChat) {
+            if (String(m.uid) === sId) { m.uid = tId; m.name = tgt.name; chatReassigned++; }
+            if (m.reactions) {
+                for (const emoji of Object.keys(m.reactions)) {
+                    if (Array.isArray(m.reactions[emoji])) {
+                        m.reactions[emoji] = m.reactions[emoji].map(x => String(x) === sId ? tId : String(x));
+                        m.reactions[emoji] = [...new Set(m.reactions[emoji])];
+                    }
+                }
+            }
+        }
+        if (chatReassigned > 0) log.push('AppChat: ' + chatReassigned + ' Nachrichten umgeschrieben');
+    }
+
+    // Re-assign thread messages
+    if (d.threadMessages) {
+        let tmReassigned = 0;
+        for (const arr of Object.values(d.threadMessages)) {
+            if (Array.isArray(arr)) {
+                for (const m of arr) {
+                    if (String(m.uid) === sId) { m.uid = tId; m.name = tgt.name; tmReassigned++; }
+                }
+            }
+        }
+        if (tmReassigned > 0) log.push('ThreadMessages: ' + tmReassigned + ' umgeschrieben');
+    }
+
+    // Re-assign DMs
+    if (d.messages) {
+        const keysToMigrate = Object.keys(d.messages).filter(k => k.split('_').includes(sId));
+        for (const oldKey of keysToMigrate) {
+            const newKey = [String(oldKey.split('_')[0]) === sId ? tId : oldKey.split('_')[0],
+                            String(oldKey.split('_')[1]) === sId ? tId : oldKey.split('_')[1]]
+                            .sort().join('_');
+            for (const m of d.messages[oldKey]) {
+                if (String(m.from) === sId) m.from = tId;
+                if (String(m.to) === sId) m.to = tId;
+            }
+            if (d.messages[newKey] && newKey !== oldKey) {
+                d.messages[newKey] = d.messages[newKey].concat(d.messages[oldKey]);
+                d.messages[newKey].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                if (d.messages[newKey].length > 200) d.messages[newKey] = d.messages[newKey].slice(-200);
+            } else if (newKey !== oldKey) {
+                d.messages[newKey] = d.messages[oldKey];
+            }
+            if (newKey !== oldKey) delete d.messages[oldKey];
+        }
+        if (keysToMigrate.length > 0) log.push('DMs: ' + keysToMigrate.length + ' Chats migriert');
+    }
+
+    // Re-assign notifications referencing source as actor
+    if (d.notifications) {
+        for (const arr of Object.values(d.notifications)) {
+            if (Array.isArray(arr)) {
+                for (const n of arr) {
+                    if (String(n.actorUid || '') === sId) n.actorUid = tId;
+                }
+            }
+        }
+    }
+
+    // PinnedEngages: transfer and re-reference
+    if (d.pinnedEngages) {
+        if (d.pinnedEngages[sId]) {
+            if (!d.pinnedEngages[tId]) d.pinnedEngages[tId] = [];
+            d.pinnedEngages[tId] = [...new Set([...d.pinnedEngages[tId], ...d.pinnedEngages[sId]])];
+            delete d.pinnedEngages[sId];
+        }
+        for (const pk of Object.keys(d.pinnedEngages)) {
+            if (Array.isArray(d.pinnedEngages[pk])) {
+                d.pinnedEngages[pk] = d.pinnedEngages[pk].map(x => String(x) === sId ? tId : String(x));
+                d.pinnedEngages[pk] = [...new Set(d.pinnedEngages[pk])];
+            }
+        }
+    }
+
+    // Mindset stories: transfer references
+    if (d.mindsetStories) {
+        for (const cat of ['waitlist','rejected','done']) {
+            if (d.mindsetStories[cat] && d.mindsetStories[cat][sId]) {
+                if (!d.mindsetStories[cat][tId]) d.mindsetStories[cat][tId] = d.mindsetStories[cat][sId];
+                delete d.mindsetStories[cat][sId];
+            }
+        }
+        if (d.mindsetStories.weeklyState && String(d.mindsetStories.weeklyState.pickedUid) === sId) {
+            d.mindsetStories.weeklyState.pickedUid = tId;
+        }
+    }
+
+    // Re-assign email login log entries from source to target
+    if (Array.isArray(d.emailLoginLog)) {
+        for (const e of d.emailLoginLog) {
+            if (String(e.uid || '') === sId) e.uid = tId;
+        }
+        log.push('EmailLoginLog: UIDs umgeschrieben');
+    }
+
+    // Clean up remaining source-keyed entries
+    for (const key of ['warteNachricht','instaWarte','dmNachrichten','_smartReminderSent']) {
+        if (d[key] && d[key][sId] !== undefined) delete d[key][sId];
+    }
+
+    // Transfer sub-account relationship
+    if (src.subUid && d.users[src.subUid]) {
+        if (!tgt.subUid) {
+            tgt.subUid = src.subUid;
+            d.users[src.subUid].parent_uid = tId;
+            log.push('Sub-Account übertragen: ' + src.subUid);
+        }
+    }
+    if (src.parent_uid && d.users[src.parent_uid]) {
+        d.users[src.parent_uid].subUid = tId;
+        tgt.parent_uid = src.parent_uid;
+        log.push('Parent-Beziehung übertragen');
+    }
+
+    // Flags
+    if (src.appUser) tgt.appUser = true;
+    if (src.started) tgt.started = true;
+    if (src.inGruppe) tgt.inGruppe = true;
+    if (src.rulesAcceptedAt && !tgt.rulesAcceptedAt) tgt.rulesAcceptedAt = src.rulesAcceptedAt;
+    if (src.joinDate && (!tgt.joinDate || src.joinDate < tgt.joinDate)) tgt.joinDate = src.joinDate;
+
+    // Backup source user before deletion
+    if (!d._mergeLog) d._mergeLog = [];
+    d._mergeLog.push({
+        timestamp: Date.now(),
+        sourceUid: sId,
+        targetUid: tId,
+        sourceBackup: JSON.parse(JSON.stringify(src)),
+        changes: log
+    });
+    while (d._mergeLog.length > 50) d._mergeLog.shift();
+
+    // Delete source user
+    delete d.users[sId];
+
+    speichern();
+    return { ok: true, log };
+}
+
+function _deleteUser(uid) {
+    const id = String(uid);
+    const u = d.users[id];
+    if (!u) return { ok: false, error: 'User nicht gefunden' };
+
+    // Backup before deletion
+    if (!d._deleteLog) d._deleteLog = [];
+    d._deleteLog.push({
+        timestamp: Date.now(),
+        uid: id,
+        backup: JSON.parse(JSON.stringify(u))
+    });
+    while (d._deleteLog.length > 50) d._deleteLog.shift();
+
+    _purgeUidFromCollections(id);
+    delete d.users[id];
+    speichern();
+
+    return { ok: true, name: u.name || u.email || id };
+}
+
+function _findUser(query) {
+    const q = String(query).trim().toLowerCase().replace(/^@/, '');
+    if (!q) return null;
+    // Direct UID match
+    if (d.users[q]) return q;
+    if (d.users[query]) return query;
+    // Search by username, instagram, name, spitzname, email
+    for (const [uid, u] of Object.entries(d.users)) {
+        if (String(u.username || '').toLowerCase() === q) return uid;
+        if (String(u.instagram || '').toLowerCase() === q) return uid;
+        if (String(u.name || '').toLowerCase() === q) return uid;
+        if (String(u.spitzname || '').toLowerCase() === q) return uid;
+        if (String(u.email || '').toLowerCase() === q) return uid;
+    }
+    return null;
+}
+
+bot.command('mergeuser', async (ctx) => {
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 2) return ctx.reply('❌ Nutzung: /mergeuser <quell> <ziel>\n\nDu kannst UID, Username, Instagram oder Name verwenden.\nAlle Daten von Quell-User werden auf Ziel-User übertragen. Quell-User wird danach gelöscht.');
+
+        const sourceUid = _findUser(args[0]);
+        const targetUid = _findUser(args[1]);
+
+        if (!sourceUid) return ctx.reply('❌ Quell-User nicht gefunden: ' + args[0]);
+        if (!targetUid) return ctx.reply('❌ Ziel-User nicht gefunden: ' + args[1]);
+        if (sourceUid === targetUid) return ctx.reply('❌ Quell und Ziel sind der gleiche User (' + sourceUid + ').');
+
+        const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
+        const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+
+        const result = _mergeUserData(sourceUid, targetUid);
+        if (!result.ok) return ctx.reply('❌ Merge fehlgeschlagen: ' + result.error);
+
+        const logText = result.log.length > 0 ? '\n\n📋 Details:\n' + result.log.map(l => '• ' + l).join('\n') : '';
+        await ctx.reply('✅ Merge abgeschlossen!\n\n👤 ' + srcName + ' (' + sourceUid + ') → ' + tgtName + ' (' + targetUid + ')\n🗑 Quell-User gelöscht.' + logText);
+        console.log('[MERGE] ' + sourceUid + ' → ' + targetUid + ' von Admin ' + ctx.from.id + ': ' + result.log.join(', '));
+    } catch (e) {
+        console.log('[MERGE] Fehler:', e.message, e.stack);
+        try { await ctx.reply('❌ Fehler beim Merge: ' + e.message); } catch(_) {}
+    }
+});
+
+bot.command('deleteuser', async (ctx) => {
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 1) return ctx.reply('❌ Nutzung: /deleteuser <uid oder name>\n\nDu kannst UID, Username, Instagram oder Name verwenden.');
+
+        const uid = _findUser(args[0]);
+        if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
+        if (istAdminId(Number(uid))) return ctx.reply('❌ Admin-Accounts können nicht gelöscht werden.');
+
+        const userName = d.users[uid].spitzname || d.users[uid].name || uid;
+        const result = _deleteUser(uid);
+        if (!result.ok) return ctx.reply('❌ Fehler: ' + result.error);
+
+        await ctx.reply('✅ User gelöscht!\n\n👤 ' + userName + ' (' + uid + ')\n📋 Backup im _deleteLog gespeichert.');
+        console.log('[DELETE] User ' + uid + ' (' + userName + ') gelöscht von Admin ' + ctx.from.id);
+    } catch (e) {
+        console.log('[DELETE] Fehler:', e.message, e.stack);
+        try { await ctx.reply('❌ Fehler beim Löschen: ' + e.message); } catch(_) {}
+    }
+});
+
+function _generatePassword() {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let pw = '';
+    for (let i = 0; i < 10; i++) pw += chars[crypto.randomInt(chars.length)];
+    return pw;
+}
+
+bot.command('resetpw', async (ctx) => {
+    try {
+        if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
+        const args = (ctx.message.text || '').split(/\s+/).slice(1);
+        if (args.length < 1) return ctx.reply('❌ Nutzung: /resetpw <uid oder name oder email>\n\nGeneriert ein neues Passwort und schickt es dem User per DM.');
+        const uid = _findUser(args[0]);
+        if (!uid) return ctx.reply('❌ User nicht gefunden: ' + args[0]);
+        const u = d.users[uid];
+        if (!u.email) return ctx.reply('❌ User ' + (u.spitzname || u.name || uid) + ' hat keine Email — kein Passwort-Login möglich.');
+        const newPw = _generatePassword();
+        u.password_hash = hashPasswordPBKDF2(newPw);
+        speichern();
+        try {
+            await bot.telegram.sendMessage(Number(uid),
+                '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.');
+        } catch (e) {}
+        await ctx.reply('✅ Passwort zurückgesetzt für ' + (u.spitzname || u.name || uid) + ' (' + u.email + ')\nNeues Passwort: ' + newPw);
+        console.log('[RESETPW] Admin ' + ctx.from.id + ' hat Passwort für ' + uid + ' (' + u.email + ') zurückgesetzt');
+    } catch (e) {
+        console.log('[RESETPW] Fehler:', e.message);
+        try { await ctx.reply('❌ Fehler: ' + e.message); } catch(_) {}
+    }
+});
 
 bot.command('dellink', async (ctx) => {
     if (!await istAdmin(ctx, ctx.from.id)) return ctx.reply('❌ Nur Admins!');
@@ -2404,41 +2973,8 @@ bot.action('set_insta', async (ctx) => {
 const slLikeInProgress = new Set();
 const _slWaiting = {};
 bot.action(/^sllike_(.+)$/, async (ctx) => {
-    const slId = ctx.match[1];
-    const uid = String(ctx.from.id);
-    if (ctx.callbackQuery?.message?.chat?.type === 'private') {
-        return ctx.answerCbQuery('❌ Liken ist nur direkt im Full-Engagement-Thread möglich!', { show_alert: true });
-    }
-    if (slLikeInProgress.has(uid + '_' + slId)) return ctx.answerCbQuery('⏳');
-    slLikeInProgress.add(uid + '_' + slId);
-    try {
-        const sl = d.superlinks?.[slId];
-        if (!sl) return ctx.answerCbQuery('❌ Nicht gefunden');
-        if (sl.uid === uid) return ctx.answerCbQuery('❌ Du kannst deinen eigenen Link nicht liken');
-        if (String(getRootUid(uid)) === String(getRootUid(sl.uid))) return ctx.answerCbQuery('❌ Eigener Account — kein Self-Like');
-        if (!Array.isArray(sl.likes)) sl.likes = [];
-        if (!sl.likerNames) sl.likerNames = {};
-        const idx = sl.likes.indexOf(uid);
-        if (idx >= 0) {
-            return ctx.answerCbQuery('✅ Bereits geliked!');
-        }
-        sl.likes.push(uid);
-        const u = d.users[uid];
-        sl.likerNames[uid] = u?.spitzname||u?.name||ctx.from.first_name||'User';
-        addNotification(sl.uid, '❤️', (sl.likerNames[uid]) + ' hat deinen Superlink geliked!', String(uid));
-        sendAppPush(sl.uid, '⭐ Superlink geliked!', sl.likerNames[uid] + ' hat deinen Superlink geliked', '/feed?tab=engagement').catch(()=>{});
-        await ctx.answerCbQuery('❤️ Geliked!');
-        if (ctx.callbackQuery?.message?.chat?.type === 'private') {
-            try { await ctx.deleteMessage(); } catch(e) {}
-        }
-        // Reminder-DM für diesen Superlink im Chat des Likers löschen
-        if (sl.dmNotifications && sl.dmNotifications[uid]) {
-            try { await bot.telegram.deleteMessage(Number(uid), sl.dmNotifications[uid]); } catch(e) {}
-            delete sl.dmNotifications[uid];
-        }
-        speichern();
-        await updateSuperLinkCard(slId);
-    } finally { slLikeInProgress.delete(uid + '_' + slId); }
+    // Liken läuft nur noch über die App — TG-Button wird vom Bot stummgeschaltet.
+    try { await ctx.answerCbQuery('⭐ Liken läuft jetzt nur noch über die App. Öffne den Feed → Engagement-Tab.', { show_alert: true }); } catch(e) {}
 });
 
 bot.action(/^slliker_(.+)$/, async (ctx) => {
@@ -2805,8 +3341,13 @@ bot.command('checkengagement', async (ctx) => {
     for (const uid of posters) {
         const u = d.users[uid];
         const name = u?.spitzname||u?.name||uid;
-        const otherLinks = weekSuperlinks.filter(s => s.uid !== uid);
-        const likedCount = otherLinks.filter(s => Array.isArray(s.likes) && s.likes.includes(uid)).length;
+        const fam = new Set(familyUids(uid));
+        const otherLinks = weekSuperlinks.filter(s => !fam.has(String(s.uid)));
+        const likedCount = otherLinks.filter(s => {
+            if (!Array.isArray(s.likes)) return false;
+            for (const f of fam) if (s.likes.includes(f)) return true;
+            return false;
+        }).length;
         const status = likedCount >= otherLinks.length ? '✅' : `⚠️ ${likedCount}/${otherLinks.length}`;
         report += `${status} ${name}\n`;
     }
@@ -3152,56 +3693,14 @@ bot.command('fixsuperlink', async (ctx) => {
 });
 
 bot.command('superlink', async (ctx) => {
-    const uid = String(ctx.from.id);
-    const u = user(ctx.from.id, ctx.from.first_name);
-    if (!u.started) return ctx.reply('⚠️ Starte zuerst den Bot per DM mit /start');
-    if (istAdminId(ctx.from.id)) return ctx.reply('⚙️ Admins können keine Superlinks posten.');
-
-    const weekKey = getBerlinWeekKey();
-    const weekSuperlinks = Object.values(d.superlinks||{}).sort((a,b) => b.timestamp - a.timestamp).filter(s => s.week === weekKey);
-    const isElitePlusSL = u.role === '🌟 Elite+';
-    const maxSLCmd = isElitePlusSL ? 2 : 1;
-    const mySlCountThisWeek = weekSuperlinks.filter(s => s.uid === uid).length;
-    const mySlThisWeek = mySlCountThisWeek > 0;
-    const canPost = mySlCountThisWeek < maxSLCmd && isSuperLinkPostingAllowed();
-
-    let text = '⭐ *Full Engagement – Superlinks*\n\n';
-    text += '📌 *Regeln:*\n• ' + maxSLCmd + ' Superlink' + (maxSLCmd > 1 ? 's' : '') + ' pro Woche (Mo–Sa)\n• Wer postet, MUSS alle anderen liken, kommentieren, teilen & speichern\n• Verstoß: -50 XP\n\n';
-
-    if (weekSuperlinks.length === 0) {
-        text += '📭 Noch keine Superlinks diese Woche.\n\n';
-    } else {
-        text += `📊 *Diese Woche: ${weekSuperlinks.length} Superlink${weekSuperlinks.length !== 1 ? 's' : ''}*\n`;
-        for (const sl of weekSuperlinks) {
-            const poster = d.users[sl.uid];
-            const name = (poster?.spitzname || poster?.name || 'User').replace(/[*_`]/g, '');
-            const liked = (sl.likes||[]).includes(uid);
-            const isOwn = sl.uid === uid;
-            const status = isOwn ? '(dein)' : liked ? '✅' : '❌ noch nicht geliked';
-            text += `\n• *${name}* ${status}\n  ${sl.url}`;
-        }
-        text += '\n\n';
-    }
-
-    if (mySlCountThisWeek >= maxSLCmd) {
-        text += `✅ *Du hast diese Woche bereits ${maxSLCmd}/${maxSLCmd} Superlink(s) gepostet.*`;
-    } else if (!isSuperLinkPostingAllowed()) {
-        text += '⏰ Superlinks können nur Mo–Sa gepostet werden.';
-        if (mySlThisWeek) text += ` (${mySlCountThisWeek}/${maxSLCmd} diese Woche gepostet)`;
-    } else if (mySlThisWeek && canPost) {
-        text += `⭐ *${mySlCountThisWeek}/${maxSLCmd} Superlinks gepostet — noch 1 übrig!*\n📲 Schicke mir deinen Instagram-Link als nächste Nachricht.`;
-        _slWaiting[uid] = Date.now();
-    } else if (!u.instagram) {
-        text += '⚠️ Bitte zuerst /setinsta verwenden.';
-    } else {
-        text += '📲 *Superlink posten:*\nSchicke mir deinen Instagram-Link als nächste Nachricht.';
-        _slWaiting[uid] = Date.now();
-    }
-
-    const buttons = [];
-    if (canPost && u.instagram) buttons.push([{ text: '🚀 Per App posten', url: APP_URL || 'https://web-production-7981d.up.railway.app' }]);
-
-    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined });
+    // Superlinks werden nicht mehr über Telegram gepostet/verwaltet — alles in der App.
+    await ctx.reply(
+        '⭐ *Full Engagement — Superlinks*\n\n' +
+        'Superlinks werden jetzt direkt über die App gepostet und verwaltet.\n\n' +
+        '📲 Öffne die App → Feed → ⭐ Superlink posten\n\n' +
+        'Dort siehst du auch deinen Engagement-Status und kannst andere Superlinks liken.',
+        { parse_mode: 'Markdown' }
+    );
 });
 
 bot.command('restoredata', async (ctx) => {
@@ -3740,9 +4239,9 @@ async function zeitCheck() {
         };
         if (h === 3  && m < 5)  taeglich('backup',       () => backup());
         if (h === 4  && m < 5)  taeglich('memberCheck', () => gruppenMitgliederPruefen());
-        if (jetzt.getDay() === 1 && h === 0 && m === 5) einmalig('wochenReset', () => {
+        if (jetzt.getDay() === 1 && h === 0 && m < 10) taeglich('wochenReset', () => {
             d.wochenMissionen = {};
-            // Wochen-Reset findet IMMER Mo 00:05 statt. Die Woche läuft Mo 00:00 - So 23:59
+            // Weekly reset runs once at the start of Monday in Berlin time.
             // (Berlin TZ). Vorher wurde das fälschlicherweise Sonntag 20:00 via /gewinnspiel-abschluss
             // gemacht — dadurch zeigte das Wochen-Ranking ab So 20:00 schon eine "neue Woche".
             if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
@@ -3896,16 +4395,75 @@ app.get('/data', (req, res) => {
     for (const [k, v] of Object.entries(d.links)) {
         const url = (v.text||'').trim();
         const merged = likesByUrl[url] || { likes: new Set(), likerNames: {} };
+        const likesArr = Array.from(merged.likes);
+        // Auto-include poster AND their family (parent/sub) in likes for display.
+        // Self-like is blocked for the whole family via getRootUid, so all family
+        // members should see this post as "done" in feed progress calculations.
+        const posterFamily = familyUids(String(v.user_id));
+        for (const fUid of posterFamily) {
+            if (!likesArr.includes(fUid)) likesArr.push(fUid);
+        }
         out.links[k] = Object.assign({}, v, {
-            likes: Array.from(merged.likes),
+            likes: likesArr,
             likerNames: merged.likerNames
         });
     }
     res.json(out);
 });
 
+function collectionCount(value) {
+    if (!value) return 0;
+    if (value instanceof Set) return value.size;
+    if (Array.isArray(value)) return value.length;
+    if (typeof value === 'object') return Object.keys(value).length;
+    return 0;
+}
+
+function isPublicCommunityUser(uid, u) {
+    if (!u || uid === CREATORBOOST_UID || u.isSystem || u.parent_uid) return false;
+    if (u.inGruppe === false) return false;
+    if (istAdminId(Number(uid))) return false;
+    if (u.is_bot === true || (u.username && /bot$/i.test(String(u.username)))) return false;
+    return true;
+}
+
+function buildCommunityStats() {
+    const users = Object.entries(d.users || {}).filter(([uid, u]) => isPublicCommunityUser(uid, u));
+    const links = Object.values(d.links || {});
+    const superlinks = Object.values(d.superlinks || {});
+    const likes = links.reduce((sum, l) => sum + collectionCount(l && l.likes), 0) +
+        superlinks.reduce((sum, sl) => sum + collectionCount(sl && sl.likes), 0);
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const activeToday = users.filter(([uid, u]) => {
+        const activityTs = Number(d.appActivity?.[uid]?.lastSeen || u.appLastSeen || 0);
+        return activityTs >= since;
+    }).length;
+    return {
+        ok: true,
+        members: users.length,
+        activeToday,
+        posts: links.length + superlinks.length,
+        likes,
+        currentPosts: links.length + superlinks.length,
+        totalPosts: links.length + superlinks.length,
+        currentLikes: likes,
+        totalLikes: likes
+    };
+}
+
+app.get('/community-stats-api', (req, res) => {
+    res.json(buildCommunityStats());
+});
+
+// Public app alias used by the browser landing/login app. This intentionally
+// avoids loading /data, which can be large enough to make the UI appear blank.
+app.get('/api/community-stats', (req, res) => {
+    res.json(buildCommunityStats());
+});
+
 function checkBridgeSecret(req, res) {
-    if (req.headers['x-bridge-secret'] !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
+    const secret = req.headers['x-bridge-secret'] || req.query?.secret;
+    if (secret !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
 }
 
@@ -4135,27 +4693,36 @@ function sendInAppDM(toUid, text) {
 }
 
 async function sendMindsetWinnerDM(uid) {
-    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
-    const text = '🎉 Hey ' + name + '!\n\n' +
-        'Du wurdest diese Woche für meine Mindset Stories gepickt! Du erscheinst am Sonntag/Montag auf @mindset.stories_\n\n' +
-        'Damit ich dich gut vorstellen kann, schick mir bitte:\n\n' +
-        '1️⃣ 1-2 Deckblätter (Bilder/Grafiken)\n' +
-        '2️⃣ 1-2 Interessen / Themen die du abdeckst\n' +
-        '3️⃣ Worum geht\'s auf deinem Kanal? Was ist deine Nische?\n' +
-        '4️⃣ Was sollen meine Follower vom Post erwarten?\n' +
-        '5️⃣ Bietest du was an? (Kurs, Beratung, Coaching, etc.)\n' +
-        '6️⃣ Auch auf YouTube oder TikTok aktiv? Gerne Handles dazu!\n\n' +
-        'Schick alles einfach hier zurück, ich bau dir eine komplette Vorstellung 💪\n\n' +
-        'Antworten bis Samstag 23:59 damit ich Zeit zum Bauen habe!';
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || '';
+    const greeting = name ? 'Hallo ' + name + ',' : 'Hallo,';
+    const text = greeting + '\n\n' +
+        'du wurdest diese Woche für die Mindset Stories auf @mindset.stories_ ausgewählt — herzlichen Glückwunsch. Du erscheinst am kommenden Sonntag bzw. Montag in den Stories.\n\n' +
+        'Damit ich dich gut vorstellen kann, benötige ich folgende Infos von dir:\n\n' +
+        '1. 1–2 Deckblätter (Bilder oder Grafiken, die zu dir passen)\n' +
+        '2. 1–2 Interessen oder Themen, die du abdeckst\n' +
+        '3. Eine kurze Beschreibung deines Kanals bzw. deiner Nische\n' +
+        '4. Was sollen meine Follower aus deinem Post mitnehmen?\n' +
+        '5. Bietest du etwas an (Kurse, Beratung, Coaching o.ä.)?\n' +
+        '6. Bist du auch auf YouTube oder TikTok aktiv? Falls ja, gerne mit Handles.\n\n' +
+        'Schick mir die Infos einfach hier in der DM zurück — ich erstelle daraus eine ansprechende Vorstellung.\n\n' +
+        'Bitte spätestens bis Samstag 23:59 zurückmelden, damit genug Zeit für die Vorbereitung bleibt.\n\n' +
+        'Viele Grüße';
     sendInAppDM(uid, text);
 }
 
 async function sendMindsetInviteDM(uid) {
-    const name = d.users[uid]?.spitzname || d.users[uid]?.name || 'du';
-    const text = '👋 Hey ' + name + '!\n\n' +
-        'Jede Woche stelle ich 1 User in meinen Mindset Stories auf @mindset.stories_ vor.\n\n' +
-        'Lust dabei zu sein? Tippe in der App:\nExplore → News → Mindset Stories\n\n' +
-        'Dort kannst du ✅ oder ❌ klicken — pro Woche wird einer zufällig gepickt.';
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || '';
+    const greeting = name ? 'Hallo ' + name + ',' : 'Hallo,';
+    const text = greeting + '\n\n' +
+        'ich starte einen wöchentlichen Mindset-Stories-Slot auf meinem Instagram-Profil @mindset.stories_, in dem ich Creator aus unserer Community vorstelle.\n\n' +
+        'Ziel ist es, die Community zu pushen und gemeinsam mehr Reichweite zu generieren.\n\n' +
+        'Wenn du Interesse hast, kannst du dich gerne über die App eintragen. Ich wähle anschließend jede Woche einen User aus der Warteliste aus und stelle ihn am Sonntag/Montag auf @mindset.stories_ vor.\n\n' +
+        'So funktioniert\'s:\n' +
+        '1. App öffnen → Explore → News\n' +
+        '2. Bei "Mindset Stories" auf Ja oder Nein klicken\n' +
+        '3. Bei Ja: du bist auf der Warteliste, ich melde mich sobald du dran bist\n\n' +
+        'Ohne Druck — du kannst deine Antwort bis Samstag 23:59 jederzeit ändern.\n\n' +
+        'Viele Grüße';
     sendInAppDM(uid, text);
 }
 
@@ -4165,8 +4732,12 @@ app.get('/mindset-state-api', (req, res) => {
     const ms = d.mindsetStories;
     const uid = String(req.query.uid || '');
     const isAdmin = uid && (istAdminId(uid) || String(d.users[uid]?.role||'').includes('Admin'));
+    const currentWeek = getBerlinWeekKey();
+    // weeklyState ist nur "aktuell" wenn week === currentWeek. Sonst stale Daten der letzten Woche.
+    const stateIsCurrent = ms.weeklyState?.week === currentWeek;
+    const currentPickedUid = stateIsCurrent ? ms.weeklyState.pickedUid : null;
     const myStatus = uid ? (
-        ms.weeklyState.pickedUid === uid ? 'picked' :
+        currentPickedUid === uid ? 'picked' :
         ms.done[uid] ? 'done' :
         ms.waitlist[uid] ? 'yes' :
         ms.rejected[uid] ? 'no' :
@@ -4174,9 +4745,10 @@ app.get('/mindset-state-api', (req, res) => {
     ) : 'none';
     const out = {
         ok: true,
-        week: ms.weeklyState.week,
-        pickedUid: ms.weeklyState.pickedUid,
-        pickedName: ms.weeklyState.pickedUid ? (d.users[ms.weeklyState.pickedUid]?.spitzname || d.users[ms.weeklyState.pickedUid]?.name || '?') : null,
+        week: currentWeek,
+        pickedUid: currentPickedUid,
+        pickedName: currentPickedUid ? (d.users[currentPickedUid]?.spitzname || d.users[currentPickedUid]?.name || '?') : null,
+        skipped: stateIsCurrent ? !!ms.weeklyState?.skipped : false,
         locked: isMindsetLocked(),
         myStatus,
         myDoneWeek: ms.done[uid]?.week || null,
@@ -4313,6 +4885,12 @@ app.post('/mindset-admin-restore-api', (req, res) => {
     if (!callerUid || !(istAdminId(callerUid) || String(d.users[callerUid]?.role||'').includes('Admin'))) return res.json({ ok:false, error:'Kein Admin' });
     const targetUid = String(req.body.targetUid || '');
     if (!d.mindsetStories.done[targetUid]) return res.json({ ok:false, error:'User nicht in Erledigt-Liste' });
+    // Falls Restore-Target diese Woche der Pick ist: auch weeklyState zurücksetzen, sonst
+    // bleibt das pickedUid stale und UI zeigt "DIESE WOCHE" auf einen User der jetzt
+    // wieder auf der Warteliste steht.
+    if (d.mindsetStories.weeklyState?.pickedUid === targetUid) {
+        d.mindsetStories.weeklyState = { week: d.mindsetStories.weeklyState.week, pickedUid: null, pickedAt: null, locked: false };
+    }
     delete d.mindsetStories.done[targetUid];
     d.mindsetStories.waitlist[targetUid] = { joinedAt: Date.now(), lastChangedAt: Date.now() };
     speichern();
@@ -4589,12 +5167,165 @@ app.get('/add-xp', async (req, res) => {
     const uid = req.query.id;
     const amount = parseInt(req.query.amount)||0;
     if (d.users[uid] && amount > 0) {
-        xpAddMitDaily(uid, amount, d.users[uid].name);
+        // Admin-XP: add to total only, not to daily/weekly rankings
+        const u = d.users[uid];
+        let finalAmount = amount;
+        if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1) finalAmount = Math.round(amount * d.xpEvent.multiplier);
+        u.xp = (u.xp || 0) + finalAmount;
+        u.level = level(u.xp);
+        u.role = badge(u.xp);
         speichern();
-        // xpAddMitDaily sendet schon Badge-Aufstieg-DM bei Level-Up; zusätzlich kurz quittieren.
-        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${amount} XP gutgeschrieben.\n⭐ Aktuell: ${d.users[uid].xp} XP`, { parse_mode: 'Markdown' });
+        await dmUser(uid, `🎁 *Bonus-XP erhalten!*\n\nEin Admin hat dir +${finalAmount} XP gutgeschrieben.\n⭐ Aktuell: ${u.xp} XP`, { parse_mode: 'Markdown' });
     }
     res.json({ ok: true });
+});
+
+function _reasonLabel(r) {
+    if (r === 'roulette') return '🎡 Roulette';
+    if (r === 'daily-bonus') return '🎁 Daily Bonus';
+    if (r === 'gewinnspiel') return '🏆 Gewinnspiel';
+    if (r === 'admin') return '⚙️ Admin';
+    return '🎁';
+}
+
+app.post('/add-xp', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const amount = Number(req.body && req.body.amount);
+    const noRanking = req.body?.noRanking === true;
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    u.xp = (u.xp || 0) + amount;
+    if (u.xp < 0) u.xp = 0;
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    if (!noRanking) {
+        if (!d.weeklyXP) d.weeklyXP = {};
+        d.weeklyXP[uid] = Math.max(0, (d.weeklyXP[uid] || 0) + amount);
+    }
+    speichern();
+    if (amount > 0) {
+        try { await dmUser(uid, `✨ *+${amount} XP*\n\n${_reasonLabel(reason)}\n⭐ Aktuell: ${u.xp} XP`, { parse_mode:'Markdown' }); } catch(e) {}
+    }
+    res.json({ ok: true, newXp: u.xp });
+});
+
+// Bewusste Verkleinerung: amount darf positiv (= subtract) oder explizit negativ (Legacy) sein.
+app.post('/remove-xp', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const raw = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(raw)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    const amount = Math.abs(raw);
+    u.xp = Math.max(0, (u.xp||0) - amount);
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    if (!d.weeklyXP) d.weeklyXP = {};
+    d.weeklyXP[uid] = Math.max(0, (d.weeklyXP[uid] || 0) - amount);
+    speichern();
+    try { await dmUser(uid, `📉 *−${amount} XP*\n\n${_reasonLabel(reason)}\n⭐ Aktuell: ${u.xp} XP`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, newXp: u.xp });
+});
+
+app.post('/add-extra-link', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const reason = req.body?.reason || '';
+    if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!d.bonusLinks) d.bonusLinks = {};
+    d.bonusLinks[uid] = (d.bonusLinks[uid] || 0) + 1;
+    speichern();
+    try { await dmUser(uid, `🔗 *+1 Extra-Link*\n\n${_reasonLabel(reason)}\nVerfügbar: ${d.bonusLinks[uid]} Extra-Links`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true });
+});
+
+// FIX: Posting-Logik prüft superlinkCredits (line ~260), nicht superlinks.
+// Vorher: u.superlinks wurde gesetzt → Slot war nie einlösbar.
+app.post('/add-superlink', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    u.superlinkCredits = (u.superlinkCredits || 0) + 1;
+    speichern();
+    try { await dmUser(uid, `⚡ *+1 Superlink-Slot*\n\n${_reasonLabel(reason)}\nVerfügbar: ${u.superlinkCredits} Extra-Superlinks`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, superlinkCredits: u.superlinkCredits });
+});
+
+app.post('/add-diamonds', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const amount = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    u.diamonds = (u.diamonds || 0) + amount;
+    if (u.diamonds < 0) u.diamonds = 0;
+    speichern();
+    if (amount > 0) {
+        try { await dmUser(uid, `💎 *+${amount} Diamant${amount!==1?'en':''}*\n\n${_reasonLabel(reason)}\nAktuell: ${u.diamonds} 💎`, { parse_mode:'Markdown' }); } catch(e) {}
+    }
+    res.json({ ok: true, newDiamonds: u.diamonds });
+});
+
+app.post('/remove-diamonds', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const raw = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(raw)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    const amount = Math.abs(raw);
+    u.diamonds = Math.max(0, (u.diamonds||0) - amount);
+    speichern();
+    try { await dmUser(uid, `💎 *−${amount} Diamant${amount!==1?'en':''}*\n\n${_reasonLabel(reason)}\nAktuell: ${u.diamonds} 💎`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, newDiamonds: u.diamonds });
+});
+
+// User-Liste für App-Dashboard (Admin-only via App-side Check).
+// Bewusst schmal: keine Sessions, keine Email-Tokens, keine Passwort-Hashes.
+app.get('/admin-userlist-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const out = [];
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || u.parent_uid) continue;
+        out.push({
+            uid: String(uid),
+            name: u.name||'',
+            spitzname: u.spitzname||'',
+            instagram: u.instagram||'',
+            email: u.email||'',
+            pendingEmail: u.pendingEmail||'',
+            emailConfirmedAt: u.emailConfirmedAt||null,
+            xp: u.xp||0,
+            diamonds: u.diamonds||0,
+            role: u.role||'',
+            level: u.level||1,
+            joinDate: u.joinDate||0,
+            started: !!u.started,
+            inGruppe: u.inGruppe!==false,
+            likes: u.likes||0,
+            totalLikes: u.totalLikes||0,
+            links: u.links||0,
+            bio: u.bio||'',
+            nische: u.nische||'',
+            signupSource: u.signupSource||'telegram',
+            superlinkCredits: u.superlinkCredits||0,
+            bonusLinks: d.bonusLinks?.[uid]||0,
+            appLastSeen: u.appLastSeen||null,
+            isAdmin: adminIds.includes(Number(uid)) || String(u.role||'').includes('Admin'),
+        });
+    }
+    res.json({ ok:true, users: out });
 });
 
 app.get('/reset-daily-api', (req, res) => {
@@ -4602,6 +5333,23 @@ app.get('/reset-daily-api', (req, res) => {
     d.dailyXP={}; d.tracker={}; d.counter={}; d.badgeTracker={};
     speichern();
     res.json({ ok: true });
+});
+
+app.all('/admin/fix-weekly-xp', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = String(req.body?.uid || req.query?.uid || '');
+    const value = req.body?.value !== undefined ? Number(req.body.value) : (req.query?.value !== undefined ? Number(req.query.value) : null);
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    if (value === null || isNaN(value)) return res.status(400).json({ ok: false, error: 'value erforderlich (Zahl)' });
+    const oldVal = (d.weeklyXP && d.weeklyXP[uid]) || 0;
+    if (!d.weeklyXP) d.weeklyXP = {};
+    d.weeklyXP[uid] = Math.max(0, value);
+    speichern();
+    const name = d.users[uid]?.spitzname || d.users[uid]?.name || uid;
+    console.log('[FIX-WEEKLY-XP] ' + name + ' (' + uid + '): ' + oldVal + ' → ' + d.weeklyXP[uid]);
+    res.json({ ok: true, uid, name, oldWeeklyXP: oldVal, newWeeklyXP: d.weeklyXP[uid], totalXP: d.users[uid]?.xp });
 });
 
 
@@ -4775,6 +5523,28 @@ function verifyPasswordPBKDF2(password, stored) {
     } catch { return false; }
 }
 
+function authenticateEmailPassword(emailInput, passwordInput, opts = {}) {
+    const email = String(emailInput || '').toLowerCase().trim();
+    const password = String(passwordInput || '');
+    if (!email || !password) return { status: 400, body: { ok: false, error: 'Email und Passwort erforderlich' } };
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return { status: 401, body: { ok: false, error: 'Email oder Passwort falsch', notRegistered: true } };
+    const [uid, u] = found;
+    if (!u.password_hash) return { status: 401, body: { ok: false, error: 'noch kein Passwort gesetzt', noPassword: true } };
+    if (!verifyPasswordPBKDF2(password, u.password_hash)) {
+        return { status: 401, body: { ok: false, error: 'Email oder Passwort falsch' } };
+    }
+    u.appLastSeen = Date.now();
+    u.appUser = true;
+    speichernDebounced();
+    const body = { ok: true, uid: String(uid), hasPassword: true };
+    if (opts.includeRedirect) {
+        const code = ensureAppCode(String(uid), u);
+        body.redirect = '/auth/auto?code=' + encodeURIComponent(code) + '&redirect=' + encodeURIComponent('/feed');
+    }
+    return { status: 200, body };
+}
+
 // Setzt das Passwort für einen User. Bridge-Secret-geschützt.
 app.post('/set-user-password', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -4791,6 +5561,40 @@ app.post('/set-user-password', (req, res) => {
     d.users[uid].password_hash = hashPasswordPBKDF2(pw);
     speichern();
     res.json({ ok: true });
+});
+
+// Admin: reset password and generate a new one. Supports browser GET.
+app.all('/admin/reset-password', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = String(req.body?.uid || req.query?.uid || '');
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    const u = d.users[uid];
+    if (!u.email) return res.status(400).json({ ok: false, error: 'User hat keine Email' });
+    const newPw = _generatePassword();
+    u.password_hash = hashPasswordPBKDF2(newPw);
+    speichern();
+    try { bot.telegram.sendMessage(Number(uid), '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.'); } catch(e) {}
+    const name = u.spitzname || u.name || uid;
+    console.log('[RESET-PW-API] ' + name + ' (' + u.email + ') — neues Passwort generiert');
+    res.json({ ok: true, uid, name, email: u.email, newPassword: newPw });
+});
+
+// User self-service: request password reset by email. Returns new password
+// directly (no email service needed). Also sends via Telegram DM if possible.
+app.post('/api/auth/reset-password', (req, res) => {
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    if (!email) return res.status(400).json({ ok: false, error: 'Email erforderlich' });
+    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
+    if (!found) return res.status(404).json({ ok: false, error: 'Kein Account mit dieser Email gefunden' });
+    const [uid, u] = found;
+    const newPw = _generatePassword();
+    u.password_hash = hashPasswordPBKDF2(newPw);
+    speichern();
+    try { bot.telegram.sendMessage(Number(uid), '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.'); } catch(e) {}
+    console.log('[RESET-PW-SELF] ' + (u.spitzname || u.name) + ' (' + email + ') — neues Passwort generiert');
+    res.json({ ok: true, newPassword: newPw, message: 'Dein neues Passwort wurde generiert. Falls du Telegram nutzt, wurde es dir auch per DM geschickt.' });
 });
 
 // Setzt einen vom User selbst gewählten appCode. Bridge-Secret-geschützt.
@@ -4863,15 +5667,15 @@ app.post('/create-email-user-api', (req, res) => {
 // Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.
 app.post('/auth-email-password', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
-    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
-    const password = String((req.body && req.body.password) || '');
-    if (!email || !password) return res.status(400).json({ ok: false, error: 'Email und Passwort erforderlich' });
-    const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
-    if (!found) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
-    const [uid, u] = found;
-    if (!u.password_hash) return res.status(401).json({ ok: false, error: 'noch kein Passwort gesetzt', noPassword: true });
-    if (!verifyPasswordPBKDF2(password, u.password_hash)) return res.status(401).json({ ok: false, error: 'Email oder Passwort falsch' });
-    res.json({ ok: true, uid: String(uid), hasPassword: true });
+    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password);
+    res.status(result.status).json(result.body);
+});
+
+// Browser-facing alias for the app login form. The bridge endpoint above remains
+// available for server-to-server callers that still send x-bridge-secret.
+app.post('/api/auth/email-password', (req, res) => {
+    const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password, { includeRedirect: true });
+    res.status(result.status).json(result.body);
 });
 
 
@@ -5890,6 +6694,10 @@ app.get('/mission-status-api', (req, res) => {
     const gesamt = heuteLinks.length;
     const geliked = heuteLinks.filter(l => l.likes && l.likes.has(String(uid))).length;
     const prozent = gesamt > 0 ? Math.round((geliked / gesamt) * 100) : 0;
+    // Count user's own Instagram posts today (excluded from gesamt since self-like is blocked)
+    const eigenePosts = Object.values(d.links).filter(l =>
+        istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(getRootUid(l.user_id)) === String(getRootUid(uid))
+    ).length;
     res.json({
         ok: true,
         daily: {
@@ -5899,7 +6707,10 @@ app.get('/mission-status-api', (req, res) => {
             m3: mission.m3 || false,
             gesamtLinks: gesamt,
             gelikedLinks: geliked,
-            prozent
+            prozent,
+            eigenePosts,
+            totalInklEigene: gesamt + eigenePosts,
+            alleGeliked: gesamt > 0 && geliked === gesamt
         },
         weekly: {
             m1Tage: wMission.m1Tage || 0,
@@ -6167,7 +6978,7 @@ function trackFunnel(event, meta) {
         if (k < keepCutoff) delete d.funnel.daily[k];
     }
 }
-app.post('/track-funnel', (req, res) => {
+function handleTrackFunnel(req, res) {
     const event = String((req.body && req.body.event) || '').trim();
     if (!event) return res.status(400).json({ ok: false });
     const meta = (req.body && typeof req.body.meta === 'object') ? req.body.meta : {};
@@ -6181,7 +6992,9 @@ app.post('/track-funnel', (req, res) => {
     trackFunnel(event, meta);
     speichernDebounced();
     res.json({ ok: true });
-});
+}
+app.post('/track-funnel', handleTrackFunnel);
+app.post('/api/track-funnel', handleTrackFunnel);
 // Email-Login-Audit: wird vom App-Bridge auf Erfolg/Misserfolg aufgerufen
 app.post('/log-email-login', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -6467,6 +7280,44 @@ app.post('/report-nonengager-api', async (req, res) => {
         try { await bot.telegram.sendMessage(adminId, msg, { parse_mode: 'Markdown' }); } catch(e){}
     }
     res.json({ok:true});
+});
+
+// ── ADMIN API: merge + delete ───────────────────────────────────────────
+
+app.post('/admin/merge-users', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const srcInput = req.body && req.body.source_uid ? String(req.body.source_uid) : '';
+    const tgtInput = req.body && req.body.target_uid ? String(req.body.target_uid) : '';
+    if (!srcInput || !tgtInput) return res.status(400).json({ ok: false, error: 'source_uid und target_uid erforderlich' });
+    const sourceUid = _findUser(srcInput);
+    const targetUid = _findUser(tgtInput);
+    if (!sourceUid) return res.status(404).json({ ok: false, error: 'Quell-User nicht gefunden: ' + srcInput });
+    if (!targetUid) return res.status(404).json({ ok: false, error: 'Ziel-User nicht gefunden: ' + tgtInput });
+    if (sourceUid === targetUid) return res.status(400).json({ ok: false, error: 'Quell und Ziel sind der gleiche User (' + sourceUid + ')' });
+
+    const srcName = d.users[sourceUid].spitzname || d.users[sourceUid].name || sourceUid;
+    const tgtName = d.users[targetUid].spitzname || d.users[targetUid].name || targetUid;
+    const result = _mergeUserData(sourceUid, targetUid);
+    if (!result.ok) return res.status(500).json(result);
+
+    console.log('[MERGE-API] ' + sourceUid + ' → ' + targetUid + ': ' + result.log.join(', '));
+    res.json({ ok: true, source: { uid: sourceUid, name: srcName }, target: { uid: targetUid, name: tgtName }, log: result.log });
+});
+
+app.post('/admin/delete-user', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const input = req.body && req.body.uid ? String(req.body.uid) : '';
+    if (!input) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const uid = _findUser(input);
+    if (!uid) return res.status(404).json({ ok: false, error: 'User nicht gefunden: ' + input });
+    if (istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Admin-Accounts können nicht gelöscht werden' });
+
+    const userName = d.users[uid].spitzname || d.users[uid].name || uid;
+    const result = _deleteUser(uid);
+    if (!result.ok) return res.status(500).json(result);
+
+    console.log('[DELETE-API] User ' + uid + ' (' + userName + ') gelöscht');
+    res.json({ ok: true, uid, name: userName });
 });
 
 const PORT = process.env.PORT || 3000;

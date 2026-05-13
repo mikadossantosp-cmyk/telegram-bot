@@ -880,6 +880,110 @@ async function checkMissionen(uid, name) {
     speichernDebounced();
 }
 
+// Per-User-per-Tag Auswertung. Idempotent via d.missionAuswertungProUser:
+//   key = `uid_dayKey` → wird gesetzt nachdem auswertet wurde, verhindert Doppel-Reward.
+// `opts.silent=true` → keine Telegram-DMs (für Backfill: User hatte ja sowieso schon
+//   die kaputte UI gesehen, wir wollen ihn jetzt nicht mit 5 Tage alten "Auswertungen" zuspammen).
+async function auswertenForUserDay(uid, dayKey, opts) {
+    opts = opts || {};
+    if (!d.missionAuswertungProUser) d.missionAuswertungProUser = {};
+    const idemKey = uid + '_' + dayKey;
+    if (d.missionAuswertungProUser[idemKey]) return { skipped:'already-processed' };
+
+    if (istAdminId(uid)) {
+        d.missionAuswertungProUser[idemKey] = Date.now();
+        return { skipped:'admin' };
+    }
+    const u = d.users[uid];
+    if (!u || !u.started) return { skipped:'inactive' };
+    const name = u.name || '';
+    const wMission = getWochenMission(uid);
+    const queue = d.missionQueue[uid] || {};
+
+    const dayLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === dayKey);
+    const dayInstaLinks = dayLinks.filter(l => istInstagramLink(l.text) && String(getRootUid(l.user_id)) !== String(getRootUid(uid)));
+    const gesamtTag = dayInstaLinks.length;
+    const gelikedTag = dayInstaLinks.filter(l => l.likes && (l.likes instanceof Set ? l.likes.has(String(uid)) : Array.isArray(l.likes) && l.likes.includes(String(uid)))).length;
+    const prozentTag = gesamtTag > 0 ? gelikedTag / gesamtTag : 0;
+    const minLinksVorhanden = dayInstaLinks.length >= 5;
+    const storedMission = d.missionen?.[uid]?.date === dayKey ? d.missionen[uid] : null;
+    const m1Done = gelikedTag >= 5 || (queue.date === dayKey && !!queue.m1Pending) || !!storedMission?.m1;
+    const m2Done = gesamtTag > 0 && prozentTag >= 0.8;
+    const m3Done = gesamtTag > 0 && gelikedTag === gesamtTag;
+    const anyDailyMissionDone = m1Done || m2Done || m3Done;
+    if (!anyDailyMissionDone && gesamtTag === 0 && !storedMission) {
+        d.missionAuswertungProUser[idemKey] = Date.now();
+        return { skipped:'no-activity' };
+    }
+
+    let meldungen = [];
+    let xpEarned = 0;
+    let diamondsEarned = 0;
+    if (m1Done) { xpAdd(uid, 5, name); xpEarned += 5; meldungen.push('✅ *Mission 1!*\n5 Links geliked → +5 XP'); }
+    if (anyDailyMissionDone && addWeeklyMissionDay(wMission, 'm1Tage', dayKey)) {
+        if (wMission.m1Tage >= 7) { xpAdd(uid, 10, name); xpEarned += 10; meldungen.push('🏆 *Wochen-M1!* +10 XP'); wMission.m1Tage = 0; }
+    }
+    if (m2Done) {
+        xpAdd(uid, 5, name); xpEarned += 5;
+        meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentTag * 100) + '% geliked → +5 XP');
+        if (addWeeklyMissionDay(wMission, 'm2Tage', dayKey)) {
+            if (wMission.m2Tage >= 7) {
+                xpAdd(uid, 15, name); xpEarned += 15;
+                addDiamond(uid, 1); diamondsEarned += 1;
+                meldungen.push('🏆 *Wochen-M2!* +15 XP + 💎 1 Diamant');
+                wMission.m2Tage = 0;
+            }
+        }
+    }
+    if (m3Done) {
+        xpAdd(uid, 5, name); xpEarned += 5;
+        addDiamond(uid, 1); diamondsEarned += 1;
+        meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP + 💎 1 Diamant');
+        if (addWeeklyMissionDay(wMission, 'm3Tage', dayKey)) {
+            if (wMission.m3Tage >= 7) {
+                xpAdd(uid, 20, name); xpEarned += 20;
+                addDiamond(uid, 2); diamondsEarned += 2;
+                meldungen.push('🏆 *Wochen-M3!* +20 XP + 💎 2 Diamanten');
+                wMission.m3Tage = 0;
+            }
+        }
+    }
+
+    const hatTagLink = Object.values(d.links).some(l => istInstagramLink(l.text) && String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === dayKey);
+    if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
+    if (m1Done) {
+        // Streak nur bumpen wenn neuer Tag — sonst zählt Backfill mehrere Tage rückwirkend doppelt.
+        if (d.m1Streak[uid].letzterTag !== dayKey) {
+            d.m1Streak[uid].count++;
+            d.m1Streak[uid].letzterTag = dayKey;
+            if (d.m1Streak[uid].count >= 5 && d.users[uid]?.warnings > 0) {
+                d.users[uid].warnings--;
+                d.m1Streak[uid].count = 0;
+                if (!opts.silent) { try { await bot.telegram.sendMessage(Number(uid), '🎉 *Warn entfernt!*\n5 Tage M1 in Folge!\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {} }
+            }
+        }
+    } else if (!opts.skipStreakReset) { d.m1Streak[uid].count = 0; }
+
+    if (hatTagLink && !m1Done && minLinksVorhanden && d.users[uid] && !opts.silent) {
+        d.users[uid].warnings = (d.users[uid].warnings || 0) + 1;
+        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\n\nLink gepostet, aber M1 nicht erfüllt.\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
+    }
+
+    if (!opts.silent) {
+        if (meldungen.length > 0 && d.users[uid]) {
+            const u2 = d.users[uid];
+            const nb = xpBisNaechstesBadge(u2.xp);
+            try { await bot.telegram.sendMessage(Number(uid), '🎯 *Missions Auswertung*\n━━━━━━━━━━━━━━\n\n' + meldungen.join('\n\n') + '\n\n━━━━━━━━━━━━━━\n⭐ Gesamt: ' + u2.xp + ' XP' + (nb ? '  ·  ⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : ''), { parse_mode: 'Markdown' }); } catch (e) {}
+        } else if (hatTagLink && d.users[uid]?.started) {
+            try { await bot.telegram.sendMessage(Number(uid), '📊 *Missions Auswertung*\n\n❌ Keine Mission erfüllt\n\nHeute neue Chance! 💪', { parse_mode: 'Markdown' }); } catch (e) {}
+        }
+    }
+
+    if (d.missionQueue[uid] && d.missionQueue[uid].date === dayKey) delete d.missionQueue[uid];
+    d.missionAuswertungProUser[idemKey] = Date.now();
+    return { ok:true, m1Done, m2Done, m3Done, xpEarned, diamondsEarned, wMission: {...wMission} };
+}
+
 async function missionenAuswerten() {
     const heute = new Date().toDateString();
     const gesternDate = new Date(Date.now() - 86400000);
@@ -889,115 +993,66 @@ async function missionenAuswerten() {
     if (!d.missionAuswertungErledigt) d.missionAuswertungErledigt = {};
     d.missionAuswertungErledigt[jetzt12] = true;
 
-    // ── Iteriere ALLE User, nicht nur die mit aktiver Queue ──
-    // Vorher: Queue wurde beim ersten Like des neuen Tages überschrieben (date=heute),
-    // bevor die 12:00-Auswertung lief → gestrige Missionen waren komplett verloren
-    // (queue.date === heute → continue). Ergebnis: Wochen-Missionen nie gebumpt.
-    // Jetzt: gestrige Werte werden direkt aus d.links rekonstruiert.
+    // Alle started-User für gestern auswerten. Idempotenz-Flag verhindert Doppel-Auswertung
+    // falls /admin-backfill-missionen-api auch gestern abdeckte.
     const candidates = new Set([
-        ...Object.keys(d.missionQueue || {}),  // historische Einträge falls vorhanden
-        ...Object.keys(d.users || {}),         // alle aktiven User
+        ...Object.keys(d.missionQueue || {}),
+        ...Object.keys(d.users || {}),
     ]);
-
     for (const uid of candidates) {
-        // Admin: keine XP-Auswertung, aber Queue trotzdem aufräumen damit sie nicht ewig wächst
-        if (istAdminId(uid)) { delete d.missionQueue[uid]; continue; }
-        const u = d.users[uid];
-        if (!u || !u.started) continue;
-        const name = u.name || '';
-        const wMission = getWochenMission(uid);
-        const queue = d.missionQueue[uid] || {};
-        const gestern = gesternStr;
-        let meldungen = [];
-
-        const gestrigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === gestern);
-        const gestrigeInstaLinks = gestrigeLinks.filter(l => istInstagramLink(l.text) && String(getRootUid(l.user_id)) !== String(getRootUid(uid)));
-        const gesamtGestern = gestrigeInstaLinks.length;
-        const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes && (l.likes instanceof Set ? l.likes.has(String(uid)) : Array.isArray(l.likes) && l.likes.includes(String(uid)))).length;
-        const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
-        const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
-        const storedMission = d.missionen?.[uid]?.date === gestern ? d.missionen[uid] : null;
-        // M1 live: 5 Insta-Links gestern geliked. Fallback auf gespeicherte Flags (für Backward-compat).
-        const m1Done = gelikedGestern >= 5 || (queue.date === gestern && !!queue.m1Pending) || !!storedMission?.m1;
-        const m2Done = gesamtGestern > 0 && prozentGestern >= 0.8;
-        const m3Done = gesamtGestern > 0 && gelikedGestern === gesamtGestern;
-        const anyDailyMissionDone = m1Done || m2Done || m3Done;
-        // User hat gar nichts mit gestern zu tun (keine Posts, keine Likes, kein altes Queue-Entry) → skip
-        if (!anyDailyMissionDone && gesamtGestern === 0 && !storedMission && (!queue.date || queue.date === heute)) continue;
-
-        if (m1Done) {
-            xpAdd(uid, 5, name);
-            meldungen.push('✅ *Mission 1!*\n5 Links geliked → +5 XP');
-        }
-        if (anyDailyMissionDone) {
-            if (addWeeklyMissionDay(wMission, 'm1Tage', gestern)) {
-                if (wMission.m1Tage >= 7) { xpAdd(uid, 10, name); meldungen.push('🏆 *Wochen-M1!* +10 XP'); wMission.m1Tage = 0; }
-            }
-        }
-        // FIX 5: gesamtGestern > 0 statt minLinksVorhanden — M2/M3 braucht nicht 5 Links
-        if (m2Done) {
-            xpAdd(uid, 5, name);
-            meldungen.push('✅ *Mission 2!*\n' + Math.round(prozentGestern * 100) + '% geliked → +5 XP');
-            if (addWeeklyMissionDay(wMission, 'm2Tage', gestern)) {
-                if (wMission.m2Tage >= 7) {
-                    xpAdd(uid, 15, name);
-                    addDiamond(uid, 1);
-                    speichern();
-                    meldungen.push('🏆 *Wochen-M2!* +15 XP + 💎 1 Diamant');
-                    wMission.m2Tage = 0;
-                }
-            }
-        }
-        // FIX 5: gesamtGestern > 0 statt minLinksVorhanden
-        if (m3Done) {
-            xpAdd(uid, 5, name);
-            addDiamond(uid, 1);
-            meldungen.push('✅ *Mission 3!*\nAlle Links geliked → +5 XP + 💎 1 Diamant');
-            if (addWeeklyMissionDay(wMission, 'm3Tage', gestern)) {
-                if (wMission.m3Tage >= 7) {
-                    xpAdd(uid, 20, name);
-                    addDiamond(uid, 2);
-                    speichern();
-                    meldungen.push('🏆 *Wochen-M3!* +20 XP + 💎 2 Diamanten');
-                    wMission.m3Tage = 0;
-                }
-            }
-        }
-
-        const hatGesternLink = Object.values(d.links).some(l => istInstagramLink(l.text) && String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === gestern);
-
-        if (!d.m1Streak[uid]) d.m1Streak[uid] = { count: 0, letzterTag: null };
-        if (m1Done) {
-            d.m1Streak[uid].count++;
-            d.m1Streak[uid].letzterTag = gestern;
-            if (d.m1Streak[uid].count >= 5 && d.users[uid]?.warnings > 0) {
-                d.users[uid].warnings--;
-                d.m1Streak[uid].count = 0;
-                try { await bot.telegram.sendMessage(Number(uid), '🎉 *Warn entfernt!*\n5 Tage M1 in Folge!\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
-            }
-        } else { d.m1Streak[uid].count = 0; }
-
-        // Verwarnung nur an User die GESTERN selbst gepostet haben + M1 verfehlten — sonst Spam.
-        if (hatGesternLink && !m1Done && minLinksVorhanden && d.users[uid]) {
-            d.users[uid].warnings = (d.users[uid].warnings || 0) + 1;
-            try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\n\nLink gepostet, aber M1 nicht erfüllt.\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
-        }
-
-        if (meldungen.length > 0 && d.users[uid]) {
-            const u2 = d.users[uid];
-            const nb = xpBisNaechstesBadge(u2.xp);
-            try { await bot.telegram.sendMessage(Number(uid), '🎯 *Missions Auswertung*\n━━━━━━━━━━━━━━\n\n' + meldungen.join('\n\n') + '\n\n━━━━━━━━━━━━━━\n⭐ Gesamt: ' + u2.xp + ' XP' + (nb ? '  ·  ⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : ''), { parse_mode: 'Markdown' }); } catch (e) {}
-        } else if (hatGesternLink && d.users[uid]?.started) {
-            // "Keine Mission erfüllt"-DM nur an User die gestern aktiv waren (posted) — sonst Spam an Inaktive.
-            try { await bot.telegram.sendMessage(Number(uid), '📊 *Missions Auswertung*\n\n❌ Keine Mission erfüllt\n\nHeute neue Chance! 💪', { parse_mode: 'Markdown' }); } catch (e) {}
-        }
-
-        if (d.missionQueue[uid]) delete d.missionQueue[uid];
+        await auswertenForUserDay(uid, gesternStr, {});
     }
 
     d.missionAuswertungErledigt = { [jetzt12]: true };
     speichern();
 }
+
+// Berlin-Wochenstart = Montag. Liefert dayKey-Strings (`toDateString`) für die Tage
+// dieser Woche ab letztem Montag bis einschließlich gestern.
+function thisWeekBackfillDays() {
+    const now = new Date();
+    const day = now.getDay() || 7;            // 1..7 (Mo..So)
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (day - 1));
+    monday.setHours(0,0,0,0);
+    const out = [];
+    const yesterdayCutoff = new Date(now); yesterdayCutoff.setDate(now.getDate() - 1); yesterdayCutoff.setHours(23,59,59,999);
+    for (let d2 = new Date(monday); d2 <= yesterdayCutoff; d2.setDate(d2.getDate() + 1)) {
+        out.push(new Date(d2).toDateString());
+    }
+    return out;
+}
+
+// Admin-Backfill: re-rechnet alle nicht-bereits-auswertet-en Tage seit letztem Montag.
+// Silent (keine DMs, keine Warns) damit User nicht mit alten Auswertungen gespammt werden.
+// Idempotent via d.missionAuswertungProUser.
+async function backfillMissionenSinceMonday(opts) {
+    opts = Object.assign({ silent: true, skipStreakReset: true }, opts || {});
+    const days = thisWeekBackfillDays();
+    const stats = { days: days.length, users: 0, bumped: 0, xp: 0, diamonds: 0, skipped: 0 };
+    if (!days.length) return { ok:true, stats };
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || !u.started || istAdminId(uid)) continue;
+        stats.users++;
+        for (const dayKey of days) {
+            const r = await auswertenForUserDay(uid, dayKey, opts);
+            if (r && r.ok) { stats.bumped++; stats.xp += r.xpEarned||0; stats.diamonds += r.diamondsEarned||0; }
+            else if (r && r.skipped) stats.skipped++;
+        }
+    }
+    speichern();
+    return { ok:true, days, stats };
+}
+
+app.post('/admin-backfill-missionen-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    try {
+        const result = await backfillMissionenSinceMonday(req.body || {});
+        res.json(result);
+    } catch(e) {
+        res.status(500).json({ ok:false, error: e.message });
+    }
+});
 
 async function weeklyRankingDM() {
     const sorted = Object.entries(d.weeklyXP).filter(([uid]) => d.users[uid] && !istAdminId(uid)).sort((a, b) => b[1] - a[1]);

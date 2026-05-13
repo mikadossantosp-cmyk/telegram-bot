@@ -763,9 +763,19 @@ function familyUids(uid) {
     return [...set];
 }
 // DM-Send-Wrapper: Sub-Accounts haben keine Telegram-UID, sendMessage würde "chat not found" werfen.
+// dmUser route jetzt in den App-Chat (CreatorBoost-System-User), NICHT mehr via Telegram.
+// Vorher: await bot.telegram.sendMessage(...). Telegram-Abhängigkeit soll langfristig weg —
+// damit landen Reward-/Admin-/Mission-DMs alle im /nachrichten-Tab.
+// Markdown wird auf Plain-Text reduziert weil der In-App-Chat kein Markdown rendert.
 async function dmUser(uid, text, opts) {
     if (isSubAccount(uid)) return;
-    try { await bot.telegram.sendMessage(Number(uid), text, opts); } catch(e) {}
+    const plain = String(text || '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/__([^_]+)__/g, '$1')
+        .replace(/_([^_]+)_/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    sendInAppDM(uid, plain);
 }
 
 function chat(cid, obj) {

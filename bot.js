@@ -7627,7 +7627,8 @@ app.post('/collab-like-post-api', async (req, res) => {
             '• Zuerst auf Instagram öffnen → LIKEN, KOMMENTIEREN, SPEICHERN und TEILEN\n' +
             '• Dann hier in der App ✅ tippen\n' +
             '• Pro engagiertem Kollab-Post bekommst du 1 💎 Diamant\n' +
-            '• Reine Schein-Likes werden geprüft und sanktioniert\n\n' +
+            '• Im Reel muss sichtbar sein, dass beide Parteien zusammenarbeiten (z.B. Logos beider Creator, gemeinsamer Branding-Frame oder beide @-Handles)\n' +
+            '• Reine Schein-Likes und Posts ohne sichtbare Zusammenarbeit werden sanktioniert\n\n' +
             'Mehr im Explore → Regeln → 🤝 Kollabs. Viel Erfolg!');
         u.collabRulesDMSent = Date.now();
         dmSentNow = true;

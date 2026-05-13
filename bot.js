@@ -5436,6 +5436,37 @@ app.get('/admin-stats-api', (req, res) => {
             last7DaysAggregated[evt] = (last7DaysAggregated[evt]||0) + count;
         }
     }
+    // Heute Aggregat
+    const today = daily[todayStr] || {};
+    const yesterday = daily[yesterdayStr] || {};
+    // Last-7-Days Funnel-Aggregat (für Conversion-Berechnung)
+    const f7 = last7DaysAggregated;
+    const conversion = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
+    // Letzte 30 Tage neu registrierte User
+    const last30dCutoff = now - 30*24*60*60*1000;
+    const last7dCutoff = now - 7*24*60*60*1000;
+    let newUsers30d = 0, newUsers7d = 0, newUsersToday = 0;
+    const recentSignups = [];
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || u.parent_uid) continue;
+        const j = u.joinDate || 0;
+        if (j >= last30dCutoff) {
+            newUsers30d++;
+            if (j >= last7dCutoff) newUsers7d++;
+            if (new Date(j).toISOString().slice(0,10) === todayStr) newUsersToday++;
+            recentSignups.push({
+                uid: String(uid),
+                name: u.spitzname || u.name || ('User '+uid),
+                email: u.email||'',
+                instagram: u.instagram||'',
+                signupSource: u.signupSource||'telegram',
+                joinDate: j,
+                emailConfirmed: !!u.emailConfirmedAt && !u.pendingEmail,
+                hasInstagram: !!u.instagram,
+            });
+        }
+    }
+    recentSignups.sort((a,b)=>b.joinDate-a.joinDate);
     res.json({
         ok: true,
         online,
@@ -5443,9 +5474,32 @@ app.get('/admin-stats-api', (req, res) => {
         app30d,
         sources,
         banned,
-        landingToday: (daily[todayStr]?.['landing-view'])||0,
-        landingYesterday: (daily[yesterdayStr]?.['landing-view'])||0,
-        signupToday: (daily[todayStr]?.['signup'])||0 + (daily[todayStr]?.['email-signup'])||0,
+        landingToday: today['landing-view']||0,
+        landingYesterday: yesterday['landing-view']||0,
+        signupViewToday: today['signup-view']||0,
+        signupCompleteToday: today['signup-complete']||0,
+        signupToday: (today['signup-complete']||0) + (today['signup']||0) + (today['email-signup']||0),
+        loginSuccessToday: today['login-success']||0,
+        emailSubmitToday: today['email-submit']||0,
+        telegramClickToday: today['telegram-click']||0,
+        ctaClickToday: today['landing-cta-click']||0,
+        // Funnel-Conversion last 7 days
+        funnel7d: {
+            landing: f7['landing-view']||0,
+            ctaClick: f7['landing-cta-click']||0,
+            signupView: f7['signup-view']||0,
+            signupComplete: f7['signup-complete']||0,
+            loginSuccess: f7['login-success']||0,
+            telegramClick: f7['telegram-click']||0,
+            emailSubmit: f7['email-submit']||0,
+            // Conversion Rates
+            ctaPct: conversion(f7['landing-cta-click']||0, f7['landing-view']||0),
+            signupViewPct: conversion(f7['signup-view']||0, f7['landing-view']||0),
+            signupCompletePct: conversion(f7['signup-complete']||0, f7['signup-view']||0),
+            loginRetentionPct: conversion(f7['login-success']||0, f7['signup-complete']||0),
+        },
+        newUsersToday, newUsers7d, newUsers30d,
+        recentSignups: recentSignups.slice(0, 50),
         last7Days,
         last7DaysAggregated,
         totalUsers: Object.values(d.users||{}).filter(u => u && !u.parent_uid).length,

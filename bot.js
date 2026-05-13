@@ -5479,12 +5479,30 @@ app.post('/ban-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const u = d.users[uid];
-    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden (UID: '+uid+')' });
     if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) {
         return res.status(400).json({ ok:false, error:'Admins können nicht gebannt werden' });
     }
-    u.banned = true; u.bannedAt = Date.now();
-    u.inGruppe = false;
+    // Ban: User aus ALLEN Sichtbarkeits-Checks rausnehmen (Ranking, Suche, Top, Feeds).
+    u.banned = true;
+    u.bannedAt = Date.now();
+    u.inGruppe = false;     // App-Ranking-Filter
+    u.started = false;       // Missionen + alle anderen started-gates
+    // Aus aktiven Counters/Maps entfernen damit Ranking sofort sauber ist.
+    if (d.dailyXP)  delete d.dailyXP[uid];
+    if (d.weeklyXP) delete d.weeklyXP[uid];
+    if (d.bonusLinks) delete d.bonusLinks[uid];
+    if (d.missionen) delete d.missionen[uid];
+    if (d.wochenMissionen) delete d.wochenMissionen[uid];
+    // Sessions terminieren — Force-Logout falls noch eingeloggt (App holt sich nach Reload neue Session)
+    if (d.userSessions) delete d.userSessions[uid];
+    // Eventuelle Sub-Accounts mit-bannen
+    if (Array.isArray(d.users)) ; // noop guard
+    for (const [otherUid, other] of Object.entries(d.users||{})) {
+        if (other && other.parent_uid && String(other.parent_uid) === uid) {
+            other.banned = true; other.bannedAt = Date.now(); other.inGruppe = false; other.started = false;
+        }
+    }
     speichern();
     try { await dmUser(uid, `🚫 *Du wurdest gebannt*\n\nEin Admin hat dich aus der Community entfernt.`, { parse_mode:'Markdown' }); } catch(e) {}
     res.json({ ok:true });
@@ -5494,9 +5512,16 @@ app.post('/unban-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const u = d.users[uid];
-    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden (UID: '+uid+')' });
     u.banned = false; delete u.bannedAt;
-    if (u.email) u.inGruppe = true;
+    u.started = true;
+    if (u.email || true) u.inGruppe = true;
+    // Sub-Accounts mit-entbannen
+    for (const [otherUid, other] of Object.entries(d.users||{})) {
+        if (other && other.parent_uid && String(other.parent_uid) === uid) {
+            other.banned = false; delete other.bannedAt; other.inGruppe = true; other.started = true;
+        }
+    }
     speichern();
     try { await dmUser(uid, `✅ *Bann aufgehoben*\n\nDu bist wieder Teil der Community. Willkommen zurück!`, { parse_mode:'Markdown' }); } catch(e) {}
     res.json({ ok:true });
@@ -5570,14 +5595,27 @@ app.get('/admin-stats-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const now = Date.now();
     const ONLINE_THRESHOLD = 5 * 60 * 1000;
-    let online = 0, app7d = 0, app30d = 0;
+    let online = 0, activeToday = 0, app24h = 0, app7d = 0, app30d = 0;
     const sources = { telegram: 0, email: 0 };
     let banned = 0;
+    // Berlin-Tagesanfang berechnen (für "heute online")
+    const todayStartBerlin = (() => {
+        const parts = new Intl.DateTimeFormat('en-CA', { timeZone:'Europe/Berlin', year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false }).formatToParts(new Date());
+        const get = (t) => parts.find(p=>p.type===t).value;
+        // ISO-String mit Berlin-Offset (+01:00 oder +02:00 je nach DST)
+        const offsetMin = -new Date().getTimezoneOffset(); // Berlin liegt = TZ; aber wir setzen TZ schon auf Berlin
+        return new Date(get('year')+'-'+get('month')+'-'+get('day')+'T00:00:00').getTime();
+    })();
     for (const u of Object.values(d.users||{})) {
         if (!u || u.parent_uid) continue;
-        if (u.appLastSeen && (now - u.appLastSeen) <= ONLINE_THRESHOLD) online++;
-        if (u.appLastSeen && (now - u.appLastSeen) <= 7*24*60*60*1000) app7d++;
-        if (u.appLastSeen && (now - u.appLastSeen) <= 30*24*60*60*1000) app30d++;
+        if (u.appLastSeen) {
+            const age = now - u.appLastSeen;
+            if (age <= ONLINE_THRESHOLD) online++;
+            if (u.appLastSeen >= todayStartBerlin) activeToday++;
+            if (age <= 24*60*60*1000) app24h++;
+            if (age <= 7*24*60*60*1000) app7d++;
+            if (age <= 30*24*60*60*1000) app30d++;
+        }
         const src = u.signupSource || 'telegram';
         sources[src] = (sources[src]||0) + 1;
         if (u.banned) banned++;
@@ -5630,6 +5668,8 @@ app.get('/admin-stats-api', (req, res) => {
     res.json({
         ok: true,
         online,
+        activeToday,
+        app24h,
         app7d,
         app30d,
         sources,

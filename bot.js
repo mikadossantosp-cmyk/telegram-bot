@@ -840,6 +840,10 @@ function bonusLinkNutzen(uid) {
     return false;
 }
 
+// M3 cap: "alle Links liken" wird ab 30 als erfüllt gewertet — keine endlose
+// Like-Pflicht wenn viele Links posten. Bei <30 Links zählt weiterhin alles.
+const M3_CAP = 30;
+
 function getMission(uid) {
     const heute = new Date().toDateString();
     if (!d.missionen[uid] || d.missionen[uid].date !== heute) {
@@ -858,7 +862,8 @@ function updateMissionProgress(uid) {
     heuteLinks.forEach(l => { if (!l.likes) l.likes = new Set(); });
     const gesamt = heuteLinks.length;
     const geliked = heuteLinks.filter(l => l.likes.has(String(uid))).length;
-    if (gesamt > 0) { mission.m2 = geliked / gesamt >= 0.8; mission.m3 = geliked === gesamt; }
+    const m3Target = Math.min(M3_CAP, gesamt);
+    if (gesamt > 0) { mission.m2 = geliked / gesamt >= 0.8; mission.m3 = m3Target > 0 && geliked >= m3Target; }
     else { mission.m2 = false; mission.m3 = false; }
 }
 
@@ -919,7 +924,8 @@ async function auswertenForUserDay(uid, dayKey, opts) {
     const storedMission = d.missionen?.[uid]?.date === dayKey ? d.missionen[uid] : null;
     const m1Done = gelikedTag >= 5 || (queue.date === dayKey && !!queue.m1Pending) || !!storedMission?.m1;
     const m2Done = gesamtTag > 0 && prozentTag >= 0.8;
-    const m3Done = gesamtTag > 0 && gelikedTag === gesamtTag;
+    const m3Target = Math.min(M3_CAP, gesamtTag);
+    const m3Done = m3Target > 0 && gelikedTag >= m3Target;
     const anyDailyMissionDone = m1Done || m2Done || m3Done;
     if (!anyDailyMissionDone && gesamtTag === 0 && !storedMission) {
         d.missionAuswertungProUser[idemKey] = Date.now();
@@ -1254,7 +1260,8 @@ bot.command('missionen', async (ctx) => {
     let text = '🎯 *Deine Missionen*\n━━━━━━━━━━━━━━\n\n📅 *Täglich:*\n';
     text += (mission.m1 ? '✅' : '⬜') + ' M1: ' + mission.likesGegeben + '/5 Links geliked\n';
     text += (mission.m2 ? '✅' : '⬜') + ' M2: ' + gelikedGestern + '/' + gesamtGestern + ' (' + prozentGestern + '%)  — Ziel: 80%\n';
-    text += (mission.m3 ? '✅' : '⬜') + ' M3: ' + gelikedGestern + '/' + gesamtGestern + ' alle\n';
+    const m3TargetGestern = Math.min(M3_CAP, gesamtGestern);
+    text += (mission.m3 ? '✅' : '⬜') + ' M3: ' + Math.min(gelikedGestern, m3TargetGestern) + '/' + m3TargetGestern + (gesamtGestern > M3_CAP ? ' (max ' + M3_CAP + ')' : ' alle') + '\n';
     text += '\n⏰ ' + zeitBisAuswertung + '\n\n━━━━━━━━━━━━━━\n';
     text += '📆 *Wöchentlich:*\n🔹 W-M1: ' + wMission.m1Tage + '/7  ·  W-M2: ' + wMission.m2Tage + '/7  ·  W-M3: ' + wMission.m3Tage + '/7\n\n━━━━━━━━━━━━━━\n';
     text += '⭐ ' + u.xp + ' XP  ·  ' + u.role;
@@ -7229,7 +7236,8 @@ app.get('/mission-status-api', (req, res) => {
     // beim Like aktualisiert, nicht wenn später NEUE Links erscheinen. Vorher: User hatte
     // morgens 5/5 → m2/m3=true, abends sind's 7/19 → UI zeigt trotzdem ✅.
     const m2Live = gesamt > 0 && (geliked / gesamt) >= 0.8;
-    const m3Live = gesamt > 0 && geliked === gesamt;
+    const m3Target = Math.min(M3_CAP, gesamt);
+    const m3Live = m3Target > 0 && geliked >= m3Target;
     // Cached-State wird synchron mit Live-Wahrheit gehalten — sonst läuft die Abend-Auswertung
     // (storedMission.m1/m2/m3) später mit veralteten Werten.
     if (mission.m2 !== m2Live) mission.m2 = m2Live;
@@ -7247,6 +7255,8 @@ app.get('/mission-status-api', (req, res) => {
             m3: m3Live,
             gesamtLinks: gesamt,
             gelikedLinks: geliked,
+            m3Target,
+            m3Cap: M3_CAP,
             prozent,
             eigenePosts,
             totalInklEigene: gesamt + eigenePosts,

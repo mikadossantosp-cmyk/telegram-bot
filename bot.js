@@ -5801,8 +5801,16 @@ app.get('/like-from-app', async (req, res) => {
             bot.telegram.deleteMessage(Number(uid), d.dmNachrichten[dmKey][dmUidStr]).catch(()=>{});
             delete d.dmNachrichten[dmKey][dmUidStr];
         }
-        // XP vergeben
-        if (!istAdminId(uid)) xpAddMitDaily(uid, 5, u?.name||'User');
+        // XP vergeben — Likes auf gestrige Links zählen NICHT für Daily-Ranking.
+        // Auswertung der gestrigen Missionen läuft heute 12:00 → User braucht das Zeitfenster
+        // 00:00–12:00 um M2/M3 nachzuholen. Diese Likes dürfen aber HEUTIGES Daily-XP
+        // nicht aufpumpen, sonst verfälschen sie das Daily-Ranking. WeeklyXP + GesamtXP
+        // bekommt der User trotzdem.
+        const istHeutigerLinkApp = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
+        if (!istAdminId(uid)) {
+            if (istHeutigerLinkApp) xpAddMitDaily(uid, 5, u?.name||'User');
+            else                    xpAdd(uid, 5, u?.name||'User');
+        }
         // 💎 alle 100 App-Likes ein Diamant
         if (!istAdminId(uid) && u) {
             u.appLikeCount = (u.appLikeCount||0) + 1;
@@ -5814,7 +5822,6 @@ app.get('/like-from-app', async (req, res) => {
         // Mission aktualisieren
         const mission = getMission(uid);
         updateMissionProgress(uid);
-        const istHeutigerLinkApp = new Date(lnk.timestamp).toDateString() === new Date().toDateString();
         if (istHeutigerLinkApp && istInstagramLink(lnk.text)) mission.likesGegeben++;
         await checkMissionen(uid, u?.name||'User');
     }

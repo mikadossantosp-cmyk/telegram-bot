@@ -5180,11 +5180,20 @@ app.get('/add-xp', async (req, res) => {
     res.json({ ok: true });
 });
 
-app.post('/add-xp', (req, res) => {
+function _reasonLabel(r) {
+    if (r === 'roulette') return '🎡 Roulette';
+    if (r === 'daily-bonus') return '🎁 Daily Bonus';
+    if (r === 'gewinnspiel') return '🏆 Gewinnspiel';
+    if (r === 'admin') return '⚙️ Admin';
+    return '🎁';
+}
+
+app.post('/add-xp', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const amount = Number(req.body && req.body.amount);
     const noRanking = req.body?.noRanking === true;
+    const reason = req.body?.reason || '';
     const u = d.users[uid];
     if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
     if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
@@ -5197,40 +5206,126 @@ app.post('/add-xp', (req, res) => {
         d.weeklyXP[uid] = Math.max(0, (d.weeklyXP[uid] || 0) + amount);
     }
     speichern();
+    if (amount > 0) {
+        try { await dmUser(uid, `✨ *+${amount} XP*\n\n${_reasonLabel(reason)}\n⭐ Aktuell: ${u.xp} XP`, { parse_mode:'Markdown' }); } catch(e) {}
+    }
     res.json({ ok: true, newXp: u.xp });
 });
 
-app.post('/add-extra-link', (req, res) => {
+// Bewusste Verkleinerung: amount darf positiv (= subtract) oder explizit negativ (Legacy) sein.
+app.post('/remove-xp', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
+    const raw = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(raw)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    const amount = Math.abs(raw);
+    u.xp = Math.max(0, (u.xp||0) - amount);
+    u.level = level(u.xp);
+    u.role = badge(u.xp);
+    if (!d.weeklyXP) d.weeklyXP = {};
+    d.weeklyXP[uid] = Math.max(0, (d.weeklyXP[uid] || 0) - amount);
+    speichern();
+    try { await dmUser(uid, `📉 *−${amount} XP*\n\n${_reasonLabel(reason)}\n⭐ Aktuell: ${u.xp} XP`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, newXp: u.xp });
+});
+
+app.post('/add-extra-link', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const reason = req.body?.reason || '';
     if (!uid || !d.users[uid]) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
     if (!d.bonusLinks) d.bonusLinks = {};
     d.bonusLinks[uid] = (d.bonusLinks[uid] || 0) + 1;
     speichern();
+    try { await dmUser(uid, `🔗 *+1 Extra-Link*\n\n${_reasonLabel(reason)}\nVerfügbar: ${d.bonusLinks[uid]} Extra-Links`, { parse_mode:'Markdown' }); } catch(e) {}
     res.json({ ok: true });
 });
 
-app.post('/add-superlink', (req, res) => {
+// FIX: Posting-Logik prüft superlinkCredits (line ~260), nicht superlinks.
+// Vorher: u.superlinks wurde gesetzt → Slot war nie einlösbar.
+app.post('/add-superlink', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
+    const reason = req.body?.reason || '';
     const u = d.users[uid];
     if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
-    u.superlinks = (u.superlinks || 0) + 1;
+    u.superlinkCredits = (u.superlinkCredits || 0) + 1;
     speichern();
-    res.json({ ok: true });
+    try { await dmUser(uid, `⚡ *+1 Superlink-Slot*\n\n${_reasonLabel(reason)}\nVerfügbar: ${u.superlinkCredits} Extra-Superlinks`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, superlinkCredits: u.superlinkCredits });
 });
 
-app.post('/add-diamonds', (req, res) => {
+app.post('/add-diamonds', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const amount = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
     const u = d.users[uid];
     if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
     if (!Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
     u.diamonds = (u.diamonds || 0) + amount;
     if (u.diamonds < 0) u.diamonds = 0;
     speichern();
+    if (amount > 0) {
+        try { await dmUser(uid, `💎 *+${amount} Diamant${amount!==1?'en':''}*\n\n${_reasonLabel(reason)}\nAktuell: ${u.diamonds} 💎`, { parse_mode:'Markdown' }); } catch(e) {}
+    }
     res.json({ ok: true, newDiamonds: u.diamonds });
+});
+
+app.post('/remove-diamonds', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const raw = Number(req.body && req.body.amount);
+    const reason = req.body?.reason || '';
+    const u = d.users[uid];
+    if (!uid || !u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    if (!Number.isFinite(raw)) return res.status(400).json({ ok: false, error: 'amount erforderlich' });
+    const amount = Math.abs(raw);
+    u.diamonds = Math.max(0, (u.diamonds||0) - amount);
+    speichern();
+    try { await dmUser(uid, `💎 *−${amount} Diamant${amount!==1?'en':''}*\n\n${_reasonLabel(reason)}\nAktuell: ${u.diamonds} 💎`, { parse_mode:'Markdown' }); } catch(e) {}
+    res.json({ ok: true, newDiamonds: u.diamonds });
+});
+
+// User-Liste für App-Dashboard (Admin-only via App-side Check).
+// Bewusst schmal: keine Sessions, keine Email-Tokens, keine Passwort-Hashes.
+app.get('/admin-userlist-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const out = [];
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || u.parent_uid) continue;
+        out.push({
+            uid: String(uid),
+            name: u.name||'',
+            spitzname: u.spitzname||'',
+            instagram: u.instagram||'',
+            email: u.email||'',
+            pendingEmail: u.pendingEmail||'',
+            emailConfirmedAt: u.emailConfirmedAt||null,
+            xp: u.xp||0,
+            diamonds: u.diamonds||0,
+            role: u.role||'',
+            level: u.level||1,
+            joinDate: u.joinDate||0,
+            started: !!u.started,
+            inGruppe: u.inGruppe!==false,
+            likes: u.likes||0,
+            totalLikes: u.totalLikes||0,
+            links: u.links||0,
+            bio: u.bio||'',
+            nische: u.nische||'',
+            signupSource: u.signupSource||'telegram',
+            superlinkCredits: u.superlinkCredits||0,
+            bonusLinks: d.bonusLinks?.[uid]||0,
+            appLastSeen: u.appLastSeen||null,
+            isAdmin: adminIds.includes(Number(uid)) || String(u.role||'').includes('Admin'),
+        });
+    }
+    res.json({ ok:true, users: out });
 });
 
 app.get('/reset-daily-api', (req, res) => {

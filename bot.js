@@ -7461,13 +7461,11 @@ app.post('/collab-request-api', async (req, res) => {
 
     const fromName = d.users[fromUid]?.spitzname || d.users[fromUid]?.name || 'Ein User';
     addNotification(toUid, '🤝', fromName + ' möchte mit dir eine Kollaboration eingehen', fromUid);
-    try {
-        await dmUser(toUid,
-            '🤝 *Kollab-Anfrage*\n\n' + fromName + ' möchte mit dir eine Kollaboration eingehen.\n' +
-            'Wenn du akzeptierst, dürft ihr gemeinsam 1× pro Woche einen Kollab-Post veröffentlichen.\n\n' +
-            '→ App öffnen → Benachrichtigungen',
-            { parse_mode: 'Markdown' });
-    } catch(e) {}
+    sendInAppDM(toUid,
+        '🤝 Kollab-Anfrage\n\n' + fromName + ' möchte mit dir eine Kollaboration eingehen.\n' +
+        'Wenn du akzeptierst, dürft ihr gemeinsam 1× pro Woche einen Kollab-Post veröffentlichen.\n\n' +
+        '→ Öffne deine Benachrichtigungen um zu antworten.');
+    speichern();
     res.json({ ok:true, reqId });
 });
 
@@ -7496,10 +7494,8 @@ app.post('/collab-respond-api', async (req, res) => {
         const fromName = fromU.spitzname || fromU.name || 'Partner';
         const toName = toU.spitzname || toU.name || 'Partner';
         addNotification(r.fromUid, '🎉', toName + ' hat deine Kollab-Anfrage angenommen', r.toUid);
-        try {
-            await dmUser(r.fromUid, '🎉 *Kollaboration aktiv!*\n\nDu bist jetzt Kollab-Partner mit ' + toName + '.\nIhr könnt im +Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.', { parse_mode: 'Markdown' });
-            await dmUser(r.toUid, '🎉 *Kollaboration aktiv!*\n\nDu bist jetzt Kollab-Partner mit ' + fromName + '.\nIhr könnt im +Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.', { parse_mode: 'Markdown' });
-        } catch(e) {}
+        sendInAppDM(r.fromUid, '🎉 Kollaboration aktiv!\n\nDu bist jetzt Kollab-Partner mit ' + toName + '.\nIhr könnt im + Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.');
+        sendInAppDM(r.toUid, '🎉 Kollaboration aktiv!\n\nDu bist jetzt Kollab-Partner mit ' + fromName + '.\nIhr könnt im + Menü "🤝 Kollab-Link" auswählen — 1× pro Woche.');
     } else if (!accept && fromU) {
         const toName = toU?.spitzname || toU?.name || 'Der User';
         addNotification(r.fromUid, '❌', toName + ' hat deine Kollab-Anfrage abgelehnt', r.toUid);
@@ -7561,9 +7557,8 @@ app.post('/collab-create-post-api', async (req, res) => {
 
     const fromName = u.spitzname || u.name || 'Dein Partner';
     addNotification(partnerUid, '🤝', fromName + ' hat euren Kollab-Post veröffentlicht', uid);
-    try {
-        await dmUser(partnerUid, '🤝 *Kollab-Post live!*\n\n' + fromName + ' hat euren gemeinsamen Kollab-Post veröffentlicht.\nUser können ihn jetzt im Feed → 🤝 Kollabs engagieren.', { parse_mode: 'Markdown' });
-    } catch(e) {}
+    sendInAppDM(partnerUid, '🤝 Kollab-Post live!\n\n' + fromName + ' hat euren gemeinsamen Kollab-Post veröffentlicht.\nUser können ihn jetzt im Feed → 🤝 Kollabs engagieren.');
+    speichern();
     res.json({ ok:true, postId });
 });
 
@@ -7613,22 +7608,19 @@ app.post('/collab-like-post-api', async (req, res) => {
     addNotification(p.uid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
     addNotification(p.partnerUid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
 
-    // Regel-DM einmalig
+    // Regel-DM einmalig — als In-App-DM (kein Telegram)
     let dmSentNow = false;
     if (!u.collabRulesDMSent) {
-        try {
-            await dmUser(uid,
-                '🤝 *Kollab-Post engagiert*\n\n' +
-                'Du hast deinen ersten Kollab-Post engagiert! Die Regeln nochmal kurz:\n\n' +
-                '• Zuerst auf Instagram öffnen → LIKEN, KOMMENTIEREN, SPEICHERN und TEILEN\n' +
-                '• Dann hier in der App ✅ tippen\n' +
-                '• Pro engagiertem Kollab-Post bekommst du 1 💎 Diamant\n' +
-                '• Reine Schein-Likes werden geprüft und sanktioniert\n\n' +
-                'Mehr im Explore → Regeln → Kollaborations-Posts. Viel Erfolg!',
-                { parse_mode: 'Markdown' });
-            u.collabRulesDMSent = Date.now();
-            dmSentNow = true;
-        } catch(e) {}
+        sendInAppDM(uid,
+            '🤝 Kollab-Post engagiert\n\n' +
+            'Du hast deinen ersten Kollab-Post engagiert! Die Regeln nochmal kurz:\n\n' +
+            '• Zuerst auf Instagram öffnen → LIKEN, KOMMENTIEREN, SPEICHERN und TEILEN\n' +
+            '• Dann hier in der App ✅ tippen\n' +
+            '• Pro engagiertem Kollab-Post bekommst du 1 💎 Diamant\n' +
+            '• Reine Schein-Likes werden geprüft und sanktioniert\n\n' +
+            'Mehr im Explore → Regeln → 🤝 Kollabs. Viel Erfolg!');
+        u.collabRulesDMSent = Date.now();
+        dmSentNow = true;
     }
     speichern();
     res.json({ ok:true, liked:true, likeCount: p.likes.length, diamondsTotal: u.diamonds || 0, rulesDmSent: dmSentNow });

@@ -5316,6 +5316,129 @@ app.post('/remove-xp', async (req, res) => {
     res.json({ ok: true, newXp: u.xp });
 });
 
+// ══════════════════════════════════════════════════════════════════════
+//  POST-BONUS EVENTS (flat bonus per link-post während Event-Zeit)
+// ══════════════════════════════════════════════════════════════════════
+//   d.xpEvent       = { active, bonusPerPost, end, label?, type:'xp' }
+//                     LEGACY: { aktiv, multiplier, start, end } — bleibt parallel.
+//                     bonusPerPost > 0 → wird beim Link-Post addiert.
+//   d.diamondEvent  = { active, bonusPerPost, end, label? }
+//   applyPostBonus(uid) wird bei jedem App-Link-Post aufgerufen.
+function applyPostBonus(uid, userName) {
+    const out = { xp: 0, diamonds: 0, events: [] };
+    if (istAdminId(uid)) return out;
+    const now = Date.now();
+    // XP Flat-Bonus
+    if (d.xpEvent?.bonusPerPost && d.xpEvent.bonusPerPost > 0 && d.xpEvent.end && now < d.xpEvent.end) {
+        xpAdd(uid, d.xpEvent.bonusPerPost, userName);
+        out.xp = d.xpEvent.bonusPerPost;
+        out.events.push({type:'xp', amount: d.xpEvent.bonusPerPost, label: d.xpEvent.label||''});
+    } else if (d.xpEvent?.bonusPerPost && d.xpEvent.end && now >= d.xpEvent.end) {
+        // Event abgelaufen → clearen
+        d.xpEvent.bonusPerPost = 0;
+        d.xpEvent.end = null;
+    }
+    // Diamond Flat-Bonus
+    if (d.diamondEvent?.bonusPerPost && d.diamondEvent.bonusPerPost > 0 && d.diamondEvent.end && now < d.diamondEvent.end) {
+        addDiamond(uid, d.diamondEvent.bonusPerPost);
+        out.diamonds = d.diamondEvent.bonusPerPost;
+        out.events.push({type:'diamond', amount: d.diamondEvent.bonusPerPost, label: d.diamondEvent.label||''});
+    } else if (d.diamondEvent?.bonusPerPost && d.diamondEvent.end && now >= d.diamondEvent.end) {
+        d.diamondEvent.bonusPerPost = 0;
+        d.diamondEvent.end = null;
+    }
+    return out;
+}
+
+// Status der aktiven Events — wird von der App im Feed-Banner abgefragt.
+app.get('/events-status-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const now = Date.now();
+    const out = { events: [] };
+    if (d.xpEvent?.bonusPerPost > 0 && d.xpEvent.end && now < d.xpEvent.end) {
+        out.events.push({
+            type: 'xp',
+            amount: d.xpEvent.bonusPerPost,
+            label: d.xpEvent.label || ('+' + d.xpEvent.bonusPerPost + ' XP pro Post'),
+            end: d.xpEvent.end,
+            remainingMs: d.xpEvent.end - now,
+        });
+    }
+    if (d.diamondEvent?.bonusPerPost > 0 && d.diamondEvent.end && now < d.diamondEvent.end) {
+        out.events.push({
+            type: 'diamond',
+            amount: d.diamondEvent.bonusPerPost,
+            label: d.diamondEvent.label || ('+' + d.diamondEvent.bonusPerPost + ' 💎 pro Post'),
+            end: d.diamondEvent.end,
+            remainingMs: d.diamondEvent.end - now,
+        });
+    }
+    // Legacy XP-Multiplier-Event auch zurückgeben
+    if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1 && d.xpEvent.end && now < d.xpEvent.end) {
+        out.events.push({
+            type: 'xp-multiplier',
+            multiplier: d.xpEvent.multiplier,
+            label: 'XP ×' + d.xpEvent.multiplier,
+            end: d.xpEvent.end,
+            remainingMs: d.xpEvent.end - now,
+        });
+    }
+    res.json({ ok:true, ...out });
+});
+
+// Start XP Post-Bonus-Event (flat amount per post für Dauer X)
+app.post('/admin-start-xp-event-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const amount = parseInt(req.body?.amount, 10);
+    const durationMs = parseInt(req.body?.durationMs, 10);
+    const label = String(req.body?.label || '').slice(0, 60);
+    if (!Number.isFinite(amount) || amount <= 0) return res.json({ ok:false, error:'amount muss > 0 sein' });
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return res.json({ ok:false, error:'durationMs muss > 0 sein' });
+    if (durationMs > 7*24*3600*1000) return res.json({ ok:false, error:'Max 7 Tage' });
+    d.xpEvent = Object.assign({}, d.xpEvent||{}, {
+        bonusPerPost: amount,
+        end: Date.now() + durationMs,
+        label: label || ('+' + amount + ' XP pro Post'),
+        startedAt: Date.now(),
+    });
+    speichern();
+    res.json({ ok:true, event: d.xpEvent });
+});
+
+// Start Diamond Post-Bonus-Event
+app.post('/admin-start-diamond-event-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const amount = parseInt(req.body?.amount, 10);
+    const durationMs = parseInt(req.body?.durationMs, 10);
+    const label = String(req.body?.label || '').slice(0, 60);
+    if (!Number.isFinite(amount) || amount <= 0) return res.json({ ok:false, error:'amount muss > 0 sein' });
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return res.json({ ok:false, error:'durationMs muss > 0 sein' });
+    if (durationMs > 7*24*3600*1000) return res.json({ ok:false, error:'Max 7 Tage' });
+    d.diamondEvent = {
+        bonusPerPost: amount,
+        end: Date.now() + durationMs,
+        label: label || ('+' + amount + ' 💎 pro Post'),
+        startedAt: Date.now(),
+    };
+    speichern();
+    res.json({ ok:true, event: d.diamondEvent });
+});
+
+// Stop laufendes Event
+app.post('/admin-stop-event-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const type = String(req.body?.type || '');
+    if (type === 'xp') {
+        if (d.xpEvent) { d.xpEvent.bonusPerPost = 0; d.xpEvent.end = null; d.xpEvent.aktiv = false; d.xpEvent.multiplier = 1; }
+    } else if (type === 'diamond') {
+        d.diamondEvent = { bonusPerPost: 0, end: null };
+    } else {
+        return res.json({ ok:false, error:'type muss xp oder diamond sein' });
+    }
+    speichern();
+    res.json({ ok:true });
+});
+
 app.post('/add-warn', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
@@ -6386,6 +6509,20 @@ app.post('/post-link-from-app', async (req, res) => {
         // XP vergeben
         xpAddMitDaily(uid, 1, u.name||name);
         u.links = (u.links||0) + 1;
+
+        // ── EVENT-BONUS pro Post anwenden ──
+        // Wenn ein xpEvent / diamondEvent aktiv ist → flat-bonus zusätzlich gutschreiben + DM.
+        const _evtBonus = applyPostBonus(uid, u.name||name);
+        if (_evtBonus.events.length) {
+            const parts = _evtBonus.events.map(e =>
+                e.type === 'diamond' ? ('+' + e.amount + ' 💎')
+                : e.type === 'xp' ? ('+' + e.amount + ' XP')
+                : ''
+            ).filter(Boolean);
+            if (parts.length) {
+                try { sendInAppDM(uid, '🎉 Event-Bonus für deinen Post!\n\n' + parts.join(' · ') + '\n\nLäuft noch — postet weiter!'); } catch(e) {}
+            }
+        }
 
         // Mission updaten
         const mission = getMission(uid);

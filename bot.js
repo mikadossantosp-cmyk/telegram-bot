@@ -5350,6 +5350,25 @@ function applyPostBonus(uid, userName) {
     return out;
 }
 
+// Like-Bonus: gilt für JEDEN Like (auch alte Links) während Event-Zeit.
+// User-Wunsch: Diamond-Event soll für jeden Like gelten, nicht nur eigene Posts.
+function applyLikeBonus(uid, userName) {
+    const out = { xp: 0, diamonds: 0, events: [] };
+    if (istAdminId(uid)) return out;
+    const now = Date.now();
+    if (d.xpEvent?.bonusPerPost && d.xpEvent.bonusPerPost > 0 && d.xpEvent.end && now < d.xpEvent.end) {
+        xpAdd(uid, d.xpEvent.bonusPerPost, userName);
+        out.xp = d.xpEvent.bonusPerPost;
+        out.events.push({type:'xp', amount: d.xpEvent.bonusPerPost});
+    }
+    if (d.diamondEvent?.bonusPerPost && d.diamondEvent.bonusPerPost > 0 && d.diamondEvent.end && now < d.diamondEvent.end) {
+        addDiamond(uid, d.diamondEvent.bonusPerPost);
+        out.diamonds = d.diamondEvent.bonusPerPost;
+        out.events.push({type:'diamond', amount: d.diamondEvent.bonusPerPost});
+    }
+    return out;
+}
+
 // Status der aktiven Events — wird von der App im Feed-Banner abgefragt.
 app.get('/events-status-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -6218,6 +6237,22 @@ app.get('/like-from-app', async (req, res) => {
             if (u.appLikeCount % 100 === 0) {
                 addDiamond(uid, 1);
                 dmUser(uid, `💎 *${u.appLikeCount} Likes via App!*\n\nDu hast +1 Diamant verdient. Aktuell: ${u.diamonds||0} 💎`, { parse_mode: 'Markdown' });
+            }
+        }
+        // ── EVENT-BONUS pro LIKE (alle Links — auch ältere) ──
+        // Diamond-Event: jeder Like während Event-Zeit gibt dem User bonusPerPost-Diamanten.
+        // XP-Event: jeder Like gibt zusätzlich XP (flat-bonus, on top of dem normalen +5).
+        if (!istAdminId(uid) && u) {
+            const _evtBonusL = applyLikeBonus(uid, u.name||'User');
+            if (_evtBonusL.events.length) {
+                const parts = _evtBonusL.events.map(e =>
+                    e.type === 'diamond' ? ('+' + e.amount + ' 💎')
+                    : e.type === 'xp' ? ('+' + e.amount + ' XP')
+                    : ''
+                ).filter(Boolean);
+                if (parts.length) {
+                    try { sendInAppDM(uid, '🎉 Event-Bonus für deinen Like!\n\n' + parts.join(' · ') + '\n\nLäuft noch — like weiter!'); } catch(e) {}
+                }
             }
         }
         // Mission aktualisieren

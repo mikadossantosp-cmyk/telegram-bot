@@ -8060,6 +8060,182 @@ app.get('/collab-list-api', (req, res) => {
     res.json({ ok:true, partners, pendingIn, pendingOut, postedThisWeek, currentWeek: week, rulesAccepted: !!u.collabFeedRulesAcceptedAt });
 });
 
+// ════════════════════════════════════════════════════════════════
+//  DIAMANTLINKS — Premium-Posts mit Vollengagement
+// ════════════════════════════════════════════════════════════════
+//   Kosten 30 💎, 3 Tage im Feed an erster Stelle (älteste zuerst).
+//   Liker bekommen +3 💎. Posts bleiben FOREVER im Admin-Dashboard
+//   (soft-delete via deletedAt), damit Betrug kontrolliert werden kann.
+//
+//   d.diamondLinks[id] = { id, uid, url, caption, createdAt, expiresAt,
+//                          likes:[], deletedAt? }
+//   u.diamondRulesAcceptedAt — Modal bestätigt
+const DIAMOND_LINK_COST = 30;
+const DIAMOND_LINK_REWARD = 3;
+const DIAMOND_LINK_LIFETIME_MS = 3 * 24 * 3600 * 1000; // 3 Tage
+
+function _diamondEnsure() {
+    if (!d.diamondLinks) d.diamondLinks = {};
+}
+function _diamondActive(p) {
+    return p && !p.deletedAt && p.expiresAt > Date.now();
+}
+
+// Liste aktive Diamantlinks (sortiert ASC nach createdAt — älteste zuerst, wie gewünscht)
+app.get('/diamond-link-feed-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _diamondEnsure();
+    const callerUid = String(req.query.uid || '');
+    const caller = d.users[callerUid] || {};
+    const now = Date.now();
+    const posts = Object.values(d.diamondLinks)
+        .filter(_diamondActive)
+        .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
+        .map(p => {
+            const author = d.users[p.uid] || {};
+            const likes = Array.isArray(p.likes) ? p.likes.map(String) : [];
+            return {
+                id: p.id, uid: p.uid, url: p.url, caption: p.caption,
+                createdAt: p.createdAt, expiresAt: p.expiresAt,
+                remainingMs: Math.max(0, p.expiresAt - now),
+                likeCount: likes.length,
+                liked: callerUid ? likes.includes(callerUid) : false,
+                isSelf: callerUid && String(p.uid) === callerUid,
+                author: { uid: p.uid, name: author.spitzname || author.name || 'User', instagram: author.instagram || '' },
+                reward: DIAMOND_LINK_REWARD,
+            };
+        });
+    res.json({ ok:true, posts, rulesAccepted: !!caller.diamondRulesAcceptedAt, cost: DIAMOND_LINK_COST, reward: DIAMOND_LINK_REWARD });
+});
+
+// Diamantlink erstellen — 30 💎 Kosten, 3 Tage Lifetime
+app.post('/diamond-link-create-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _diamondEnsure();
+    const uid = String((req.body && req.body.uid) || '');
+    const url = String((req.body && req.body.url) || '').trim();
+    const caption = String((req.body && req.body.caption) || '').slice(0, 500);
+    const u = d.users[uid];
+    if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!/https?:\/\/(www\.)?instagram\.com\//i.test(url) || url.length > 500) {
+        return res.json({ ok:false, error:'Ungültige Instagram-URL' });
+    }
+    if ((u.diamonds||0) < DIAMOND_LINK_COST && !istAdminId(uid)) {
+        return res.json({ ok:false, error:'Du hast nur '+(u.diamonds||0)+' 💎 — du brauchst '+DIAMOND_LINK_COST+' 💎' });
+    }
+    // 30 💎 abziehen (Admin gratis)
+    const wasAdmin = istAdminId(uid);
+    if (!wasAdmin) u.diamonds = (u.diamonds||0) - DIAMOND_LINK_COST;
+    const id = 'dl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const now = Date.now();
+    d.diamondLinks[id] = {
+        id, uid, url, caption,
+        createdAt: now,
+        expiresAt: now + DIAMOND_LINK_LIFETIME_MS,
+        likes: [],
+        adminFree: wasAdmin || undefined,
+    };
+    speichern();
+    sendInAppDM(uid,
+        '💎 Diamantlink veröffentlicht!\n\n' +
+        'Dein Post ist 3 Tage im Feed an erster Stelle.\n' +
+        (wasAdmin ? '⚙️ Admin: gratis (keine Kosten)\n' : 'Kosten: −' + DIAMOND_LINK_COST + ' 💎 (Aktuell: ' + u.diamonds + ' 💎)\n') +
+        '\nJeder Liker bekommt +' + DIAMOND_LINK_REWARD + ' 💎. Der Post muss FULL ENGAGED werden ' +
+        '(Like + Kommentar + Teilen + Speichern). Schein-Engagement wird hart sanktioniert.');
+    res.json({ ok:true, id, adminFree: wasAdmin });
+});
+
+// Like + 3 💎 für den Liker + DM
+app.post('/diamond-link-like-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _diamondEnsure();
+    const uid = String((req.body && req.body.uid) || '');
+    const postId = String((req.body && req.body.postId) || '');
+    const u = d.users[uid];
+    const p = d.diamondLinks[postId];
+    if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!p) return res.json({ ok:false, error:'Post nicht gefunden' });
+    if (!_diamondActive(p)) return res.json({ ok:false, error:'Post abgelaufen oder gelöscht' });
+    if (String(p.uid) === uid) return res.json({ ok:false, error:'collaborator-self-like', message:'Kein Self-Like für eigene Diamantlinks' });
+    if (!Array.isArray(p.likes)) p.likes = [];
+    if (p.likes.includes(uid)) return res.json({ ok:true, liked:true, likeCount: p.likes.length, already:true });
+    p.likes.push(uid);
+    if (!p.engagedAt) p.engagedAt = {};
+    p.engagedAt[uid] = Date.now();
+    // +3 💎 für Liker
+    addDiamond(uid, DIAMOND_LINK_REWARD);
+    addNotification(p.uid, '💎', (u.spitzname || u.name || 'User') + ' hat deinen Diamantlink engagiert', uid);
+    // DM mit Regeln + Bestätigung
+    sendInAppDM(uid,
+        '💎 Diamantlink engagiert\n\n' +
+        'Du hast einen Diamantlink engagiert und +' + DIAMOND_LINK_REWARD + ' 💎 erhalten.\n\n' +
+        'Du bestätigst hiermit den Post:\n' +
+        '✓ geliked\n' +
+        '✓ kommentiert\n' +
+        '✓ geteilt\n' +
+        '✓ gespeichert\n\n' +
+        'Dies wird kontrolliert. Bei Schein-Engagement: XP-Abzug + Diamonds-Reset + Bann.\n\n' +
+        'Mehr im Explore → Regeln → 💎 Diamantlinks.');
+    speichern();
+    res.json({ ok:true, liked:true, likeCount: p.likes.length, diamondsTotal: u.diamonds || 0 });
+});
+
+// Modal-Akzeptanz speichern
+app.post('/diamond-link-accept-rules-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const u = d.users[uid];
+    if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
+    if (!u.diamondRulesAcceptedAt) {
+        u.diamondRulesAcceptedAt = Date.now();
+        speichern();
+    }
+    res.json({ ok:true });
+});
+
+// Admin: ALLE Diamantlinks (auch expired + deleted) für Dashboard-Übersicht
+app.get('/diamond-link-admin-list-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _diamondEnsure();
+    const now = Date.now();
+    const out = Object.values(d.diamondLinks)
+        .sort((a,b) => (b.createdAt||0) - (a.createdAt||0))
+        .map(p => {
+            const author = d.users[p.uid] || {};
+            const likes = Array.isArray(p.likes) ? p.likes : [];
+            const engagers = likes.map(lUid => {
+                const lu = d.users[lUid] || {};
+                return {
+                    uid: String(lUid),
+                    name: lu.spitzname || lu.name || ('User '+lUid),
+                    instagram: lu.instagram || '',
+                    engagedAt: p.engagedAt?.[lUid] || null,
+                };
+            });
+            return {
+                id: p.id, uid: p.uid, url: p.url, caption: p.caption,
+                createdAt: p.createdAt, expiresAt: p.expiresAt, deletedAt: p.deletedAt || null,
+                active: !p.deletedAt && p.expiresAt > now,
+                likeCount: likes.length,
+                author: { uid: p.uid, name: author.spitzname || author.name || 'User', instagram: author.instagram || '' },
+                engagers,
+            };
+        });
+    res.json({ ok:true, posts: out, cost: DIAMOND_LINK_COST, reward: DIAMOND_LINK_REWARD });
+});
+
+// Admin: Soft-Delete (Post bleibt in d.diamondLinks aber active=false)
+app.post('/diamond-link-admin-delete-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    _diamondEnsure();
+    const postId = String((req.body && req.body.postId) || '');
+    const p = d.diamondLinks[postId];
+    if (!p) return res.json({ ok:false, error:'Post nicht gefunden' });
+    p.deletedAt = Date.now();
+    speichern();
+    res.json({ ok:true });
+});
+
 // Kollab-Post erstellen
 app.post('/collab-create-post-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

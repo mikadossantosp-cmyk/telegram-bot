@@ -882,31 +882,48 @@ async function checkMissionen(uid, name) {
 
 async function missionenAuswerten() {
     const heute = new Date().toDateString();
+    const gesternDate = new Date(Date.now() - 86400000);
+    const gesternStr = gesternDate.toDateString();
     const jetzt12 = heute + '_12';
     if (d.missionAuswertungErledigt?.[jetzt12]) return;
     if (!d.missionAuswertungErledigt) d.missionAuswertungErledigt = {};
     d.missionAuswertungErledigt[jetzt12] = true;
 
-    for (const [uid, queue] of Object.entries(d.missionQueue)) {
+    // ── Iteriere ALLE User, nicht nur die mit aktiver Queue ──
+    // Vorher: Queue wurde beim ersten Like des neuen Tages überschrieben (date=heute),
+    // bevor die 12:00-Auswertung lief → gestrige Missionen waren komplett verloren
+    // (queue.date === heute → continue). Ergebnis: Wochen-Missionen nie gebumpt.
+    // Jetzt: gestrige Werte werden direkt aus d.links rekonstruiert.
+    const candidates = new Set([
+        ...Object.keys(d.missionQueue || {}),  // historische Einträge falls vorhanden
+        ...Object.keys(d.users || {}),         // alle aktiven User
+    ]);
+
+    for (const uid of candidates) {
         // Admin: keine XP-Auswertung, aber Queue trotzdem aufräumen damit sie nicht ewig wächst
         if (istAdminId(uid)) { delete d.missionQueue[uid]; continue; }
-        if (queue.date === heute) continue;
-        const name = d.users[uid]?.name || '';
+        const u = d.users[uid];
+        if (!u || !u.started) continue;
+        const name = u.name || '';
         const wMission = getWochenMission(uid);
-        const gestern = queue.date;
+        const queue = d.missionQueue[uid] || {};
+        const gestern = gesternStr;
         let meldungen = [];
 
         const gestrigeLinks = Object.values(d.links).filter(l => new Date(l.timestamp).toDateString() === gestern);
         const gestrigeInstaLinks = gestrigeLinks.filter(l => istInstagramLink(l.text) && String(getRootUid(l.user_id)) !== String(getRootUid(uid)));
         const gesamtGestern = gestrigeInstaLinks.length;
-        const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes.has(String(uid))).length;
+        const gelikedGestern = gestrigeInstaLinks.filter(l => l.likes && (l.likes instanceof Set ? l.likes.has(String(uid)) : Array.isArray(l.likes) && l.likes.includes(String(uid)))).length;
         const prozentGestern = gesamtGestern > 0 ? gelikedGestern / gesamtGestern : 0;
         const minLinksVorhanden = gestrigeInstaLinks.length >= 5;
         const storedMission = d.missionen?.[uid]?.date === gestern ? d.missionen[uid] : null;
-        const m1Done = !!queue.m1Pending || !!storedMission?.m1;
+        // M1 live: 5 Insta-Links gestern geliked. Fallback auf gespeicherte Flags (für Backward-compat).
+        const m1Done = gelikedGestern >= 5 || (queue.date === gestern && !!queue.m1Pending) || !!storedMission?.m1;
         const m2Done = gesamtGestern > 0 && prozentGestern >= 0.8;
         const m3Done = gesamtGestern > 0 && gelikedGestern === gesamtGestern;
         const anyDailyMissionDone = m1Done || m2Done || m3Done;
+        // User hat gar nichts mit gestern zu tun (keine Posts, keine Likes, kein altes Queue-Entry) → skip
+        if (!anyDailyMissionDone && gesamtGestern === 0 && !storedMission && (!queue.date || queue.date === heute)) continue;
 
         if (m1Done) {
             xpAdd(uid, 5, name);
@@ -960,20 +977,22 @@ async function missionenAuswerten() {
             }
         } else { d.m1Streak[uid].count = 0; }
 
-        if (hatGesternLink && !queue.m1Pending && minLinksVorhanden && d.users[uid]) {
+        // Verwarnung nur an User die GESTERN selbst gepostet haben + M1 verfehlten — sonst Spam.
+        if (hatGesternLink && !m1Done && minLinksVorhanden && d.users[uid]) {
             d.users[uid].warnings = (d.users[uid].warnings || 0) + 1;
             try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\n\nLink gepostet, aber M1 nicht erfüllt.\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
         }
 
         if (meldungen.length > 0 && d.users[uid]) {
-            const u = d.users[uid];
-            const nb = xpBisNaechstesBadge(u.xp);
-            try { await bot.telegram.sendMessage(Number(uid), '🎯 *Missions Auswertung*\n━━━━━━━━━━━━━━\n\n' + meldungen.join('\n\n') + '\n\n━━━━━━━━━━━━━━\n⭐ Gesamt: ' + u.xp + ' XP' + (nb ? '  ·  ⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : ''), { parse_mode: 'Markdown' }); } catch (e) {}
-        } else if (d.users[uid]?.started && !hatGesternLink) {
+            const u2 = d.users[uid];
+            const nb = xpBisNaechstesBadge(u2.xp);
+            try { await bot.telegram.sendMessage(Number(uid), '🎯 *Missions Auswertung*\n━━━━━━━━━━━━━━\n\n' + meldungen.join('\n\n') + '\n\n━━━━━━━━━━━━━━\n⭐ Gesamt: ' + u2.xp + ' XP' + (nb ? '  ·  ⬆️ Noch ' + nb.fehlend + ' bis ' + nb.ziel : ''), { parse_mode: 'Markdown' }); } catch (e) {}
+        } else if (hatGesternLink && d.users[uid]?.started) {
+            // "Keine Mission erfüllt"-DM nur an User die gestern aktiv waren (posted) — sonst Spam an Inaktive.
             try { await bot.telegram.sendMessage(Number(uid), '📊 *Missions Auswertung*\n\n❌ Keine Mission erfüllt\n\nHeute neue Chance! 💪', { parse_mode: 'Markdown' }); } catch (e) {}
         }
 
-        delete d.missionQueue[uid];
+        if (d.missionQueue[uid]) delete d.missionQueue[uid];
     }
 
     d.missionAuswertungErledigt = { [jetzt12]: true };
@@ -6694,6 +6713,15 @@ app.get('/mission-status-api', (req, res) => {
     const gesamt = heuteLinks.length;
     const geliked = heuteLinks.filter(l => l.likes && l.likes.has(String(uid))).length;
     const prozent = gesamt > 0 ? Math.round((geliked / gesamt) * 100) : 0;
+    // FIX: m2/m3 live aus aktuellen Zahlen berechnen — die gespeicherten Felder werden nur
+    // beim Like aktualisiert, nicht wenn später NEUE Links erscheinen. Vorher: User hatte
+    // morgens 5/5 → m2/m3=true, abends sind's 7/19 → UI zeigt trotzdem ✅.
+    const m2Live = gesamt > 0 && (geliked / gesamt) >= 0.8;
+    const m3Live = gesamt > 0 && geliked === gesamt;
+    // Cached-State wird synchron mit Live-Wahrheit gehalten — sonst läuft die Abend-Auswertung
+    // (storedMission.m1/m2/m3) später mit veralteten Werten.
+    if (mission.m2 !== m2Live) mission.m2 = m2Live;
+    if (mission.m3 !== m3Live) mission.m3 = m3Live;
     // Count user's own Instagram posts today (excluded from gesamt since self-like is blocked)
     const eigenePosts = Object.values(d.links).filter(l =>
         istInstagramLink(l.text) && new Date(l.timestamp).toDateString() === heute && String(getRootUid(l.user_id)) === String(getRootUid(uid))
@@ -6703,8 +6731,8 @@ app.get('/mission-status-api', (req, res) => {
         daily: {
             likesGegeben: mission.likesGegeben || 0,
             m1: mission.m1 || false,
-            m2: mission.m2 || false,
-            m3: mission.m3 || false,
+            m2: m2Live,
+            m3: m3Live,
             gesamtLinks: gesamt,
             gelikedLinks: geliked,
             prozent,

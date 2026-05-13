@@ -5406,6 +5406,43 @@ app.post('/send-dm-all-api', async (req, res) => {
 });
 
 // Dashboard-Stats: online (App-Presence ≤ 5min), today/week landing visits, signup-source breakdown, top stats.
+// Debug: rohe Funnel-Daten (welche Events wann gespeichert wurden)
+app.get('/admin-funnel-debug-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const funnel = d.funnel || { events: [], daily: {} };
+    const allEvents = funnel.events || [];
+    const last20 = allEvents.slice(-20).reverse().map(e => ({
+        event: e.event,
+        ts: e.ts,
+        date: new Date(e.ts).toISOString(),
+        meta: e.meta || {},
+    }));
+    // Welche Event-Namen kommen überhaupt vor?
+    const eventCounts = {};
+    for (const e of allEvents) eventCounts[e.event] = (eventCounts[e.event]||0) + 1;
+    res.json({
+        ok: true,
+        totalEvents: allEvents.length,
+        funnelExists: !!d.funnel,
+        eventCounts,
+        last20Events: last20,
+        dailyKeys: Object.keys(funnel.daily || {}).sort(),
+        dailyToday: funnel.daily?.[new Date().toISOString().slice(0,10)] || {},
+        dailyBerlinToday: funnel.daily?.[(()=>{const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());return p.find(x=>x.type==='year').value+'-'+p.find(x=>x.type==='month').value+'-'+p.find(x=>x.type==='day').value;})()] || {},
+        nowUtc: new Date().toISOString(),
+        nowBerlin: new Date().toLocaleString('de-DE',{timeZone:'Europe/Berlin'}),
+    });
+});
+
+// Test: fire a synthetic event so we can verify tracking pipeline works
+app.post('/admin-funnel-test-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const evt = String(req.body?.event || 'test-event');
+    trackFunnel(evt, { test: true, ts: Date.now() });
+    speichern();
+    res.json({ ok:true, event: evt, totalEvents: (d.funnel?.events||[]).length });
+});
+
 app.get('/admin-stats-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const now = Date.now();

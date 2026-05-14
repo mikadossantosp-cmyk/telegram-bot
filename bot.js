@@ -6403,6 +6403,13 @@ app.get('/like-from-app', async (req, res) => {
             if (istHeutigerLinkApp) xpAddMitDaily(uid, 5, u?.name||'User');
             else                    xpAdd(uid, 5, u?.name||'User');
         }
+        // ── FIRST-POST-BONUS für LIKER ──
+        // Wenn der Link ein gepinnter First-Post ist (innerhalb 8h-Window) → +20 XP extra
+        // für Liker als Anreiz neue Member zu supporten.
+        if (!istAdminId(uid) && u && lnk.firstPostBonus && lnk.firstPostBonusUntil && Date.now() < lnk.firstPostBonusUntil) {
+            xpAdd(uid, 20, u.name||'User');
+            try { sendInAppDM(uid, '🌟 +20 XP First-Post-Bonus!\n\nDu hast den allerersten Post eines neuen Members geliked — vielen Dank fürs Support! +20 XP extra.'); } catch(e) {}
+        }
         // 💎 alle 100 App-Likes ein Diamant
         if (!istAdminId(uid) && u) {
             u.appLikeCount = (u.appLikeCount||0) + 1;
@@ -6756,6 +6763,21 @@ app.post('/post-link-from-app', async (req, res) => {
         // XP vergeben
         xpAddMitDaily(uid, 1, u.name||name);
         u.links = (u.links||0) + 1;
+
+        // ── FIRST-POST-BONUS (allererster Post eines neuen Members) ──
+        // u.links === 1 nach Increment → das ist der allererste Post jemals.
+        // Plus: User muss frisch sein (joinDate ≤ 7 Tage) → echter Newcomer.
+        // Markiert den Link mit firstPostBonus=true + gibt Poster +20 XP Welcome-Bonus.
+        // Liker bekommen während der 8h-Pin-Window zusätzlich +20 XP pro Like.
+        const NEW_MEMBER_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+        const isFirstPostEver = Number(u.links) === 1
+            && u.joinDate && (Date.now() - u.joinDate) <= NEW_MEMBER_MAX_AGE_MS;
+        if (isFirstPostEver) {
+            linkData.firstPostBonus = true;
+            linkData.firstPostBonusUntil = Date.now() + 8*3600*1000;
+            xpAdd(uid, 20, u.name||name);
+            try { sendInAppDM(uid, '🌟 Willkommen — dein erster Post ist live!\n\n+20 XP Welcome-Bonus erhalten.\nDein Post wird 8h lang ganz oben im Heute-Feed gepinned. Liker bekommen +20 XP extra.'); } catch(e) {}
+        }
 
         // ── EVENT-BONUS pro Post anwenden ──
         // Wenn ein xpEvent / diamondEvent aktiv ist → flat-bonus zusätzlich gutschreiben + DM.

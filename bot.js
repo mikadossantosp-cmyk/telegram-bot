@@ -6484,7 +6484,9 @@ app.post('/create-subaccount-api', (req, res) => {
     if (!parent_uid || !name) return res.json({ok:false, error:'parent_uid + name erforderlich'});
     if (!d.users[parent_uid]) return res.json({ok:false, error:'Parent-User nicht gefunden'});
     if (d.users[parent_uid].parent_uid) return res.json({ok:false, error:'Sub-Account kann keinen Sub-Account erstellen'});
-    if (d.users[parent_uid].subUid && d.users[d.users[parent_uid].subUid]) {
+    // Admins haben unbegrenzte Sub-Accounts. Normale User max 1.
+    const isAdm = istAdminId(parent_uid);
+    if (!isAdm && d.users[parent_uid].subUid && d.users[d.users[parent_uid].subUid]) {
         return res.json({ok:false, error:'Du hast schon einen Sub-Account', sub_uid: String(d.users[parent_uid].subUid)});
     }
     // Sub-UID: Date.now() liegt im 13-stelligen Bereich, Telegram-UIDs sind <11-stellig → keine Kollision.
@@ -6505,9 +6507,43 @@ app.post('/create-subaccount-api', (req, res) => {
         inventory: [], activeRing: null, followers: [], following: [],
         parent_uid: parent_uid // ← markiert als Sub
     };
-    d.users[parent_uid].subUid = sub_uid;
+    // Legacy: parent.subUid = primärer Sub (für alten Code der u.subUid liest)
+    // Neu: parent.subUids = Array aller Subs (Admins können viele haben)
+    if (!Array.isArray(d.users[parent_uid].subUids)) d.users[parent_uid].subUids = [];
+    if (d.users[parent_uid].subUid && !d.users[parent_uid].subUids.includes(String(d.users[parent_uid].subUid))) {
+        d.users[parent_uid].subUids.push(String(d.users[parent_uid].subUid));
+    }
+    d.users[parent_uid].subUids.push(sub_uid);
+    d.users[parent_uid].subUid = sub_uid;  // letzter erstellter wird primary
     speichern();
-    res.json({ok:true, sub_uid});
+    res.json({ok:true, sub_uid, allSubs: d.users[parent_uid].subUids.slice()});
+});
+
+// Admin-only: linkt einen bereits existierenden User als Sub-Account eines Admin-Parents.
+// Use-Case: Admin hat einen 2. Account auf der Plattform → will ihn zu seinen Sub-Accounts
+// hinzufügen ohne dass die History/Posts des Accounts verloren gehen.
+app.post('/admin-link-as-sub-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const parent_uid = String((req.body && req.body.parent_uid) || '');
+    const target_uid = String((req.body && req.body.target_uid) || '');
+    if (!parent_uid || !target_uid) return res.json({ok:false, error:'parent_uid + target_uid erforderlich'});
+    if (!istAdminId(parent_uid)) return res.json({ok:false, error:'Nur Admins können andere User als Sub linken'});
+    const parent = d.users[parent_uid];
+    const target = d.users[target_uid];
+    if (!parent) return res.json({ok:false, error:'Parent-User nicht gefunden'});
+    if (!target) return res.json({ok:false, error:'Target-User nicht gefunden'});
+    if (target_uid === parent_uid) return res.json({ok:false, error:'Kann sich nicht selbst als Sub linken'});
+    if (target.parent_uid && String(target.parent_uid) !== parent_uid) {
+        return res.json({ok:false, error:'User ist bereits Sub eines anderen Accounts (' + target.parent_uid + ')'});
+    }
+    target.parent_uid = parent_uid;
+    if (!Array.isArray(parent.subUids)) parent.subUids = [];
+    if (parent.subUid && !parent.subUids.includes(String(parent.subUid))) parent.subUids.push(String(parent.subUid));
+    if (!parent.subUids.includes(target_uid)) parent.subUids.push(target_uid);
+    if (!parent.subUid) parent.subUid = target_uid;  // wenn vorher kein Sub → wird primary
+    speichern();
+    console.log('[ADMIN-LINK-SUB] Parent', parent_uid, '+ Sub', target_uid, '(', target.spitzname||target.name, ')');
+    res.json({ok:true, parent_uid, target_uid, allSubs: parent.subUids.slice()});
 });
 
 // Sub-Account löschen — Parent ruft das auf, Sub wird komplett aus d.users entfernt.

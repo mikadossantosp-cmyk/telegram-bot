@@ -5961,8 +5961,10 @@ app.get('/admin-userlist-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const out = [];
     const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+    // Listet ALLE User (auch Subs) damit Admin sie im Dashboard finden + linken kann.
+    // isSub-Flag damit UI Sub-Accounts visuell unterscheiden kann.
     for (const [uid, u] of Object.entries(d.users||{})) {
-        if (!u || u.parent_uid) continue;
+        if (!u) continue;
         out.push({
             uid: String(uid),
             name: u.name||'',
@@ -5989,6 +5991,9 @@ app.get('/admin-userlist-api', (req, res) => {
             warnings: u.warnings||0,
             appLastSeen: u.appLastSeen||null,
             isAdmin: adminIds.includes(Number(uid)) || String(u.role||'').includes('Admin'),
+            isSub: !!u.parent_uid,
+            parentUid: u.parent_uid ? String(u.parent_uid) : null,
+            banned: !!u.banned,
         });
     }
     res.json({ ok:true, users: out });

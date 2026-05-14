@@ -8054,26 +8054,40 @@ app.post('/admin/delete-user', (req, res) => {
 // ════════════════════════════════════════════════════════════════
 //  COLLABORATION-POSTS
 // ════════════════════════════════════════════════════════════════
-// Boost-Window: 7 Tage lang erscheint jeder Kollab-Post alle 4h
-// für 20min im normalen Heute-Feed. Liken während Boost gibt +1
-// Extra-Diamant (zusätzlich zum Standard-1-Diamant).
+// Boost-Slots zu FESTEN Berlin-Uhrzeiten: 03/07/11/15/19/23 Uhr,
+// jeweils 20 Minuten lang. Post läuft 7 Tage ab createdAt durch
+// max 42 dieser Slots. Liken während Boost gibt +1 Extra-Diamant.
 const COLLAB_BOOST_TOTAL_MS  = 7 * 24 * 3600 * 1000;
-const COLLAB_BOOST_CYCLE_MS  = 4 * 3600 * 1000;
-const COLLAB_BOOST_WINDOW_MS = 20 * 60 * 1000;
+const COLLAB_BOOST_WINDOW_MS = 20 * 60 * 1000;          // 20min Slot
+const COLLAB_BOOST_HOURS = [3, 7, 11, 15, 19, 23];      // Berlin-Stunden
+function _berlinParts(now) {
+    const p = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Berlin',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(new Date(now));
+    const get = t => parseInt(p.find(x => x.type === t).value, 10) || 0;
+    return { h: get('hour'), m: get('minute'), s: get('second') };
+}
 function collabBoostState(post, now) {
     now = now || Date.now();
     const age = now - (post?.createdAt || 0);
     if (age < 0 || age > COLLAB_BOOST_TOTAL_MS) {
         return { active: false, endsAt: null, nextStartAt: null, expired: age > COLLAB_BOOST_TOTAL_MS };
     }
-    const cyclePos = age % COLLAB_BOOST_CYCLE_MS;
-    if (cyclePos < COLLAB_BOOST_WINDOW_MS) {
-        return { active: true, endsAt: now + (COLLAB_BOOST_WINDOW_MS - cyclePos), nextStartAt: null, expired: false };
+    const { h, m, s } = _berlinParts(now);
+    const isSlotHour = COLLAB_BOOST_HOURS.includes(h);
+    if (isSlotHour && m < 20) {
+        // Aktiv: berechne ms bis zum Ende des 20-min-Slots
+        const msToEnd = ((20 - m - 1) * 60 + (60 - s)) * 1000;
+        return { active: true, endsAt: now + msToEnd, nextStartAt: null, expired: false };
     }
-    const nextStartAt = now + (COLLAB_BOOST_CYCLE_MS - cyclePos);
-    // Aber nur wenn nächster Slot noch innerhalb der 7-Tage-Lifetime liegt
-    const nextSlotAge = age + (COLLAB_BOOST_CYCLE_MS - cyclePos);
-    return { active: false, endsAt: null, nextStartAt: nextSlotAge <= COLLAB_BOOST_TOTAL_MS ? nextStartAt : null, expired: false };
+    // Nicht aktiv: finde nächste Slot-Stunde
+    let nextH = COLLAB_BOOST_HOURS.find(sh => sh > h);
+    let dayOffset = 0;
+    if (nextH === undefined) { nextH = COLLAB_BOOST_HOURS[0]; dayOffset = 24; }
+    const hoursToNext = nextH + dayOffset - h;
+    const msToNext = ((hoursToNext * 60 - m - 1) * 60 + (60 - s)) * 1000;
+    return { active: false, endsAt: null, nextStartAt: now + msToNext, expired: false };
 }
 
 //  Datenmodell:

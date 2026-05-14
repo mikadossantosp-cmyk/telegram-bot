@@ -4338,17 +4338,26 @@ async function zeitCheck() {
             if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
             d.weeklyXP = {};
             d.weeklyReset = Date.now();
-            // Wöchentliche Gratis-Superlink-Credit für jeden aktiven User.
-            // Akkumuliert wenn nicht genutzt → User können sich Slots aufsparen.
-            // Bedingungen: !admin, !banned, started, !parent_uid (Hauptaccounts only).
-            let granted = 0;
+            // Letzte-Woche-Key (Montag vor 7 Tagen)
+            const lastWeekMonday = new Date(jetzt);
+            lastWeekMonday.setDate(jetzt.getDate() - 7);
+            const lastWeekKey = lastWeekMonday.getFullYear() + '-' + String(lastWeekMonday.getMonth()+1).padStart(2,'0') + '-' + String(lastWeekMonday.getDate()).padStart(2,'0');
+            // Superlink-Credit nur für User die letzte Woche IHR Standard-Slot NICHT
+            // verbraucht haben. Wer gepostet hat bekommt nur den normalen 1/1-Reset.
+            const postedLastWeekUids = new Set(
+                Object.values(d.superlinks||{})
+                    .filter(s => s && s.week === lastWeekKey)
+                    .map(s => String(s.uid))
+            );
+            let granted = 0, skipped = 0;
             for (const [uid, u] of Object.entries(d.users||{})) {
                 if (!u || u.parent_uid || u.banned || !u.started) continue;
                 if (istAdminId(uid)) continue;
+                if (postedLastWeekUids.has(String(uid))) { skipped++; continue; }
                 u.superlinkCredits = (Number(u.superlinkCredits)||0) + 1;
                 granted++;
             }
-            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05) · ' + granted + ' Superlink-Credits gratis vergeben');
+            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05) · ' + granted + ' Credits vergeben · ' + skipped + ' User skipped (hatten letzte Woche gepostet)');
             speichern();
         });
         if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });

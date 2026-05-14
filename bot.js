@@ -5633,7 +5633,10 @@ app.get('/admin-stats-api', (req, res) => {
         return new Date(get('year')+'-'+get('month')+'-'+get('day')+'T00:00:00').getTime();
     })();
     for (const u of Object.values(d.users||{})) {
-        if (!u || u.parent_uid) continue;
+        if (!u) continue;
+        // Sub-accounts haben eigene appLastSeen (eigener Login in der App) — also
+        // zählen sie für Online/Active. Erst beim Haupt-Account-Count (newUsers
+        // u.ä. weiter unten) wird auf parent_uid gefiltert.
         if (u.appLastSeen) {
             const age = now - u.appLastSeen;
             if (age <= ONLINE_THRESHOLD) online++;
@@ -5642,9 +5645,24 @@ app.get('/admin-stats-api', (req, res) => {
             if (age <= 7*24*60*60*1000) app7d++;
             if (age <= 30*24*60*60*1000) app30d++;
         }
-        const src = u.signupSource || 'telegram';
-        sources[src] = (sources[src]||0) + 1;
-        if (u.banned) banned++;
+        if (!u.parent_uid) {
+            const src = u.signupSource || 'telegram';
+            sources[src] = (sources[src]||0) + 1;
+            if (u.banned) banned++;
+        }
+    }
+    // Activity-Aggregat heute vs gestern (XP, Likes, Links)
+    const todayStrLocal = new Date().toDateString();
+    const yesterdayStrLocal = new Date(Date.now() - 86400000).toDateString();
+    const xpTodaySum = Object.values(d.dailyXP||{}).reduce((s,v)=>s+(Number(v)||0), 0);
+    const xpYesterdaySum = Object.values(d.gesternDailyXP||{}).reduce((s,v)=>s+(Number(v)||0), 0);
+    let linksToday = 0, linksYesterday = 0, likesToday = 0, likesYesterday = 0;
+    for (const l of Object.values(d.links||{})) {
+        if (!l || !l.timestamp) continue;
+        const lDay = new Date(l.timestamp).toDateString();
+        const likeCount = l.likes ? (l.likes.size !== undefined ? l.likes.size : (Array.isArray(l.likes) ? l.likes.length : 0)) : 0;
+        if (lDay === todayStrLocal) { linksToday++; likesToday += likeCount; }
+        else if (lDay === yesterdayStrLocal) { linksYesterday++; likesYesterday += likeCount; }
     }
     const todayStr = new Date().toISOString().slice(0,10);
     const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0,10);
@@ -5728,6 +5746,13 @@ app.get('/admin-stats-api', (req, res) => {
         recentSignups: recentSignups.slice(0, 50),
         last7Days,
         last7DaysAggregated,
+        // Activity heute vs gestern
+        xpToday: xpTodaySum,
+        xpYesterday: xpYesterdaySum,
+        likesToday,
+        likesYesterday,
+        linksToday,
+        linksYesterday,
         totalUsers: Object.values(d.users||{}).filter(u => u && !u.parent_uid).length,
     });
 });

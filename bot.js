@@ -4338,7 +4338,17 @@ async function zeitCheck() {
             if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
             d.weeklyXP = {};
             d.weeklyReset = Date.now();
-            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05)');
+            // Wöchentliche Gratis-Superlink-Credit für jeden aktiven User.
+            // Akkumuliert wenn nicht genutzt → User können sich Slots aufsparen.
+            // Bedingungen: !admin, !banned, started, !parent_uid (Hauptaccounts only).
+            let granted = 0;
+            for (const [uid, u] of Object.entries(d.users||{})) {
+                if (!u || u.parent_uid || u.banned || !u.started) continue;
+                if (istAdminId(uid)) continue;
+                u.superlinkCredits = (Number(u.superlinkCredits)||0) + 1;
+                granted++;
+            }
+            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05) · ' + granted + ' Superlink-Credits gratis vergeben');
             speichern();
         });
         if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
@@ -4557,6 +4567,27 @@ function checkBridgeSecret(req, res) {
     if (secret !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
 }
+
+// ── One-time Superlink-Credit-Backfill ──
+// Vergangene Roulette-/Gewinnspiel-Wins wurden teilweise nicht korrekt
+// gutgeschrieben (postBot fire-and-forget, kein Retry). Ein-mal-Backfill
+// gibt jedem aktiven User +1 Superlink-Credit als Wiedergutmachung.
+// Idempotent via d._slCreditBackfillDone Flag.
+function runSuperlinkCreditBackfill() {
+    if (d._slCreditBackfillDone) return;
+    let granted = 0;
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || u.parent_uid || u.banned || !u.started) continue;
+        if (istAdminId(uid)) continue;
+        u.superlinkCredits = (Number(u.superlinkCredits)||0) + 1;
+        granted++;
+    }
+    d._slCreditBackfillDone = Date.now();
+    speichern();
+    console.log('🎁 Superlink-Credit-Backfill: ' + granted + ' User haben +1 Credit erhalten (Wiedergutmachung für nicht-gutgeschriebene Roulette-Wins)');
+}
+// Beim Start ausführen
+setTimeout(runSuperlinkCreditBackfill, 5000);
 
 app.get('/xp-event-status', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -5381,9 +5412,24 @@ app.get('/events-status-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const now = Date.now();
     const out = { events: [] };
-    if (d.xpEvent?.bonusPerPost > 0 && d.xpEvent.end && now < d.xpEvent.end) {
+    // XP-Event: %-Multiplikator pro Like (Standard-Modus)
+    if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1 && d.xpEvent.end && now < d.xpEvent.end) {
+        const pct = d.xpEvent.bonusPercent || Math.round((d.xpEvent.multiplier - 1) * 100);
         out.events.push({
             type: 'xp',
+            mode: 'percent',
+            bonusPercent: pct,
+            multiplier: d.xpEvent.multiplier,
+            amount: pct,
+            label: d.xpEvent.label || ('+' + pct + '% XP pro Like'),
+            end: d.xpEvent.end,
+            remainingMs: d.xpEvent.end - now,
+        });
+    } else if (d.xpEvent?.bonusPerPost > 0 && d.xpEvent.end && now < d.xpEvent.end) {
+        // Legacy: alter flat-XP-pro-Post Modus
+        out.events.push({
+            type: 'xp',
+            mode: 'flat',
             amount: d.xpEvent.bonusPerPost,
             label: d.xpEvent.label || ('+' + d.xpEvent.bonusPerPost + ' XP pro Post'),
             end: d.xpEvent.end,
@@ -5399,34 +5445,29 @@ app.get('/events-status-api', (req, res) => {
             remainingMs: d.diamondEvent.end - now,
         });
     }
-    // Legacy XP-Multiplier-Event auch zurückgeben
-    if (d.xpEvent?.aktiv && d.xpEvent.multiplier > 1 && d.xpEvent.end && now < d.xpEvent.end) {
-        out.events.push({
-            type: 'xp-multiplier',
-            multiplier: d.xpEvent.multiplier,
-            label: 'XP ×' + d.xpEvent.multiplier,
-            end: d.xpEvent.end,
-            remainingMs: d.xpEvent.end - now,
-        });
-    }
     res.json({ ok:true, ...out });
 });
 
 // Start XP Post-Bonus-Event (flat amount per post für Dauer X)
 app.post('/admin-start-xp-event-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
+    // amount = Prozent-Bonus pro Like, z.B. 100 → +100% → 2× XP
     const amount = parseInt(req.body?.amount, 10);
     const durationMs = parseInt(req.body?.durationMs, 10);
     const label = String(req.body?.label || '').slice(0, 60);
     if (!Number.isFinite(amount) || amount <= 0) return res.json({ ok:false, error:'amount muss > 0 sein' });
     if (!Number.isFinite(durationMs) || durationMs <= 0) return res.json({ ok:false, error:'durationMs muss > 0 sein' });
     if (durationMs > 7*24*3600*1000) return res.json({ ok:false, error:'Max 7 Tage' });
-    d.xpEvent = Object.assign({}, d.xpEvent||{}, {
-        bonusPerPost: amount,
+    const multiplier = 1 + (amount / 100);  // 100% → 2x, 50% → 1.5x
+    d.xpEvent = {
+        aktiv: true,
+        multiplier,
+        bonusPercent: amount,
+        bonusPerPost: 0,  // alten Flat-Modus deaktivieren
         end: Date.now() + durationMs,
-        label: label || ('+' + amount + ' XP pro Post'),
+        label: label || ('+' + amount + '% XP pro Like'),
         startedAt: Date.now(),
-    });
+    };
     speichern();
     res.json({ ok:true, event: d.xpEvent });
 });
@@ -7947,10 +7988,16 @@ app.post('/post-superlink-api', async (req, res) => {
     const isElitePlusSL = u.role === '🌟 Elite+';
     const maxSL = isElitePlusSL ? 2 : 1;
     const slThisWeekCount = Object.values(d.superlinks||{}).filter(s=>s.uid===String(uid)&&s.week===week).length;
-    if (slThisWeekCount >= maxSL) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
+    const hasSlCredit = Number(u.superlinkCredits||0) > 0;
+    // Superlink-Credits (z.B. aus Gewinnspiel/Roulette via /add-superlink) ignorieren
+    // das maxSL-Wochenlimit. Sie kosten auch keine 10💎 für Extra-Slots —
+    // werden direkt vom u.superlinkCredits-Counter abgezogen.
+    if (slThisWeekCount >= maxSL && !hasSlCredit) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
+    const usesSlCredit = slThisWeekCount >= maxSL && hasSlCredit;
     const isAdminSL = istAdminId(Number(uid));
-    // First superlink each week is free; extra slots (Elite+) cost 10 diamonds
-    const isExtraSlot = slThisWeekCount > 0;
+    // First superlink each week is free; extra slots (Elite+) cost 10 diamonds.
+    // Credits haben Vorrang vor dem Extra-Slot-Diamond-Preis.
+    const isExtraSlot = !usesSlCredit && slThisWeekCount > 0;
     if (!isAdminSL && isExtraSlot && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Extra-Superlink)'});
     if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});
     let feThreadId;
@@ -7969,6 +8016,7 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks[slId] = newSL;
         tryFetchThumbnail(newSL, 'url');
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
+        if (usesSlCredit) u.superlinkCredits = Math.max(0, Number(u.superlinkCredits||0) - 1);
         speichern();
         // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).
         // Telegram-DM bewusst weggelassen — Telegram-Bot deckt seinen Flow selbst ab.

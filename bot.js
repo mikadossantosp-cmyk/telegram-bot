@@ -6519,7 +6519,9 @@ app.post('/create-subaccount-api', (req, res) => {
         d.users[parent_uid].subUids.push(String(d.users[parent_uid].subUid));
     }
     d.users[parent_uid].subUids.push(sub_uid);
-    d.users[parent_uid].subUid = sub_uid;  // letzter erstellter wird primary
+    // Primary subUid NICHT überschreiben wenn schon einer existiert — der erste Sub
+    // bleibt primary. Neuere Subs sind über subUids[] erreichbar.
+    if (!d.users[parent_uid].subUid) d.users[parent_uid].subUid = sub_uid;
     speichern();
     res.json({ok:true, sub_uid, allSubs: d.users[parent_uid].subUids.slice()});
 });

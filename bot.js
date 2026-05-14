@@ -5661,8 +5661,17 @@ app.get('/admin-stats-api', (req, res) => {
         if (!l || !l.timestamp) continue;
         const lDay = new Date(l.timestamp).toDateString();
         const likeCount = l.likes ? (l.likes.size !== undefined ? l.likes.size : (Array.isArray(l.likes) ? l.likes.length : 0)) : 0;
-        if (lDay === todayStrLocal) { linksToday++; likesToday += likeCount; }
-        else if (lDay === yesterdayStrLocal) { linksYesterday++; likesYesterday += likeCount; }
+        if (lDay === todayStrLocal) linksToday++;
+        else if (lDay === yesterdayStrLocal) linksYesterday++;
+        // likesYesterday: Likes auf gestern-geposteten Links (Proxy für "gestern getätigte Likes",
+        // da die meisten Likes am selben Tag wie der Post passieren).
+        if (lDay === yesterdayStrLocal) likesYesterday += likeCount;
+    }
+    // likesToday: echter Heute-Event-Count = Σ mission.likesGegeben über alle User
+    // deren mission.date == heute. Das zählt jeden Like-Event heute (auch auf gestrige Links).
+    const heuteToString = new Date().toDateString();
+    for (const m of Object.values(d.missionen||{})) {
+        if (m && m.date === heuteToString) likesToday += (Number(m.likesGegeben)||0);
     }
     const todayStr = new Date().toISOString().slice(0,10);
     const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0,10);

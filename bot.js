@@ -5681,6 +5681,11 @@ app.get('/admin-stats-api', (req, res) => {
         const day = new Date(Date.now() - i*86400000).toISOString().slice(0,10);
         last7Days.push({ day, events: daily[day] || {} });
     }
+    const last30Days = [];
+    for (let i = 29; i >= 0; i--) {
+        const day = new Date(Date.now() - i*86400000).toISOString().slice(0,10);
+        last30Days.push({ day, events: daily[day] || {} });
+    }
     const last7DaysAggregated = {};
     for (const d2 of last7Days) {
         for (const [evt, count] of Object.entries(d2.events)) {
@@ -5718,6 +5723,61 @@ app.get('/admin-stats-api', (req, res) => {
         }
     }
     recentSignups.sort((a,b)=>b.joinDate-a.joinDate);
+
+    // Top Creators heute (sortiert nach heutigem XP-Gewinn)
+    const topXpToday = Object.entries(d.dailyXP||{})
+        .filter(([uid, xp]) => xp > 0 && d.users?.[uid] && !d.users[uid].banned)
+        .map(([uid, xp]) => {
+            const u = d.users[uid] || {};
+            return {
+                uid: String(uid),
+                name: u.spitzname || u.name || ('User '+uid),
+                instagram: u.instagram || '',
+                role: u.role || '',
+                xpGained: Number(xp)||0,
+                xpTotal: u.xp || 0,
+                isSub: !!u.parent_uid,
+            };
+        })
+        .sort((a,b) => b.xpGained - a.xpGained)
+        .slice(0, 10);
+
+    // Per-Source Funnel (last 7d) — Telegram vs Email
+    let tgSignups7d = 0, emSignups7d = 0;
+    for (const u of Object.values(d.users||{})) {
+        if (!u || u.parent_uid) continue;
+        if ((u.joinDate||0) < last7dCutoff) continue;
+        if (u.signupSource === 'email') emSignups7d++;
+        else tgSignups7d++;
+    }
+    // Login-Erfolge per source (rough: kein per-source-Tracking in funnel events,
+    // wir nehmen den Anteil signupSource der heute-aktiven User)
+    let tgActive7d = 0, emActive7d = 0;
+    for (const u of Object.values(d.users||{})) {
+        if (!u) continue;
+        if (!u.appLastSeen || (now - u.appLastSeen) > 7*86400000) continue;
+        if (u.signupSource === 'email') emActive7d++;
+        else tgActive7d++;
+    }
+    const sourceFunnel = {
+        telegram: { signups: tgSignups7d, active7d: tgActive7d, retentionPct: conversion(tgActive7d, tgSignups7d) },
+        email: { signups: emSignups7d, active7d: emActive7d, retentionPct: conversion(emActive7d, emSignups7d) },
+    };
+
+    // Recent Activity Feed (letzte 20 Events aus d.funnel.events)
+    const recentActivity = (d.funnel?.events || [])
+        .slice(-30)
+        .reverse()
+        .slice(0, 20)
+        .map(e => ({
+            event: e.event,
+            ts: e.ts,
+            uid: e.meta?.uid || '',
+            name: e.meta?.uid && d.users?.[e.meta.uid]
+                ? (d.users[e.meta.uid].spitzname || d.users[e.meta.uid].name || 'User')
+                : (e.meta?.email || 'anonym'),
+        }));
+
     res.json({
         ok: true,
         online,
@@ -5754,6 +5814,7 @@ app.get('/admin-stats-api', (req, res) => {
         newUsersToday, newUsers7d, newUsers30d,
         recentSignups: recentSignups.slice(0, 50),
         last7Days,
+        last30Days,
         last7DaysAggregated,
         // Activity heute vs gestern
         xpToday: xpTodaySum,
@@ -5762,6 +5823,10 @@ app.get('/admin-stats-api', (req, res) => {
         likesYesterday,
         linksToday,
         linksYesterday,
+        // Pro-Cards
+        topXpToday,
+        sourceFunnel,
+        recentActivity,
         totalUsers: Object.values(d.users||{}).filter(u => u && !u.parent_uid).length,
     });
 });

@@ -8054,6 +8054,28 @@ app.post('/admin/delete-user', (req, res) => {
 // ════════════════════════════════════════════════════════════════
 //  COLLABORATION-POSTS
 // ════════════════════════════════════════════════════════════════
+// Boost-Window: 7 Tage lang erscheint jeder Kollab-Post alle 4h
+// für 20min im normalen Heute-Feed. Liken während Boost gibt +1
+// Extra-Diamant (zusätzlich zum Standard-1-Diamant).
+const COLLAB_BOOST_TOTAL_MS  = 7 * 24 * 3600 * 1000;
+const COLLAB_BOOST_CYCLE_MS  = 4 * 3600 * 1000;
+const COLLAB_BOOST_WINDOW_MS = 20 * 60 * 1000;
+function collabBoostState(post, now) {
+    now = now || Date.now();
+    const age = now - (post?.createdAt || 0);
+    if (age < 0 || age > COLLAB_BOOST_TOTAL_MS) {
+        return { active: false, endsAt: null, nextStartAt: null, expired: age > COLLAB_BOOST_TOTAL_MS };
+    }
+    const cyclePos = age % COLLAB_BOOST_CYCLE_MS;
+    if (cyclePos < COLLAB_BOOST_WINDOW_MS) {
+        return { active: true, endsAt: now + (COLLAB_BOOST_WINDOW_MS - cyclePos), nextStartAt: null, expired: false };
+    }
+    const nextStartAt = now + (COLLAB_BOOST_CYCLE_MS - cyclePos);
+    // Aber nur wenn nächster Slot noch innerhalb der 7-Tage-Lifetime liegt
+    const nextSlotAge = age + (COLLAB_BOOST_CYCLE_MS - cyclePos);
+    return { active: false, endsAt: null, nextStartAt: nextSlotAge <= COLLAB_BOOST_TOTAL_MS ? nextStartAt : null, expired: false };
+}
+
 //  Datenmodell:
 //    u.collaborations = [{ partnerUid, since }]
 //    u.collabPostThisWeek = berlin-week-key (block double-post pro Woche)
@@ -8385,12 +8407,14 @@ app.get('/collab-feed-api', (req, res) => {
     _collabEnsure();
     const callerUid = String(req.query.uid || '');
     const week = getBerlinWeekKey();
+    const _nowB = Date.now();
     const out = Object.values(d.collabPosts || {})
         .sort((a, b) => (b.createdAt||0) - (a.createdAt||0))
         .slice(0, 100)
         .map(p => {
             const likes = Array.isArray(p.likes) ? p.likes.map(String) : [];
             const a = d.users[p.uid] || {}, b = d.users[p.partnerUid] || {};
+            const boost = collabBoostState(p, _nowB);
             return {
                 id: p.id, uid: p.uid, partnerUid: p.partnerUid, url: p.url, caption: p.caption,
                 likeCount: likes.length,
@@ -8399,9 +8423,13 @@ app.get('/collab-feed-api', (req, res) => {
                 createdAt: p.createdAt, week: p.week,
                 authorA: { uid: p.uid, name: a.spitzname || a.name || 'User', instagram: a.instagram || '' },
                 authorB: { uid: p.partnerUid, name: b.spitzname || b.name || 'User', instagram: b.instagram || '' },
+                boostActive: boost.active,
+                boostEndsAt: boost.endsAt,
+                boostNextStartAt: boost.nextStartAt,
+                boostExpired: boost.expired,
             };
         });
-    res.json({ ok:true, posts: out, currentWeek: week });
+    res.json({ ok:true, posts: out, currentWeek: week, boostWindowMs: COLLAB_BOOST_WINDOW_MS, boostCycleMs: COLLAB_BOOST_CYCLE_MS });
 });
 
 // Like + 1 Diamant
@@ -8421,9 +8449,13 @@ app.post('/collab-like-post-api', async (req, res) => {
     if (p.likes.includes(uid)) return res.json({ ok:true, liked:true, likeCount: p.likes.length, already:true });
     p.likes.push(uid);
     p.likeCount = p.likes.length;
+    // Base-Reward: +1 💎 für jeden Like. Boost-Window aktiv: zusätzlicher +1 💎 (= total 2 💎).
+    const boost = collabBoostState(p, Date.now());
+    let diamondsGiven = 1;
     addDiamond(uid, 1);
-    addNotification(p.uid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
-    addNotification(p.partnerUid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked', uid);
+    if (boost.active) { addDiamond(uid, 1); diamondsGiven = 2; }
+    addNotification(p.uid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked' + (boost.active ? ' (Boost-Slot!)' : ''), uid);
+    addNotification(p.partnerUid, '🤝❤️', (u.spitzname || u.name || 'User') + ' hat euren Kollab-Post geliked' + (boost.active ? ' (Boost-Slot!)' : ''), uid);
 
     // Regel-DM einmalig — als In-App-DM (kein Telegram)
     let dmSentNow = false;
@@ -8440,8 +8472,15 @@ app.post('/collab-like-post-api', async (req, res) => {
         u.collabRulesDMSent = Date.now();
         dmSentNow = true;
     }
+    // Boost-Bonus-DM (separate vom Regel-DM)
+    if (boost.active) {
+        sendInAppDM(uid,
+            '🤝⚡ Kollab-Boost-Slot!\n\n' +
+            'Du hast den Kollab-Post während eines Boost-Slots engagiert → +1 💎 Extra-Diamant (' + diamondsGiven + ' total).\n\n' +
+            'Kollab-Posts erscheinen 7 Tage lang alle 4h für 20 Minuten im Feed mit Boost-Bonus.');
+    }
     speichern();
-    res.json({ ok:true, liked:true, likeCount: p.likes.length, diamondsTotal: u.diamonds || 0, rulesDmSent: dmSentNow });
+    res.json({ ok:true, liked:true, likeCount: p.likes.length, diamondsTotal: u.diamonds || 0, rulesDmSent: dmSentNow, diamondsGiven, boostActive: boost.active });
 });
 
 // Feed-Regeln akzeptieren (1× pro User)

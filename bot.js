@@ -7957,15 +7957,16 @@ app.post('/post-superlink-api', async (req, res) => {
     const isElitePlusSL = u.role === '🌟 Elite+';
     const maxSL = isElitePlusSL ? 2 : 1;
     const slThisWeekCount = Object.values(d.superlinks||{}).filter(s=>s.uid===String(uid)&&s.week===week).length;
-    const bonusSLAvailable = Number(u.bonusSuperlinks||0) > 0;
-    // Bonus-Superlinks (z.B. aus Gewinnspiel) ignorieren das maxSL-Wochenlimit.
-    // Sie kosten auch keine 10 💎 — werden direkt vom u.bonusSuperlinks-Counter abgezogen.
-    if (slThisWeekCount >= maxSL && !bonusSLAvailable) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
-    const usesBonusSL = slThisWeekCount >= maxSL && bonusSLAvailable;
+    const hasSlCredit = Number(u.superlinkCredits||0) > 0;
+    // Superlink-Credits (z.B. aus Gewinnspiel/Roulette via /add-superlink) ignorieren
+    // das maxSL-Wochenlimit. Sie kosten auch keine 10💎 für Extra-Slots —
+    // werden direkt vom u.superlinkCredits-Counter abgezogen.
+    if (slThisWeekCount >= maxSL && !hasSlCredit) return res.json({ok:false, error:'Du hast diese Woche bereits ' + maxSL + ' Superlink(s) gepostet'});
+    const usesSlCredit = slThisWeekCount >= maxSL && hasSlCredit;
     const isAdminSL = istAdminId(Number(uid));
     // First superlink each week is free; extra slots (Elite+) cost 10 diamonds.
-    // Bonus-Superlinks haben Vorrang vor dem Extra-Slot-Diamond-Preis.
-    const isExtraSlot = !usesBonusSL && slThisWeekCount > 0;
+    // Credits haben Vorrang vor dem Extra-Slot-Diamond-Preis.
+    const isExtraSlot = !usesSlCredit && slThisWeekCount > 0;
     if (!isAdminSL && isExtraSlot && (u.diamonds||0) < 10) return res.json({ok:false, error:'Nicht genug Diamanten (benötigt: 💎 10 für Extra-Superlink)'});
     if (!url.includes('instagram.com')) return res.json({ok:false, error:'Nur Instagram-Links erlaubt'});
     let feThreadId;
@@ -7984,7 +7985,7 @@ app.post('/post-superlink-api', async (req, res) => {
         d.superlinks[slId] = newSL;
         tryFetchThumbnail(newSL, 'url');
         if (!isAdminSL && isExtraSlot) u.diamonds = (u.diamonds||0) - 10;
-        if (usesBonusSL) u.bonusSuperlinks = Math.max(0, Number(u.bonusSuperlinks||0) - 1);
+        if (usesSlCredit) u.superlinkCredits = Math.max(0, Number(u.superlinkCredits||0) - 1);
         speichern();
         // In-App DM von CreatorBoost an den Poster (Pflicht-Reminder + Regel-Link).
         // Telegram-DM bewusst weggelassen — Telegram-Bot deckt seinen Flow selbst ab.

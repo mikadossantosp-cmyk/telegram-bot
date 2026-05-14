@@ -4589,6 +4589,22 @@ function runSuperlinkCreditBackfill() {
 // Beim Start ausführen
 setTimeout(runSuperlinkCreditBackfill, 5000);
 
+// ── XP-Event Legacy-Cleanup ──
+// Alte XP-Events mit bonusPerPost-Modus zeigen im App-Feed-Banner noch
+// "+X XP pro Post". Beim Boot: alle aktiven Legacy-Events stoppen damit
+// User sauber im neuen %-pro-Like-Modus starten können.
+function cleanupLegacyXpEvent() {
+    if (!d.xpEvent) return;
+    const hasLegacy = d.xpEvent.bonusPerPost > 0 && (!d.xpEvent.multiplier || d.xpEvent.multiplier <= 1);
+    if (!hasLegacy) return;
+    console.log('🧹 Legacy XP-Event cleanup: bonusPerPost=' + d.xpEvent.bonusPerPost + ' → gestoppt');
+    d.xpEvent.bonusPerPost = 0;
+    d.xpEvent.aktiv = false;
+    d.xpEvent.end = null;
+    speichern();
+}
+setTimeout(cleanupLegacyXpEvent, 6000);
+
 app.get('/xp-event-status', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     res.json({ aktiv: d.xpEvent?.aktiv || false, multiplier: d.xpEvent?.multiplier || 1 });

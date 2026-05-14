@@ -4338,7 +4338,17 @@ async function zeitCheck() {
             if (archiveWeeklyXP('monday-reset')) console.log('💾 weeklyXP archiviert');
             d.weeklyXP = {};
             d.weeklyReset = Date.now();
-            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05)');
+            // Wöchentliche Gratis-Superlink-Credit für jeden aktiven User.
+            // Akkumuliert wenn nicht genutzt → User können sich Slots aufsparen.
+            // Bedingungen: !admin, !banned, started, !parent_uid (Hauptaccounts only).
+            let granted = 0;
+            for (const [uid, u] of Object.entries(d.users||{})) {
+                if (!u || u.parent_uid || u.banned || !u.started) continue;
+                if (istAdminId(uid)) continue;
+                u.superlinkCredits = (Number(u.superlinkCredits)||0) + 1;
+                granted++;
+            }
+            console.log('✅ weeklyXP + Wochenmissionen resettet (Mo 00:05) · ' + granted + ' Superlink-Credits gratis vergeben');
             speichern();
         });
         if (h === 7  && m >= 5 && m < 10)  taeglich('toplinks',     () => { Object.values(d.chats).filter(c => istGruppe(c.type)).forEach(g => topLinks(g.id)); });
@@ -4557,6 +4567,27 @@ function checkBridgeSecret(req, res) {
     if (secret !== BRIDGE_SECRET) { res.status(403).json({ error: 'Forbidden' }); return false; }
     return true;
 }
+
+// ── One-time Superlink-Credit-Backfill ──
+// Vergangene Roulette-/Gewinnspiel-Wins wurden teilweise nicht korrekt
+// gutgeschrieben (postBot fire-and-forget, kein Retry). Ein-mal-Backfill
+// gibt jedem aktiven User +1 Superlink-Credit als Wiedergutmachung.
+// Idempotent via d._slCreditBackfillDone Flag.
+function runSuperlinkCreditBackfill() {
+    if (d._slCreditBackfillDone) return;
+    let granted = 0;
+    for (const [uid, u] of Object.entries(d.users||{})) {
+        if (!u || u.parent_uid || u.banned || !u.started) continue;
+        if (istAdminId(uid)) continue;
+        u.superlinkCredits = (Number(u.superlinkCredits)||0) + 1;
+        granted++;
+    }
+    d._slCreditBackfillDone = Date.now();
+    speichern();
+    console.log('🎁 Superlink-Credit-Backfill: ' + granted + ' User haben +1 Credit erhalten (Wiedergutmachung für nicht-gutgeschriebene Roulette-Wins)');
+}
+// Beim Start ausführen
+setTimeout(runSuperlinkCreditBackfill, 5000);
 
 app.get('/xp-event-status', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;

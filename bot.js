@@ -8179,6 +8179,81 @@ app.post('/admin/merge-users', (req, res) => {
     res.json({ ok: true, source: { uid: sourceUid, name: srcName }, target: { uid: targetUid, name: tgtName }, log: result.log });
 });
 
+// User-initiated Account-Deletion (DSGVO Art. 17 + Google Play Pflicht seit 2024).
+// Löscht User + alle seine Sub-Accounts + persönliche Daten. Idempotent.
+app.post('/user-delete-self-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.body && req.body.uid ? String(req.body.uid) : '';
+    if (!uid) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    // Admins können sich nicht via Self-Deletion löschen (Sicherheitsmaßnahme)
+    if (istAdminId(Number(uid))) return res.status(403).json({ ok: false, error: 'Admin-Accounts können nicht über Self-Service gelöscht werden' });
+    // Wenn Hauptaccount → alle Subs zuerst löschen
+    const subUidsToDelete = [];
+    for (const [otherUid, otherUser] of Object.entries(d.users||{})) {
+        if (otherUser && String(otherUser.parent_uid||'') === String(uid)) subUidsToDelete.push(String(otherUid));
+    }
+    for (const sUid of subUidsToDelete) {
+        try { _deleteUser(sUid); } catch(e) { console.log('[USER-DELETE-SELF] sub-delete error:', e.message); }
+    }
+    const userName = u.spitzname || u.name || uid;
+    const result = _deleteUser(uid);
+    if (!result.ok) return res.status(500).json(result);
+    console.log('[USER-DELETE-SELF] User ' + uid + ' (' + userName + ') hat sich selbst gelöscht (+ ' + subUidsToDelete.length + ' Subs)');
+    res.json({ ok: true, uid, name: userName, deletedSubs: subUidsToDelete.length });
+});
+
+// Data-Export (DSGVO Art. 20: Datenübertragbarkeit). User bekommt JSON-Dump seiner Daten.
+app.get('/user-data-export-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = req.query.uid ? String(req.query.uid) : '';
+    if (!uid) return res.status(400).json({ ok: false, error: 'uid erforderlich' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok: false, error: 'User nicht gefunden' });
+    // Slimmed-down Export: nur User-bezogene Daten, keine internen Felder.
+    const myLinks = Object.values(d.links||{}).filter(l => String(l.user_id) === String(uid)).map(l => ({
+        text: l.text, caption: l.caption, timestamp: l.timestamp, likes: Array.isArray(l.likes) ? l.likes.length : 0,
+    }));
+    const mySuperlinks = Object.values(d.superlinks||{}).filter(s => String(s.uid) === String(uid)).map(s => ({
+        url: s.url, caption: s.caption, timestamp: s.timestamp, likes: Array.isArray(s.likes) ? s.likes.length : 0,
+    }));
+    const myDiamondLinks = Object.values(d.diamondLinks||{}).filter(p => String(p.uid) === String(uid));
+    const myCollabs = Object.values(d.collabPosts||{}).filter(p => String(p.uid) === String(uid) || String(p.partnerUid) === String(uid));
+    const myNotifications = (d.notifications && d.notifications[uid]) || [];
+    const myFollowers = u.followers || [];
+    const myFollowing = u.following || [];
+    const mySubs = [];
+    for (const [otherUid, otherUser] of Object.entries(d.users||{})) {
+        if (otherUser && String(otherUser.parent_uid||'') === String(uid)) {
+            mySubs.push({ uid: otherUid, name: otherUser.name, spitzname: otherUser.spitzname, xp: otherUser.xp, joinDate: otherUser.joinDate });
+        }
+    }
+    res.json({
+        ok: true,
+        exportedAt: new Date().toISOString(),
+        format: 'JSON · DSGVO Art. 20',
+        user: {
+            uid: String(uid),
+            name: u.name, spitzname: u.spitzname,
+            email: u.email, emailConfirmed: !!u.emailConfirmedAt,
+            instagram: u.instagram, bio: u.bio, nische: u.nische,
+            joinDate: u.joinDate, xp: u.xp, diamonds: u.diamonds, role: u.role,
+            totalLikes: u.totalLikes, links: u.links, streak: u.streak,
+            inventory: u.inventory||[], trophies: u.trophies||[],
+            signupSource: u.signupSource,
+        },
+        subaccounts: mySubs,
+        links: myLinks,
+        superlinks: mySuperlinks,
+        diamondLinks: myDiamondLinks,
+        collaborationPosts: myCollabs,
+        notifications: myNotifications,
+        followers: myFollowers,
+        following: myFollowing,
+    });
+});
+
 app.post('/admin/delete-user', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const input = req.body && req.body.uid ? String(req.body.uid) : '';

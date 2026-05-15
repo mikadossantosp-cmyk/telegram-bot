@@ -8053,6 +8053,97 @@ app.post('/report-user-api', (req, res) => {
     res.json({ok:true});
 });
 
+// Admin User-Detail (Instagram-Insights-Style): alles was wir über einen User wissen
+// in einer Response gebündelt — für das Dashboard-Detail-Modal.
+app.get('/admin-user-detail-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.query && req.query.uid) || '');
+    if (!uid) return res.status(400).json({ ok:false, error:'uid erforderlich' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+    const act = (d.appActivity && d.appActivity[uid]) || null;
+
+    // Reports
+    const reports = Array.isArray(d.reports) ? d.reports : [];
+    const reportsAgainst = reports.filter(r => String(r.targetUid) === uid).map(r => ({
+        id: r.id, reporterUid: r.reporterUid,
+        reporterName: (d.users[r.reporterUid]?.spitzname || d.users[r.reporterUid]?.name || ('User ' + r.reporterUid)),
+        reason: r.reason || '', context: r.context || '',
+        ts: r.ts, status: r.status || 'open', action: r.action || null,
+    }));
+    const reportsMade = reports.filter(r => String(r.reporterUid) === uid).map(r => ({
+        id: r.id, targetUid: r.targetUid,
+        targetName: (d.users[r.targetUid]?.spitzname || d.users[r.targetUid]?.name || ('User ' + r.targetUid)),
+        reason: r.reason || '', context: r.context || '',
+        ts: r.ts, status: r.status || 'open',
+    }));
+
+    // Engagement counts
+    let pinnedEngaged = 0, pinnedReceived = 0;
+    for (const e of (d.pinnedEngageLog || [])) {
+        if (String(e.engagerUid) === uid) pinnedEngaged++;
+        if (String(e.ownerUid) === uid) pinnedReceived++;
+    }
+    let collabEngaged = 0, collabReceived = 0;
+    for (const p of Object.values(d.collabPosts || {})) {
+        const likes = Array.isArray(p.likes) ? p.likes : [];
+        if (likes.includes(uid) || likes.includes(Number(uid))) collabEngaged++;
+        if (String(p.uid) === uid || String(p.partnerUid) === uid) collabReceived += likes.length;
+    }
+
+    // Sub-Accounts (kids) + Parent
+    const subAccounts = [];
+    for (const [oUid, oU] of Object.entries(d.users || {})) {
+        if (oU && String(oU.parent_uid) === uid) {
+            subAccounts.push({
+                uid: oUid, name: oU.spitzname || oU.name || ('Sub ' + oUid),
+                joinDate: oU.joinDate || null, xp: oU.xp || 0, banned: !!oU.banned,
+            });
+        }
+    }
+    const parent = u.parent_uid && d.users[u.parent_uid]
+        ? { uid: String(u.parent_uid), name: d.users[u.parent_uid].spitzname || d.users[u.parent_uid].name || ('User '+u.parent_uid) }
+        : null;
+
+    // Recent in-app notifications (last 20)
+    const notifications = Array.isArray(d.notifications && d.notifications[uid])
+        ? d.notifications[uid].slice(-20).reverse().map(n => ({ icon: n.icon||'', text: n.text||'', ts: n.ts||n.timestamp||null }))
+        : [];
+
+    res.json({
+        ok: true,
+        user: {
+            uid, name: u.name||'', spitzname: u.spitzname||'', email: u.email||'',
+            instagram: u.instagram||'', bio: u.bio||'', nische: u.nische||'', gender: u.gender||'',
+            role: u.role||'', xp: u.xp||0, level: u.level||1, diamonds: u.diamonds||0,
+            links: u.links||0, totalLikes: u.totalLikes||0, warnings: u.warnings||0,
+            joinDate: u.joinDate||null, started: !!u.started, inGruppe: !!u.inGruppe,
+            banned: !!u.banned, bannedAt: u.bannedAt||null,
+            emailConfirmedAt: u.emailConfirmedAt||null,
+            signupSource: u.signup_source||u.signupSource||null,
+            profileCompletionRewarded: !!u.profileCompletionRewarded,
+            isAdmin: adminIds.includes(Number(uid)),
+            appUser: !!u.appUser,
+            pinnedReel: u.pinnedReel || null,
+            superlinkCredits: u.superlinkCredits || 0,
+            extraLinks: u.extraLinks || 0,
+        },
+        activity: act ? {
+            firstSeen: act.firstSeen, lastSeen: act.lastSeen, sessions: act.sessions||0,
+            totalCalls: act.totalCalls||0, lastEndpoint: act.lastEndpoint||'',
+            topEndpoints: Object.entries(act.endpoints||{}).sort((a,b)=>b[1]-a[1]).slice(0,5),
+        } : null,
+        engagement: {
+            pinnedEngaged, pinnedReceived,
+            collabEngaged, collabReceived,
+        },
+        reportsAgainst, reportsMade,
+        subAccounts, parent,
+        notifications,
+    });
+});
+
 // Moderation-Queue: Admin bearbeitet einen Report. Aktionen:
 //   dismiss  → Report als "harmlos" markieren (status='dismissed')
 //   resolve  → Report als "erledigt" markieren (status='resolved')

@@ -751,14 +751,20 @@ function familyUids(uid) {
     const u = d.users[uid];
     const set = new Set([String(uid)]);
     if (!u) return [...set];
-    if (u.parent_uid) {
-        // Sub: Family = Sub + Parent
-        set.add(String(u.parent_uid));
-        const p = d.users[u.parent_uid];
-        if (p && p.subUid) set.add(String(p.subUid));
-    } else {
-        // Parent: Family = Parent + sein Sub
-        if (u.subUid) set.add(String(u.subUid));
+    // Bestimme Root: wenn Sub → parent_uid, wenn Hauptaccount → uid selbst
+    const rootUid = u.parent_uid ? String(u.parent_uid) : String(uid);
+    set.add(rootUid);
+    const root = d.users[rootUid];
+    if (root) {
+        // Legacy primary subUid
+        if (root.subUid) set.add(String(root.subUid));
+        // Neu: subUids[] Array (nach unlimited-subs PR)
+        if (Array.isArray(root.subUids)) root.subUids.forEach(s => set.add(String(s)));
+    }
+    // Plus Reverse-Lookup: alle Users mit parent_uid === rootUid
+    // (robust gegen orphaned Subs wo parent.subUid nicht mehr stimmt)
+    for (const [otherUid, otherUser] of Object.entries(d.users||{})) {
+        if (otherUser && String(otherUser.parent_uid||'') === rootUid) set.add(String(otherUid));
     }
     return [...set];
 }

@@ -8053,6 +8053,87 @@ app.post('/report-user-api', (req, res) => {
     res.json({ok:true});
 });
 
+// Moderation-Queue: Admin bearbeitet einen Report. Aktionen:
+//   dismiss  → Report als "harmlos" markieren (status='dismissed')
+//   resolve  → Report als "erledigt" markieren (status='resolved')
+//   warn     → Target +1 Warnung, DM, Report resolved
+//   ban      → Target gebannt, DM, Report resolved
+//   delete   → Report aus Liste entfernen
+app.post('/admin-report-action-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const reportId = String((req.body && req.body.reportId) || '');
+    const action = String((req.body && req.body.action) || '');
+    const adminUid = String((req.body && req.body.adminUid) || '');
+    if (!reportId || !action) return res.json({ ok:false, error:'reportId+action erforderlich' });
+    if (!Array.isArray(d.reports)) d.reports = [];
+    const idx = d.reports.findIndex(r => r && r.id === reportId);
+    if (idx < 0) return res.status(404).json({ ok:false, error:'Report nicht gefunden' });
+    const rep = d.reports[idx];
+
+    if (action === 'delete') {
+        d.reports.splice(idx, 1);
+        speichern();
+        return res.json({ ok:true });
+    }
+    if (action === 'dismiss') {
+        rep.status = 'dismissed';
+        rep.resolvedAt = Date.now();
+        rep.resolvedBy = adminUid;
+        speichern();
+        return res.json({ ok:true });
+    }
+    if (action === 'resolve') {
+        rep.status = 'resolved';
+        rep.resolvedAt = Date.now();
+        rep.resolvedBy = adminUid;
+        speichern();
+        return res.json({ ok:true });
+    }
+    if (action === 'warn') {
+        const u = d.users[rep.targetUid];
+        if (!u) return res.status(404).json({ ok:false, error:'Target-User nicht gefunden' });
+        u.warnings = (u.warnings || 0) + 1;
+        rep.status = 'resolved';
+        rep.resolvedAt = Date.now();
+        rep.resolvedBy = adminUid;
+        rep.action = 'warn';
+        speichern();
+        try { await dmUser(rep.targetUid, `⚠️ *Verwarnung!*\n\nEin Admin hat dich verwarnt nach einer Meldung.\n\n⚠️ Warns: ${u.warnings}/5`, { parse_mode:'Markdown' }); } catch(e) {}
+        addNotification(rep.targetUid, '⚠️', 'Du wurdest verwarnt nach einer Meldung. Warns: ' + u.warnings + '/5');
+        return res.json({ ok:true, warnings: u.warnings });
+    }
+    if (action === 'ban') {
+        const u = d.users[rep.targetUid];
+        if (!u) return res.status(404).json({ ok:false, error:'Target-User nicht gefunden' });
+        if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(rep.targetUid))) {
+            return res.status(400).json({ ok:false, error:'Admins können nicht gebannt werden' });
+        }
+        u.banned = true;
+        u.bannedAt = Date.now();
+        u.inGruppe = false;
+        u.started = false;
+        if (d.dailyXP) delete d.dailyXP[rep.targetUid];
+        if (d.weeklyXP) delete d.weeklyXP[rep.targetUid];
+        if (d.bonusLinks) delete d.bonusLinks[rep.targetUid];
+        if (d.missionen) delete d.missionen[rep.targetUid];
+        if (d.wochenMissionen) delete d.wochenMissionen[rep.targetUid];
+        if (d.userSessions) delete d.userSessions[rep.targetUid];
+        for (const [otherUid, other] of Object.entries(d.users||{})) {
+            if (other && other.parent_uid && String(other.parent_uid) === rep.targetUid) {
+                other.banned = true; other.bannedAt = Date.now(); other.inGruppe = false; other.started = false;
+            }
+        }
+        rep.status = 'resolved';
+        rep.resolvedAt = Date.now();
+        rep.resolvedBy = adminUid;
+        rep.action = 'ban';
+        speichern();
+        try { await dmUser(rep.targetUid, `🚫 *Du wurdest gebannt*\n\nEin Admin hat dich nach einer Meldung aus der Community entfernt.`, { parse_mode:'Markdown' }); } catch(e) {}
+        return res.json({ ok:true });
+    }
+    return res.json({ ok:false, error:'Unbekannte Action: ' + action });
+});
+
 // Dashboard-Datenquelle: alle Pinned-Engagements + Kollab-Likes mit Timestamps.
 // Erlaubt Admin, im App-Dashboard zu sehen wer was wann engagiert hat.
 app.get('/admin-engagement-log-api', (req, res) => {
@@ -8093,7 +8174,31 @@ app.get('/admin-engagement-log-api', (req, res) => {
         }
     }
     collabs.sort((a, b) => (b.createdAt||0) - (a.createdAt||0));
-    res.json({ ok:true, pinned: pinned.slice(0, 500), collabs: collabs.slice(0, 500), reports: (d.reports||[]).slice(-200).reverse() });
+    // Reports angereichert mit Namen + Status (für Moderation-Queue im Dashboard)
+    const reports = [];
+    for (const r of (d.reports || []).slice().reverse()) {
+        const rep = d.users[r.reporterUid] || {};
+        const tgt = d.users[r.targetUid] || {};
+        reports.push({
+            id: r.id,
+            reporterUid: r.reporterUid,
+            reporterName: rep.spitzname || rep.name || ('User ' + r.reporterUid),
+            reporterInstagram: rep.instagram || '',
+            targetUid: r.targetUid,
+            targetName: tgt.spitzname || tgt.name || ('User ' + r.targetUid),
+            targetInstagram: tgt.instagram || '',
+            targetWarnings: Number(tgt.warnings || 0),
+            targetBanned: !!tgt.banned,
+            reason: r.reason || '',
+            context: r.context || '',
+            ts: r.ts,
+            status: r.status || 'open',
+            resolvedAt: r.resolvedAt || null,
+            resolvedBy: r.resolvedBy || null,
+            action: r.action || null,
+        });
+    }
+    res.json({ ok:true, pinned: pinned.slice(0, 500), collabs: collabs.slice(0, 500), reports });
 });
 
 app.post('/add-newsletter-api', (req, res) => {

@@ -34,6 +34,10 @@ const FEATURE_FLAGS = {
     // Age-Gate: erzwingt Altersbestätigung (16+) bei Signup. OFF = Backward-Compat
     // für bestehende Signup-Flows die noch nicht aktualisiert sind.
     ageGate: process.env.FEATURE_AGE_GATE === '1',
+    // Email-Confirmation: bei Signup wird Token generiert, User ist bis Klick
+    // auf Confirm-Link 'pending'. OFF = Auto-Confirm wie bisher (für bestehende
+    // Signup-Flows die kein Email-Verschicken erwarten).
+    emailConfirmation: process.env.FEATURE_EMAIL_CONFIRMATION === '1',
 };
 console.log('[FEATURE_FLAGS]', FEATURE_FLAGS);
 
@@ -6341,11 +6345,21 @@ app.post('/create-email-user-api', (req, res) => {
     let attempts = 0;
     while (d.users[uid] && attempts++ < 50) uid = String(Date.now()) + Math.floor(Math.random() * 1000);
     if (d.users[uid]) return res.status(500).json({ ok: false, error: 'UID-Kollision' });
+    // Email-Confirmation: wenn Flag an, generiere Token + lasse User unbestätigt.
+    // App-Bot bekommt Token zurück und schickt Confirmation-Email.
+    let emailConfirmToken = null;
+    if (FEATURE_FLAGS.emailConfirmation) {
+        emailConfirmToken = require('crypto').randomBytes(24).toString('hex');
+    }
     d.users[uid] = {
         name: email.split('@')[0].slice(0, 30),
         username: null, instagram: null, bio: null, nische: null, spitzname: null,
         email: email,
-        emailConfirmedAt: Date.now(),
+        // Bei Flag ON: User ist 'pending' bis Klick auf Confirm-Link.
+        // Bei Flag OFF: Auto-Confirm wie bisher (Backward-Compat).
+        emailConfirmedAt: FEATURE_FLAGS.emailConfirmation ? null : Date.now(),
+        emailConfirmToken: emailConfirmToken,
+        emailConfirmTokenExp: emailConfirmToken ? (Date.now() + 7 * 24 * 60 * 60 * 1000) : null, // 7 Tage
         trophies: [], xp: 0, level: 1, warnings: 0, started: true, links: 0, likes: 0,
         role: '🆕 New', lastDaily: null, totalLikes: 0, chats: [], joinDate: Date.now(),
         inGruppe: true, diamonds: 0, projects: [], profileCompletionRewarded: false,
@@ -6354,8 +6368,6 @@ app.post('/create-email-user-api', (req, res) => {
         appLastSeen: Date.now(),
         signupSource: 'email',
         // Audit-Trail für DSGVO Art. 8 + Play-Store-Compliance.
-        // Wird IMMER gespeichert wenn vom Client übergeben — auch wenn Flag aus.
-        // So haben wir die Daten ab Tag 1, auch wenn Server-Enforcement später kommt.
         ageConfirmedAt: ageConfirmedAt || null,
         termsAcceptedAt: termsAcceptedAt || null,
         termsVersion: termsVersion || null,
@@ -6365,8 +6377,52 @@ app.post('/create-email-user-api', (req, res) => {
         d.users[uid].password_hash = hashPasswordPBKDF2(password);
     }
     speichern();
-    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)', ageConfirmedAt ? '(age-confirmed)' : '');
-    res.json({ ok: true, uid, existed: false });
+    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)', ageConfirmedAt ? '(age-confirmed)' : '', emailConfirmToken ? '(needs-confirm)' : '(auto-confirmed)');
+    // Token an App-Bot zurückgeben damit Bestätigungs-Email versandt werden kann.
+    res.json({ ok: true, uid, existed: false, emailConfirmToken });
+});
+
+// ── EMAIL-CONFIRMATION ENDPOINTS ──────────────────────────────────────
+// Aktivierung via FEATURE_EMAIL_CONFIRMATION=1 in Railway env-vars.
+
+// Token einlösen → emailConfirmedAt setzen, Token entfernen
+app.post('/confirm-email-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    if (!FEATURE_FLAGS.emailConfirmation) {
+        return res.json({ ok: false, error: 'Email-Confirmation-Feature ist nicht aktiviert', flagged: true });
+    }
+    const token = String((req.body && req.body.token) || '').trim();
+    if (!token) return res.json({ ok: false, error: 'Token fehlt' });
+    // User mit diesem Token finden
+    const found = Object.entries(d.users || {}).find(([, u]) => u.emailConfirmToken === token);
+    if (!found) return res.json({ ok: false, error: 'Token ungültig oder bereits eingelöst' });
+    const [uid, u] = found;
+    if (u.emailConfirmTokenExp && u.emailConfirmTokenExp < Date.now()) {
+        return res.json({ ok: false, error: 'Token abgelaufen — bitte neuen anfordern', expired: true });
+    }
+    u.emailConfirmedAt = Date.now();
+    u.emailConfirmToken = null;
+    u.emailConfirmTokenExp = null;
+    speichern();
+    console.log('[CONFIRM-EMAIL]', uid, '→ bestätigt');
+    res.json({ ok: true, uid });
+});
+
+// Neuen Token generieren (bestehenden User, der noch nicht bestätigt hat)
+app.post('/resend-confirmation-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    if (!FEATURE_FLAGS.emailConfirmation) {
+        return res.json({ ok: false, error: 'Email-Confirmation-Feature ist nicht aktiviert', flagged: true });
+    }
+    const uid = String((req.body && req.body.uid) || '').trim();
+    if (!uid || !d.users[uid]) return res.json({ ok: false, error: 'User nicht gefunden' });
+    if (d.users[uid].emailConfirmedAt) return res.json({ ok: false, error: 'Email ist bereits bestätigt' });
+    const newToken = require('crypto').randomBytes(24).toString('hex');
+    d.users[uid].emailConfirmToken = newToken;
+    d.users[uid].emailConfirmTokenExp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    speichern();
+    console.log('[RESEND-CONFIRM]', uid);
+    res.json({ ok: true, emailConfirmToken: newToken, email: d.users[uid].email });
 });
 
 // ── BLOCK/UNBLOCK USER (Play-Store §1.10 UGC-Pflicht) ─────────────────

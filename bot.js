@@ -23,6 +23,20 @@ const MEINE_GRUPPE     = 'B';
 
 process.env.TZ = 'Europe/Berlin';
 
+// ── FEATURE FLAGS (Phase 2 Play-Store-Compliance) ─────────────────────
+// Schritt-für-Schritt-Rollout: jedes Feature kann unabhängig via Railway
+// env-var aktiviert werden. Default: alle OFF (safe). Aktivierung:
+//   Railway → Variables → FEATURE_BLOCK_USER=1
+// Sobald gesetzt, ist das Feature scharf. Wieder ausschalten: Variable löschen.
+const FEATURE_FLAGS = {
+    // Block/Unblock: schreibt blockedUsers[] auf User-Objekt.
+    blockUser: process.env.FEATURE_BLOCK_USER === '1',
+    // Age-Gate: erzwingt Altersbestätigung (16+) bei Signup. OFF = Backward-Compat
+    // für bestehende Signup-Flows die noch nicht aktualisiert sind.
+    ageGate: process.env.FEATURE_AGE_GATE === '1',
+};
+console.log('[FEATURE_FLAGS]', FEATURE_FLAGS);
+
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -6302,6 +6316,13 @@ app.post('/create-email-user-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const email = String((req.body && req.body.email) || '').toLowerCase().trim();
     const password = String((req.body && req.body.password) || '');
+    // Age-Gate (Play-Store + DSGVO Art. 8) — wenn FEATURE_AGE_GATE=1 ist, Pflicht.
+    const ageConfirmedAt = Number((req.body && req.body.ageConfirmedAt) || 0);
+    const termsAcceptedAt = Number((req.body && req.body.termsAcceptedAt) || 0);
+    const termsVersion = String((req.body && req.body.termsVersion) || '').slice(0, 30);
+    if (FEATURE_FLAGS.ageGate && (!ageConfirmedAt || !termsAcceptedAt)) {
+        return res.status(400).json({ ok: false, error: 'Altersbestätigung (16+) und AGB/Datenschutz-Zustimmung erforderlich' });
+    }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
         return res.status(400).json({ ok: false, error: 'Ungültige Email' });
     }
@@ -6331,14 +6352,70 @@ app.post('/create-email-user-api', (req, res) => {
         inventory: [], activeRing: null, followers: [], following: [],
         appUser: true,
         appLastSeen: Date.now(),
-        signupSource: 'email'
+        signupSource: 'email',
+        // Audit-Trail für DSGVO Art. 8 + Play-Store-Compliance.
+        // Wird IMMER gespeichert wenn vom Client übergeben — auch wenn Flag aus.
+        // So haben wir die Daten ab Tag 1, auch wenn Server-Enforcement später kommt.
+        ageConfirmedAt: ageConfirmedAt || null,
+        termsAcceptedAt: termsAcceptedAt || null,
+        termsVersion: termsVersion || null,
+        blockedUsers: [],
     };
     if (password) {
         d.users[uid].password_hash = hashPasswordPBKDF2(password);
     }
     speichern();
-    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)');
+    console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)', ageConfirmedAt ? '(age-confirmed)' : '');
     res.json({ ok: true, uid, existed: false });
+});
+
+// ── BLOCK/UNBLOCK USER (Play-Store §1.10 UGC-Pflicht) ─────────────────
+// Aktivierung via Railway env-var: FEATURE_BLOCK_USER=1
+// Speichert blockedUsers[]-Array auf dem Blocker-User. Die App-Side
+// verwendet diese Liste um Inhalte des blockierten Users auszublenden.
+app.post('/block-user-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    if (!FEATURE_FLAGS.blockUser) {
+        return res.json({ ok: false, error: 'Block-Feature ist noch nicht aktiviert (FEATURE_BLOCK_USER fehlt)', flagged: true });
+    }
+    const { blockerUid, targetUid } = req.body || {};
+    if (!blockerUid || !targetUid) return res.json({ ok: false, error: 'blockerUid+targetUid erforderlich' });
+    if (String(blockerUid) === String(targetUid)) return res.json({ ok: false, error: 'Self-Block nicht erlaubt' });
+    if (!d.users[blockerUid] || !d.users[targetUid]) return res.json({ ok: false, error: 'User nicht gefunden' });
+    if (!Array.isArray(d.users[blockerUid].blockedUsers)) d.users[blockerUid].blockedUsers = [];
+    const tStr = String(targetUid);
+    if (!d.users[blockerUid].blockedUsers.map(String).includes(tStr)) {
+        d.users[blockerUid].blockedUsers.push(tStr);
+        // Auch Following-Beziehung beidseitig auflösen (wer blockiert wird, soll nicht
+        // mehr in following/followers stehen — sonst Inkonsistenz).
+        if (Array.isArray(d.users[blockerUid].following)) {
+            d.users[blockerUid].following = d.users[blockerUid].following.filter(u => String(u) !== tStr);
+        }
+        if (Array.isArray(d.users[targetUid].followers)) {
+            d.users[targetUid].followers = d.users[targetUid].followers.filter(u => String(u) !== String(blockerUid));
+        }
+        speichern();
+        console.log('[BLOCK]', blockerUid, '→ blockiert', targetUid);
+    }
+    res.json({ ok: true });
+});
+
+app.post('/unblock-user-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    if (!FEATURE_FLAGS.blockUser) {
+        return res.json({ ok: false, error: 'Block-Feature ist noch nicht aktiviert (FEATURE_BLOCK_USER fehlt)', flagged: true });
+    }
+    const { blockerUid, targetUid } = req.body || {};
+    if (!blockerUid || !targetUid) return res.json({ ok: false, error: 'blockerUid+targetUid erforderlich' });
+    if (!d.users[blockerUid]) return res.json({ ok: false, error: 'User nicht gefunden' });
+    if (!Array.isArray(d.users[blockerUid].blockedUsers)) d.users[blockerUid].blockedUsers = [];
+    const before = d.users[blockerUid].blockedUsers.length;
+    d.users[blockerUid].blockedUsers = d.users[blockerUid].blockedUsers.filter(u => String(u) !== String(targetUid));
+    if (d.users[blockerUid].blockedUsers.length !== before) {
+        speichern();
+        console.log('[UNBLOCK]', blockerUid, '→ entblockt', targetUid);
+    }
+    res.json({ ok: true });
 });
 
 // Verifiziert Email + Passwort. Bridge-Secret-geschützt. Liefert uid wenn ok.

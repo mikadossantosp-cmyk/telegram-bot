@@ -5616,6 +5616,42 @@ app.post('/user-delete-self-api', async (req, res) => {
     res.json({ ok:true, deletedAt: Date.now(), deletedSubs });
 });
 
+// DSGVO Art. 20: User exportiert eigene Daten als JSON. App-Bot proxied dies an /api/datenexport.
+app.get('/user-data-export-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.query && req.query.uid) || '');
+    if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    // Sammle alles was dem User gehört. Anonymisierte Refs in Kollab/Pinned bleiben drin.
+    const out = {
+        ok: true,
+        exportedAt: new Date().toISOString(),
+        dsgvo: 'Art. 20 DSGVO — Recht auf Datenübertragbarkeit',
+        user: u,
+        subAccounts: [],
+        links: [],
+        posts: (d.posts && d.posts[uid]) || [],
+        notifications: (d.notifications && d.notifications[uid]) || [],
+        dailyXP: (d.dailyXP && d.dailyXP[uid]) || null,
+        weeklyXP: (d.weeklyXP && d.weeklyXP[uid]) || null,
+        missionen: (d.missionen && d.missionen[uid]) || null,
+        wochenMissionen: (d.wochenMissionen && d.wochenMissionen[uid]) || null,
+        appActivity: (d.appActivity && d.appActivity[uid]) || null,
+        reportsAgainst: Array.isArray(d.reports) ? d.reports.filter(r => String(r.targetUid) === uid) : [],
+        reportsMade: Array.isArray(d.reports) ? d.reports.filter(r => String(r.reporterUid) === uid) : [],
+    };
+    // Sub-Accounts (Children)
+    for (const [oUid, oU] of Object.entries(d.users||{})) {
+        if (oU && String(oU.parent_uid||'') === uid) out.subAccounts.push({ uid: oUid, user: oU });
+    }
+    // Eigene Links
+    for (const [lId, l] of Object.entries(d.links||{})) {
+        if (l && String(l.user_id||'') === uid) out.links.push({ id: lId, ...l, likes: Array.isArray(l.likes) ? l.likes : Array.from(l.likes||[]) });
+    }
+    res.json(out);
+});
+
 app.post('/ban-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');

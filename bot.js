@@ -4394,14 +4394,54 @@ async function zeitCheck() {
         if (m === 30) einmalig('smartReminder_'+h, () => smartReminderCheck());
         if (m === 15 || m === 45) einmalig('syncDelTM_'+h+'_'+m, () => syncDeletedThreadMessages().catch(e => console.log('syncDeletedThreadMessages Fehler:', e.message)));
         if (h === 23 && m >= 55) taeglich('dailyRanking', () => dailyRankingAbschluss());
+        // XP-Event: 1h-Vorab-Erinnerung, Auto-Aktivierung am Start, Auto-Stop am Ende.
         if (d.xpEvent?.start && d.xpEvent?.end) {
             const now = Date.now();
-            if (!d.xpEvent.aktiv && now >= d.xpEvent.start && now <= d.xpEvent.end) {
-                d.xpEvent.aktiv = true; speichernDebounced();
-                const pct = Math.round((d.xpEvent.multiplier-1)*100);
-                broadcastAppPush('🚀 XP Event läuft!', '+'+pct+'% XP auf alle Aktionen — jetzt aktiv sein!', '/feed').catch(()=>{});
+            const xe = d.xpEvent;
+            // 1h-Pre-Reminder (nur einmal)
+            if (xe.start - now > 0 && xe.start - now <= 60*60*1000 && !xe.announcedAt1hPre) {
+                xe.announcedAt1hPre = Date.now();
+                const pct = Math.round((xe.multiplier-1)*100);
+                announceEventToAllUsers('⏰ XP-Event in 1 Stunde!', '+'+pct+'% XP startet in 1h — sei dabei!', '/feed').catch(()=>{});
+                speichernDebounced();
             }
-            if (d.xpEvent.aktiv && now > d.xpEvent.end) { d.xpEvent.aktiv = false; speichernDebounced(); }
+            // Auto-Aktivierung am Start
+            if (!xe.aktiv && now >= xe.start && now <= xe.end) {
+                xe.aktiv = true;
+                if (!xe.activatedAndAnnouncedAt) {
+                    xe.activatedAndAnnouncedAt = Date.now();
+                    const pct = Math.round((xe.multiplier-1)*100);
+                    announceEventToAllUsers('🚀 XP-Event läuft JETZT!', '+'+pct+'% XP auf alle Aktionen — jetzt aktiv sein!', '/feed').catch(()=>{});
+                }
+                speichernDebounced();
+            }
+            // Auto-Stop am Ende
+            if (xe.aktiv && now > xe.end) {
+                xe.aktiv = false;
+                speichernDebounced();
+            }
+        }
+        // Diamond-Event: gleicher Flow (1h-Pre, Auto-Start, Auto-Stop)
+        if (d.diamondEvent?.start && d.diamondEvent?.end) {
+            const now = Date.now();
+            const de = d.diamondEvent;
+            if (de.start - now > 0 && de.start - now <= 60*60*1000 && !de.announcedAt1hPre) {
+                de.announcedAt1hPre = Date.now();
+                announceEventToAllUsers('⏰ Diamond-Event in 1 Stunde!', '+'+(de.pendingBonusPerPost||de.bonusPerPost)+' 💎 pro Post startet in 1h!', '/feed').catch(()=>{});
+                speichernDebounced();
+            }
+            if (now >= de.start && now <= de.end && de.bonusPerPost === 0 && de.pendingBonusPerPost > 0) {
+                de.bonusPerPost = de.pendingBonusPerPost;
+                if (!de.activatedAndAnnouncedAt) {
+                    de.activatedAndAnnouncedAt = Date.now();
+                    announceEventToAllUsers('💎 Diamond-Event läuft JETZT!', '+'+de.bonusPerPost+' 💎 pro Post — jetzt posten lohnt!', '/feed').catch(()=>{});
+                }
+                speichernDebounced();
+            }
+            if (now > de.end && de.bonusPerPost > 0) {
+                de.bonusPerPost = 0;
+                speichernDebounced();
+            }
         }
         const zweiTage = 2 * 24 * 60 * 60 * 1000;
         for (const [k, l] of Object.entries(d.links)) {
@@ -5538,6 +5578,77 @@ app.post('/admin-start-diamond-event-api', (req, res) => {
     res.json({ ok:true, event: d.diamondEvent });
 });
 
+// Helper: Event-Announcement an alle User (In-App-DM + Push + Notif).
+async function announceEventToAllUsers(title, body, urlPath = '/feed') {
+    let count = 0;
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || u.parent_uid || u.banned || !u.started) continue;
+        if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) continue;
+        try { sendInAppDM(uid, body); count++; } catch(e) {}
+    }
+    try { await broadcastAppPush(title, body, urlPath); } catch(e) {}
+    console.log('[EVENT-ANNOUNCE]', title, '→', count, 'In-App-DMs');
+    return count;
+}
+
+// Schedule Event in der Zukunft (XP oder Diamond). Wird automatisch aktiviert,
+// + 1h-Vorab-Erinnerung wird via zeitCheck broadcasted.
+app.post('/admin-schedule-event-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const type = String(req.body?.type || '');
+    const amount = parseInt(req.body?.amount, 10);
+    const durationMs = parseInt(req.body?.durationMs, 10);
+    const startAt = parseInt(req.body?.startAt, 10);
+    const label = String(req.body?.label || '').slice(0, 60);
+    if (type !== 'xp' && type !== 'diamond') return res.json({ ok:false, error:'type muss xp oder diamond sein' });
+    if (!Number.isFinite(amount) || amount <= 0) return res.json({ ok:false, error:'amount > 0' });
+    if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > 7*24*3600*1000) return res.json({ ok:false, error:'durationMs 1ms-7 Tage' });
+    if (!Number.isFinite(startAt) || startAt < Date.now() + 5*60*1000) return res.json({ ok:false, error:'startAt muss min. 5 Min in der Zukunft sein' });
+    if (startAt > Date.now() + 90*24*3600*1000) return res.json({ ok:false, error:'Max 90 Tage Vorlauf' });
+    const endAt = startAt + durationMs;
+    const eventLabel = label || (type === 'xp' ? ('+' + amount + '% XP pro Like') : ('+' + amount + ' 💎 pro Post'));
+    if (type === 'xp') {
+        const multiplier = 1 + (amount / 100);
+        d.xpEvent = {
+            aktiv: false,  // wird via zeitCheck automatisch true wenn now >= start
+            multiplier, bonusPercent: amount, bonusPerPost: 0,
+            start: startAt, end: endAt,
+            label: eventLabel,
+            scheduled: true, announcedScheduledAt: Date.now(),
+            announcedAt1hPre: null, activatedAndAnnouncedAt: null,
+        };
+    } else {
+        d.diamondEvent = {
+            bonusPerPost: 0,  // wird via zeitCheck auf amount gesetzt wenn aktiv
+            pendingBonusPerPost: amount,
+            start: startAt, end: endAt,
+            label: eventLabel,
+            scheduled: true, announcedScheduledAt: Date.now(),
+            announcedAt1hPre: null, activatedAndAnnouncedAt: null,
+        };
+    }
+    speichern();
+    // Sofort-Announcement an alle User (Event wurde geplant)
+    const startStr = new Date(startAt).toLocaleString('de-DE', { timeZone:'Europe/Berlin', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const icon = type === 'xp' ? '🚀' : '💎';
+    const evtTitle = type === 'xp' ? 'XP-Event geplant!' : 'Diamond-Event geplant!';
+    const msg = icon + ' *' + evtTitle + '*\n\n' + eventLabel + '\n\n📅 Start: *' + startStr + '* (Berlin-Zeit)\n⏱ Dauer: ' + Math.round(durationMs / 60000) + ' Minuten\n\nDu kriegst 1h vorher eine Erinnerung + Push wenn das Event startet.';
+    await announceEventToAllUsers(icon + ' ' + evtTitle, eventLabel + ' · Start ' + startStr, '/feed');
+    // Plus DM mit den vollen Infos
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || u.parent_uid || u.banned || !u.started) continue;
+        if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) continue;
+        try { sendInAppDM(uid, msg); } catch(e) {}
+    }
+    res.json({ ok:true, event: type === 'xp' ? d.xpEvent : d.diamondEvent });
+});
+
+// Liste aller geplanten/aktiven Events
+app.get('/admin-scheduled-events-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    res.json({ ok:true, xpEvent: d.xpEvent || null, diamondEvent: d.diamondEvent || null, now: Date.now() });
+});
+
 // Stop laufendes Event
 app.post('/admin-stop-event-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
@@ -5849,6 +5960,75 @@ app.post('/admin-warn-user-api', async (req, res) => {
     const result = await applyWarningEscalation(uid, reason);
     if (!result.ok) return res.status(404).json(result);
     res.json(result);
+});
+
+// Helper-Bot Q&A-Fallback: wenn User Frage stellt die der App-Bot nicht beantworten kann,
+// landet sie hier. Wird in d.helperQuestions persistiert + an Admin via Notification +
+// CreatorBoost-DM kopiert.
+app.post('/helper-question-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const fromUid = String((req.body && req.body.fromUid) || '');
+    const question = String((req.body && req.body.question) || '').trim().slice(0, 800);
+    if (!fromUid || !question) return res.status(400).json({ ok:false, error:'fromUid + question erforderlich' });
+    const u = d.users[fromUid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    if (!d.helperQuestions) d.helperQuestions = [];
+    // Rate-Limit: max 3 offene Fragen pro User
+    const userOpen = d.helperQuestions.filter(q => String(q.uid) === fromUid && !q.answeredAt).length;
+    if (userOpen >= 3) return res.json({ ok:false, error:'Du hast schon 3 offene Fragen — warte auf Antwort.' });
+    const qId = 'hq_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    d.helperQuestions.push({
+        id: qId, uid: fromUid,
+        name: u.spitzname || u.name || ('User '+fromUid),
+        question, ts: Date.now(), answeredAt: null, answer: null,
+    });
+    if (d.helperQuestions.length > 500) d.helperQuestions = d.helperQuestions.slice(-500);
+    // User-Frage in den Chat-History pushen (als Nachricht vom User an CreatorBoost)
+    if (!d.messages) d.messages = {};
+    const chatKey = [CREATORBOOST_UID, fromUid].sort().join('_');
+    if (!d.messages[chatKey]) d.messages[chatKey] = [];
+    d.messages[chatKey].push({
+        from: fromUid, to: CREATORBOOST_UID,
+        text: '🤖 Helper-Frage: ' + question,
+        image:null, audio:null, timestamp: Date.now(), read: true, system: false,
+    });
+    if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
+    // Auto-Acknowledge an User (als CreatorBoost-DM)
+    sendInAppDM(fromUid, 'Frage erhalten — ich frag kurz nach und melde mich hier zurück. (Antwort kommt meistens in <1h)');
+    // Alle Admins benachrichtigen
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds : [];
+    for (const aId of adminIds) {
+        addNotification(String(aId), '🤖', (u.spitzname||u.name||'User') + ' fragt: ' + question.slice(0,50), fromUid);
+    }
+    speichern();
+    res.json({ ok:true, qId });
+});
+
+// Admin: Liste offener Helper-Fragen
+app.get('/admin-helper-questions-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const status = String((req.query && req.query.status) || 'open');
+    const all = Array.isArray(d.helperQuestions) ? d.helperQuestions : [];
+    const filtered = status === 'all' ? all
+        : status === 'answered' ? all.filter(q => !!q.answeredAt)
+        : all.filter(q => !q.answeredAt);
+    res.json({ ok:true, total: all.length, open: all.filter(q=>!q.answeredAt).length, questions: filtered.slice().reverse() });
+});
+
+// Admin: Helper-Frage beantworten (sendet als CreatorBoost-DM an User)
+app.post('/admin-helper-answer-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const qId = String((req.body && req.body.qId) || '');
+    const answer = String((req.body && req.body.answer) || '').trim().slice(0, 1500);
+    if (!qId || !answer) return res.status(400).json({ ok:false, error:'qId + answer erforderlich' });
+    if (!Array.isArray(d.helperQuestions)) d.helperQuestions = [];
+    const q = d.helperQuestions.find(x => x.id === qId);
+    if (!q) return res.status(404).json({ ok:false, error:'Frage nicht gefunden' });
+    q.answeredAt = Date.now();
+    q.answer = answer;
+    sendInAppDM(q.uid, answer);
+    speichern();
+    res.json({ ok:true });
 });
 
 app.post('/ban-user-api', async (req, res) => {

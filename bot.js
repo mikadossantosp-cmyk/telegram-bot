@@ -205,6 +205,16 @@ function speichernDebounced() {
 setInterval(speichern, 30000);
 laden();
 
+// ── CRITICAL FIX: d._adminIds wurde nur in /data Endpoint auf Kopie gesetzt,
+// nie auf d selbst. Andere Routes lasen d._adminIds = undefined → Admin-DMs
+// (Helper-Tickets etc.) gingen ins Leere. Hier persistieren wir es bei Start
+// und nach jedem Reload.
+function refreshAdminIds() {
+    d._adminIds = [...ADMIN_IDS].map(String);
+    console.log('[AdminIds] Geladen:', d._adminIds.join(','), '(' + d._adminIds.length + ' Admins)');
+}
+refreshAdminIds();
+
 // ── MIGRATION: Email-User auf started:true + inGruppe:true backfillen ──
 // Vor diesem Fix wurden Email-User mit started:false + inGruppe:false angelegt,
 // dadurch wurden sie aus allen Ranking-/Mission-/Daily-Filtern rausgefiltert.
@@ -4550,8 +4560,9 @@ app.post('/restore-upload', express.raw({ type: '*/*', limit: '50mb' }), async (
 app.get('/data', (req, res) => {
     const secret = req.headers['x-bridge-secret'] || req.query.secret;
     if (secret !== BRIDGE_SECRET) return res.status(403).json({ error: 'Forbidden' });
+    refreshAdminIds();
     const out = Object.assign({}, d);
-    out._adminIds = [...ADMIN_IDS];
+    out._adminIds = d._adminIds;
 
     // Likes nach URL zusammenführen - Bridge Bot Links bekommen alle Likes
     const likesByUrl = {};

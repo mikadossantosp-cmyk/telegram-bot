@@ -6376,12 +6376,10 @@ app.post('/create-email-user-api', (req, res) => {
     if (password) {
         d.users[uid].password_hash = hashPasswordPBKDF2(password);
     }
+    speichern();
     console.log('✅ Neuer Email-User erstellt:', email, '→ uid:', uid, password ? '(mit Passwort)' : '(ohne Passwort)', ageConfirmedAt ? '(age-confirmed)' : '', emailConfirmToken ? '(needs-confirm)' : '(auto-confirmed)');
-    // Response ZUERST — User-Daten sind bereits in d.users[] in-memory.
-    // Mobile-Clients (5G) droppen sonst die Connection wenn speichern() >5s blockiert.
-    // speichern() läuft danach im next-tick im Hintergrund.
+    // Token an App-Bot zurückgeben damit Bestätigungs-Email versandt werden kann.
     res.json({ ok: true, uid, existed: false, emailConfirmToken });
-    setImmediate(() => { try { speichern(); } catch(e) { console.error('[signup] speichern fail:', e.message); } });
 });
 
 // ── EMAIL-CONFIRMATION ENDPOINTS ──────────────────────────────────────

@@ -6240,11 +6240,11 @@ app.get('/bild/:uid/:type', (req, res) => {
 
 
 app.post('/auth/code', (req, res) => {
-    const { code } = req.body || {};
+    const code = String((req.body && req.body.code) || '').toLowerCase().trim();
     if (!code) return res.status(400).json({ error: 'Kein Code' });
 
     // Suche User mit diesem Code
-    const found = Object.entries(d.users).find(([, u]) => u.appCode === code.toLowerCase().trim());
+    const found = Object.entries(d.users).find(([, u]) => u.appCode === code);
     if (!found) return res.status(401).json({ error: 'Ungültiger Code' });
 
     const [uid, u] = found;
@@ -6337,20 +6337,33 @@ app.all('/admin/reset-password', (req, res) => {
     res.json({ ok: true, uid, name, email: u.email, newPassword: newPw });
 });
 
-// User self-service: request password reset by email. Returns new password
-// directly (no email service needed). Also sends via Telegram DM if possible.
+// User self-service: request password reset by email.
+// SECURITY: returns NUR ok-Flag. Neues Passwort geht NUR via Telegram-DM.
+// Sonst: jeder mit Kenntnis einer Email kann den Account übernehmen (Bug aus Audit).
+// + Rate-Limit: max 1 Reset pro Email pro Stunde.
+const _resetPwLastTs = new Map(); // email → lastResetTs
 app.post('/api/auth/reset-password', (req, res) => {
     const email = String((req.body && req.body.email) || '').toLowerCase().trim();
     if (!email) return res.status(400).json({ ok: false, error: 'Email erforderlich' });
+    // Anti-Enumeration: returnen wir IMMER OK (auch bei nicht-existierender Email)
+    // damit Attacker nicht rausfinden kann welche Emails registriert sind.
     const found = Object.entries(d.users || {}).find(([, u]) => String(u.email || '').toLowerCase() === email);
-    if (!found) return res.status(404).json({ ok: false, error: 'Kein Account mit dieser Email gefunden' });
+    const genericOk = { ok: true, message: 'Falls die Email registriert ist, wurde ein neues Passwort per Telegram-DM gesendet. Wenn du kein Telegram hast, kontaktiere bitte den Support.' };
+    if (!found) return res.json(genericOk);
     const [uid, u] = found;
+    // Rate-Limit: max 1 Reset pro Email pro Stunde
+    const last = _resetPwLastTs.get(email) || 0;
+    if (Date.now() - last < 60 * 60 * 1000) {
+        return res.json(genericOk); // generic message — leaks nichts
+    }
+    _resetPwLastTs.set(email, Date.now());
     const newPw = _generatePassword();
     u.password_hash = hashPasswordPBKDF2(newPw);
     speichern();
+    // Passwort NUR via Telegram-DM (sicherer Channel)
     try { bot.telegram.sendMessage(Number(uid), '🔐 Dein Passwort wurde zurückgesetzt!\n\nNeues Passwort: ' + newPw + '\n\nBitte ändere es nach dem Login in den Einstellungen.'); } catch(e) {}
-    console.log('[RESET-PW-SELF] ' + (u.spitzname || u.name) + ' (' + email + ') — neues Passwort generiert');
-    res.json({ ok: true, newPassword: newPw, message: 'Dein neues Passwort wurde generiert. Falls du Telegram nutzt, wurde es dir auch per DM geschickt.' });
+    console.log('[RESET-PW-SELF] ' + (u.spitzname || u.name) + ' (' + email + ') — neues Passwort per Telegram-DM gesendet');
+    res.json(genericOk);
 });
 
 // Setzt einen vom User selbst gewählten appCode. Bridge-Secret-geschützt.
@@ -7173,6 +7186,7 @@ async function syncDeletedThreadMessages() {
 }
 
 app.post('/send-group-message', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { text, uid } = req.body || {};
     if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });
     const u = d.users[String(uid)];
@@ -7288,6 +7302,7 @@ app.post('/fethread-announce-api', async (req, res) => {
 });
 
 app.post('/fethread-setup', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     return fethreadCreate(res);
 });
 
@@ -7387,6 +7402,7 @@ app.get('/thread-messages/:threadId', async (req, res) => {
 });
 
 app.post('/send-thread-message', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { text, uid, thread_id, replyTo } = req.body || {};
     if (!text?.trim()) return res.json({ ok: false, error: 'Kein Text' });
     const u = d.users[String(uid)];
@@ -7495,6 +7511,7 @@ app.post('/react-thread-msg-api', async (req, res) => {
 });
 
 app.post('/create-thread', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { name, emoji, uid } = req.body || {};
     if (!name?.trim()) return res.json({ ok: false, error: 'Kein Name' });
     if (!istAdminId(Number(uid))) return res.json({ ok: false, error: 'Kein Admin' });
@@ -7656,6 +7673,7 @@ app.get('/tg-file/:fileId', async (req, res) => {
 });
 
 app.post('/rename-thread', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { uid, thread_id, name } = req.body || {};
     if (!uid || !thread_id || !name?.trim()) return res.json({ ok: false, error: 'Fehlende Parameter' });
     if (!d.threads) d.threads = [];
@@ -7942,6 +7960,7 @@ app.post('/log-email-login', (req, res) => {
 });
 
 app.post('/track-login', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { uid } = req.body || {};
     if (!uid || !d.users[String(uid)]) return res.json({ ok: false });
     if (!d.dailyLogins[uid]) d.dailyLogins[uid] = 0;
@@ -7953,6 +7972,7 @@ app.post('/track-login', (req, res) => {
 
 // Leichtgewichtiges Heartbeat: App pingt das alle paar Minuten — markiert User als aktiv.
 app.post('/app-presence', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     if (!uid || !d.users[uid]) return res.json({ ok: false });
     d.users[uid].appLastSeen = Date.now();

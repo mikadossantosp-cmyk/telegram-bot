@@ -1001,8 +1001,8 @@ async function auswertenForUserDay(uid, dayKey, opts) {
     } else if (!opts.skipStreakReset) { d.m1Streak[uid].count = 0; }
 
     if (hatTagLink && !m1Done && minLinksVorhanden && d.users[uid] && !opts.silent) {
-        d.users[uid].warnings = (d.users[uid].warnings || 0) + 1;
-        try { await bot.telegram.sendMessage(Number(uid), '⚠️ *Verwarnung!*\n\nLink gepostet, aber M1 nicht erfüllt.\n\n⚠️ Warns: ' + d.users[uid].warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
+        // Threshold-Eskalation: bei 3/4 detaillierte DM, bei 5 Auto-Ban.
+        await applyWarningEscalation(String(uid), 'Link gepostet, aber M1 nicht erfüllt').catch(()=>{});
     }
 
     if (!opts.silent) {
@@ -1416,9 +1416,11 @@ bot.command('warn', async (ctx) => {
     if (!ctx.message.reply_to_message) return ctx.reply('❌ Antworte auf eine Nachricht.');
     const userId = ctx.message.reply_to_message.from.id;
     const u = user(userId, ctx.message.reply_to_message.from.first_name);
-    u.warnings = (u.warnings || 0) + 1; speichern();
-    await ctx.reply('⚠️ Warn an *' + u.name + '*: ' + u.warnings + '/5', { parse_mode: 'Markdown' });
-    try { await bot.telegram.sendMessage(userId, '⚠️ *Verwarnung!*\nWarn: ' + u.warnings + '/5', { parse_mode: 'Markdown' }); } catch (e) {}
+    const reason = ctx.message.text.replace(/^\/warn(@\S+)?\s*/, '').trim().slice(0,200);
+    const result = await applyWarningEscalation(String(userId), reason || 'Manuelle Verwarnung in Gruppe');
+    if (!result.ok) return ctx.reply('❌ ' + result.error);
+    const tag = result.autoBanned ? ' 🚫 AUTO-BANNED!' : '';
+    await ctx.reply('⚠️ Warn an *' + u.name + '*: ' + result.warnings + '/5' + tag, { parse_mode: 'Markdown' });
 });
 
 bot.command('unban', async (ctx) => {
@@ -5689,15 +5691,24 @@ app.get('/admin-mission-report-api', (req, res) => {
         const m2Done = othersDayLinks > 0 && (userLikesToday / othersDayLinks) >= 0.8;
         const m3Done = othersDayLinks > 0 && userLikesToday >= Math.min(M3_CAP, othersDayLinks);
         const wMission = (d.wochenMissionen && d.wochenMissionen[uid]) || { m1Tage:0, m2Tage:0, m3Tage:0 };
+        const act = (d.appActivity && d.appActivity[uid]) || null;
         users.push({
             uid,
             name: u.spitzname || u.name || ('User '+uid),
             instagram: u.instagram || '',
             warnings: Number(u.warnings || 0),
             xp: Number(u.xp || 0),
+            diamonds: Number(u.diamonds || 0),
+            totalLikes: Number(u.totalLikes || 0),
+            links: Number(u.links || 0),
+            level: Number(u.level || 1),
+            role: u.role || '',
+            joinDate: u.joinDate || null,
             postedToday: userPostsToday,
             likedToday: userLikesToday,
             othersAvailable: othersDayLinks,
+            dailyXP: Number((d.dailyXP && d.dailyXP[uid]) || 0),
+            weeklyXP: Number((d.weeklyXP && d.weeklyXP[uid]) || 0),
             m1: m1Done,
             m2: m2Done,
             m3: m3Done,
@@ -5706,11 +5717,16 @@ app.get('/admin-mission-report-api', (req, res) => {
             weekM3: wMission.m3Tage || 0,
             postSuspendedUntil: u.postSuspendedUntil || null,
             postSuspendReason: u.postSuspendReason || null,
+            lastSeen: act?.lastSeen || u.appLastSeen || null,
+            email: u.email || '',
             // Compliance-Flags
             postedButFailedM1: userPostsToday > 0 && !m1Done,
             onlyPoster: userPostsToday > 0 && userLikesToday === 0,
             onlyLiker: userPostsToday === 0 && userLikesToday > 0,
             inactive: userPostsToday === 0 && userLikesToday === 0,
+            warningsCritical: Number(u.warnings || 0) >= 3,
+            warningsLast: Number(u.warnings || 0) >= 4,
+            banned: !!u.banned,
         });
     }
     // Aggregate
@@ -5763,22 +5779,76 @@ app.post('/admin-suspend-posting-api', async (req, res) => {
     res.json({ ok:true, suspended:true, until: u.postSuspendedUntil });
 });
 
-// Admin Warn-User: setzt Warnung + DM (existing /warn-Command nur via Telegram möglich,
-// dieser Endpoint macht's vom Dashboard aus aufrufbar).
+// Helper: warning-Eskalation mit DM-Thresholds + Auto-Ban bei 5.
+// Wird sowohl von /admin-warn-user-api als auch /warn-Command + Mission-Auto-Warn genutzt.
+async function applyWarningEscalation(uid, reason, opts = {}) {
+    const u = d.users[uid];
+    if (!u) return { ok:false, error:'User nicht gefunden' };
+    if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) {
+        return { ok:false, error:'Admin-Accounts können nicht verwarnt werden' };
+    }
+    u.warnings = (Number(u.warnings || 0)) + 1;
+    const n = u.warnings;
+    let mainText, suffix = '';
+    const reasonText = reason ? '\n\n*Grund:* ' + reason : '';
+    if (n === 1 || n === 2) {
+        mainText = '⚠️ *Verwarnung ' + n + '/5*' + reasonText + '\n\nDu hast eine Verwarnung erhalten. Schau dass es nicht wieder passiert.';
+    } else if (n === 3) {
+        mainText = '⚠️🚨 *3. VERWARNUNG (' + n + '/5)*' + reasonText +
+            '\n\n*Wichtige Aufklärung:*\n' +
+            '• Bei der **5. Verwarnung** wirst du **automatisch gebannt** — kein manuelles Review.\n' +
+            '• Du kannst Verwarnungen abbauen: **5 Tage in Folge M1 erfüllen** → 1 Warnung weg.\n' +
+            '• Aktive Verwarnungen blocken Belohnungen nicht direkt, aber gefährden deinen Account.\n\n' +
+            'Nimm das ernst.';
+    } else if (n === 4) {
+        mainText = '⚠️🚨 *4. VERWARNUNG (' + n + '/5)*' + reasonText +
+            '\n\n*LETZTE Warnung vor dem Bann!*\n' +
+            '• Eine weitere Verwarnung → **automatischer permanenter Bann**.\n' +
+            '• Du kannst 1 Warn abbauen: **5 Tage in Folge M1 erfüllen** → 1 Warnung weg.\n' +
+            '• Lies die Regeln gründlich.\n\n' +
+            'Letzte Chance — nutze sie.';
+    } else if (n >= 5) {
+        mainText = '🚫 *Account permanent gebannt (' + n + '/5 Verwarnungen erreicht)*' + reasonText +
+            '\n\nDu hast die maximale Anzahl an Verwarnungen erreicht und wurdest automatisch aus der Community entfernt.';
+    }
+    try { await dmUser(uid, mainText, { parse_mode:'Markdown' }); } catch(e) {}
+    const notifIcon = n >= 5 ? '🚫' : (n >= 3 ? '🚨' : '⚠️');
+    addNotification(uid, notifIcon, (n >= 5 ? 'Account gebannt' : 'Verwarnung ' + n + '/5') + (reason ? ' (' + reason.slice(0,40) + ')' : ''));
+    // Auto-Ban bei 5
+    let autoBanned = false;
+    if (n >= 5 && !u.banned) {
+        u.banned = true;
+        u.bannedAt = Date.now();
+        u.bannedReason = 'Auto-Ban: 5 Verwarnungen erreicht' + (reason ? ' (letzter Grund: ' + reason + ')' : '');
+        u.inGruppe = false;
+        u.started = false;
+        if (d.dailyXP) delete d.dailyXP[uid];
+        if (d.weeklyXP) delete d.weeklyXP[uid];
+        if (d.bonusLinks) delete d.bonusLinks[uid];
+        if (d.missionen) delete d.missionen[uid];
+        if (d.wochenMissionen) delete d.wochenMissionen[uid];
+        if (d.userSessions) delete d.userSessions[uid];
+        for (const [otherUid, other] of Object.entries(d.users||{})) {
+            if (other && other.parent_uid && String(other.parent_uid) === uid) {
+                other.banned = true; other.bannedAt = Date.now(); other.inGruppe = false; other.started = false;
+            }
+        }
+        autoBanned = true;
+        console.log('[AUTO-BAN] uid:', uid, 'name:', u.name, '— erreichte 5 Verwarnungen');
+    }
+    speichern();
+    return { ok:true, warnings: n, autoBanned };
+}
+
+// Admin Warn-User: nutzt jetzt applyWarningEscalation mit DM-Threshold-Logik + Auto-Ban.
 app.post('/admin-warn-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
     const reason = String((req.body && req.body.reason) || '').slice(0, 200);
     if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
-    const u = d.users[uid];
-    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
-    u.warnings = (Number(u.warnings || 0)) + 1;
-    speichern();
-    try {
-        await dmUser(uid, '⚠️ *Verwarnung von Admin*' + (reason ? '\n\nGrund: ' + reason : '') + '\n\n⚠️ Warns: ' + u.warnings + '/5', { parse_mode:'Markdown' });
-    } catch(e) {}
-    addNotification(uid, '⚠️', 'Du wurdest verwarnt' + (reason ? ' (' + reason.slice(0,40) + ')' : '') + '. Warns: ' + u.warnings + '/5');
-    res.json({ ok:true, warnings: u.warnings });
+    const result = await applyWarningEscalation(uid, reason);
+    if (!result.ok) return res.status(404).json(result);
+    res.json(result);
 });
 
 app.post('/ban-user-api', async (req, res) => {

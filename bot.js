@@ -5999,14 +5999,49 @@ app.post('/helper-question-api', (req, res) => {
     const u = d.users[fromUid];
     if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
     if (!d.helperQuestions) d.helperQuestions = [];
-    // Rate-Limit: max 3 offene Fragen pro User
-    const userOpen = d.helperQuestions.filter(q => String(q.uid) === fromUid && !q.answeredAt).length;
-    if (userOpen >= 3) return res.json({ ok:false, error:'Du hast schon 3 offene Fragen — warte auf Antwort.' });
+    const userName = u.spitzname || u.name || ('User '+fromUid);
+    const userHandle = u.instagram ? ' (@' + u.instagram + ')' : '';
+    // Hat User schon ein offenes Ticket? Dann als Follow-up dranhängen statt neu zu öffnen.
+    const openTicket = d.helperQuestions
+        .filter(q => String(q.uid) === fromUid && !q.answeredAt)
+        .sort((a,b) => (a.ts||0) - (b.ts||0))[0];
+    if (openTicket) {
+        // Anti-Spam: max 10 Follow-ups pro Ticket
+        if (!Array.isArray(openTicket.followUps)) openTicket.followUps = [];
+        if (openTicket.followUps.length >= 10) {
+            return res.json({ ok:false, error:'Schon 10 Follow-up-Fragen in diesem Ticket — bitte auf Admin-Antwort warten.' });
+        }
+        openTicket.followUps.push({ text: question, ts: Date.now() });
+        // In Admin-Chat als Follow-up-DM
+        const adminIds = Array.isArray(d._adminIds) ? d._adminIds : [];
+        const followText =
+            '💬 *Follow-up* zu Ticket `' + openTicket.id + '` von *' + userName + '*' + userHandle + '\n\n' +
+            '❓ _' + question + '_\n\n' +
+            '_Antworte hier im Chat — geht an ' + userName + '._';
+        for (const aId of adminIds) {
+            addNotification(String(aId), '💬', userName + ' (Follow-up): ' + question.slice(0,40), fromUid);
+            try { sendInAppDM(String(aId), followText); } catch(e) {}
+        }
+        // User-Frage auch in Admin↔User-Chat-History (für Verlauf in /nachrichten/creatorboost)
+        if (!d.messages) d.messages = {};
+        const chatKey = [CREATORBOOST_UID, fromUid].sort().join('_');
+        if (!d.messages[chatKey]) d.messages[chatKey] = [];
+        d.messages[chatKey].push({
+            from: fromUid, to: CREATORBOOST_UID,
+            text: '💬 Follow-up: ' + question,
+            image:null, audio:null, timestamp: Date.now(), read: true, system: false,
+        });
+        if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
+        speichern();
+        return res.json({ ok:true, qId: openTicket.id, followUp: true });
+    }
+    // Sonst: neues Ticket
     const qId = 'hq_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
     d.helperQuestions.push({
         id: qId, uid: fromUid,
-        name: u.spitzname || u.name || ('User '+fromUid),
+        name: userName,
         question, ts: Date.now(), answeredAt: null, answer: null,
+        followUps: [],
     });
     if (d.helperQuestions.length > 500) d.helperQuestions = d.helperQuestions.slice(-500);
     // User-Frage in den Chat-History pushen (als Nachricht vom User an CreatorBoost)
@@ -6019,14 +6054,8 @@ app.post('/helper-question-api', (req, res) => {
         image:null, audio:null, timestamp: Date.now(), read: true, system: false,
     });
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
-    // Auto-Acknowledge an User (als CreatorBoost-DM)
     sendInAppDM(fromUid, 'Frage erhalten — ich frag kurz nach und melde mich hier zurück. (Antwort kommt meistens in <1h)');
-    // Alle Admins benachrichtigen: SOFORTIGE In-App-DM (User-Wunsch: NICHT Telegram, sondern App)
-    // + Notification. Admin sieht die Frage als CreatorBoost-DM in /nachrichten/creatorboost.
-    // Admin antwortet einfach im Chat — Auto-Forward zum User passiert in /send-message-api.
     const adminIds = Array.isArray(d._adminIds) ? d._adminIds : [];
-    const userName = u.spitzname || u.name || ('User '+fromUid);
-    const userHandle = u.instagram ? ' (@' + u.instagram + ')' : '';
     const adminAppDmText =
         '🎫 *NEUES TICKET* `' + qId + '`\n' +
         '─────────────────────\n' +
@@ -6034,7 +6063,7 @@ app.post('/helper-question-api', (req, res) => {
         '❓ Frage:\n_' + question + '_\n' +
         '─────────────────────\n' +
         '💬 *Antworte einfach hier in diesem Chat* — geht direkt an den User.\n' +
-        '_(Mehrere Tickets? Werden in Reihenfolge beantwortet. Gezielt mit `/t ' + qId + ' Deine Antwort`)_';
+        '_Weitere Fragen vom User landen in DIESEM Ticket bis du antwortest._';
     for (const aId of adminIds) {
         addNotification(String(aId), '🎫', 'Ticket ' + userName + ': ' + question.slice(0,40), fromUid);
         try { sendInAppDM(String(aId), adminAppDmText); } catch(e) {}
@@ -7541,7 +7570,7 @@ app.post('/send-message-api', async (req, res) => {
                 ts: Date.now(), fromAdmin: true, ticketId: targetTicket.id,
             });
             if (d.helperChats[targetTicket.uid].length > 200) d.helperChats[targetTicket.uid] = d.helperChats[targetTicket.uid].slice(-200);
-            ticketForwarded = { id: targetTicket.id, userName, uid: targetTicket.uid };
+            ticketForwarded = { id: targetTicket.id, userName, uid: targetTicket.uid, followUps: targetTicket.followUps || [] };
         }
     }
     // ── /Helper-Ticket Auto-Forward ───────────────────────────────
@@ -7559,13 +7588,14 @@ app.post('/send-message-api', async (req, res) => {
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     // Bei Ticket-Forward: System-Confirm direkt in den Admin-Chat
     if (ticketForwarded) {
-        // Anzahl noch offener Tickets nach diesem Forward
         const stillOpen = d.helperQuestions.filter(q => !q.answeredAt).length;
-        const confirm = '✅ <b>Antwort an ' + ticketForwarded.userName + '</b> gesendet (Ticket ' + ticketForwarded.id + ' geschlossen).' +
-            (stillOpen > 0 ? '<br><br>🎫 Noch <b>' + stillOpen + '</b> offene Ticket' + (stillOpen===1?'':'s') + ' — die nächste Nachricht hier geht an den nächsten User.' : '<br><br>📭 Keine weiteren offenen Tickets.');
+        const followUpsCount = Array.isArray(ticketForwarded.followUps) ? ticketForwarded.followUps.length : 0;
+        const followUpsTxt = followUpsCount > 0 ? ' (inkl. ' + followUpsCount + ' Follow-up' + (followUpsCount===1?'':'s') + ')' : '';
+        const confirm = '✅ Antwort an ' + ticketForwarded.userName + ' gesendet — Ticket ' + ticketForwarded.id + ' geschlossen' + followUpsTxt + '.' +
+            (stillOpen > 0 ? '\n\n🎫 Noch ' + stillOpen + ' offene Ticket' + (stillOpen===1?'':'s') + ' — die nächste Nachricht hier geht an den nächsten User.' : '\n\n📭 Keine weiteren offenen Tickets.');
         d.messages[chatKey].push({
             from: CREATORBOOST_UID, to: String(from),
-            text: confirm.replace(/<[^>]+>/g,''),
+            text: confirm,
             image: null, audio: null, timestamp: Date.now()+1, read: true, system: true,
         });
         if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();

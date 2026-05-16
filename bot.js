@@ -5995,10 +5995,16 @@ app.post('/helper-question-api', (req, res) => {
     if (d.messages[chatKey].length > 200) d.messages[chatKey].shift();
     // Auto-Acknowledge an User (als CreatorBoost-DM)
     sendInAppDM(fromUid, 'Frage erhalten — ich frag kurz nach und melde mich hier zurück. (Antwort kommt meistens in <1h)');
-    // Alle Admins benachrichtigen
+    // Alle Admins benachrichtigen: SOFORTIGE In-App-DM (User-Wunsch: NICHT Telegram, sondern App)
+    // + Notification. Admin sieht die Frage als CreatorBoost-DM in /nachrichten/creatorboost.
     const adminIds = Array.isArray(d._adminIds) ? d._adminIds : [];
+    const userName = u.spitzname || u.name || ('User '+fromUid);
+    const userHandle = u.instagram ? ' (@' + u.instagram + ')' : '';
+    const adminAppDmText = '🤖 Neue Helper-Frage von *' + userName + '*' + userHandle + ' · UID `' + fromUid + '`\n\n_' + question + '_\n\nAntworte via Dashboard → Helper-Inbox-Tab.';
     for (const aId of adminIds) {
-        addNotification(String(aId), '🤖', (u.spitzname||u.name||'User') + ' fragt: ' + question.slice(0,50), fromUid);
+        addNotification(String(aId), '🤖', userName + ' fragt: ' + question.slice(0,50), fromUid);
+        // App-DM (NICHT Telegram!) — landet als CreatorBoost-DM in Admin's /nachrichten/creatorboost
+        try { sendInAppDM(String(aId), adminAppDmText); } catch(e) {}
     }
     speichern();
     res.json({ ok:true, qId });

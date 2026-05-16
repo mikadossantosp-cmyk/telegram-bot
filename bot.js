@@ -5587,6 +5587,35 @@ app.post('/reset-user', async (req, res) => {
     res.json({ ok:true, xp: 0 });
 });
 
+// DSGVO Art. 17: User löscht eigenen Account. App-Bot forwarded den Request hierher.
+// Löscht User + alle Sub-Accounts + räumt Referenzen in Collections auf (via _deleteUser).
+app.post('/user-delete-self-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    // Admins können sich nicht selbst löschen (Schutz vor versehentlicher Selbst-Sperre).
+    if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) {
+        return res.status(400).json({ ok:false, error:'Admin-Account kann nicht über App gelöscht werden' });
+    }
+    // Erst Sub-Accounts löschen (children mit parent_uid === uid)
+    let deletedSubs = 0;
+    for (const [oUid, oU] of Object.entries(d.users||{})) {
+        if (oU && String(oU.parent_uid||'') === uid) {
+            const r = _deleteUser(oUid);
+            if (r && r.ok) deletedSubs++;
+        }
+    }
+    // Dann den Parent selbst
+    const result = _deleteUser(uid);
+    if (!result || !result.ok) {
+        return res.status(500).json({ ok:false, error: (result && result.error) || 'Löschung fehlgeschlagen' });
+    }
+    console.log('[user-delete-self] uid:', uid, 'name:', result.name, 'subs:', deletedSubs);
+    res.json({ ok:true, deletedAt: Date.now(), deletedSubs });
+});
+
 app.post('/ban-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');

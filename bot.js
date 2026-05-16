@@ -9286,11 +9286,21 @@ app.get('/diamond-link-feed-api', (req, res) => {
         .map(p => {
             const author = d.users[p.uid] || {};
             const likes = Array.isArray(p.likes) ? p.likes.map(String) : [];
+            const likers = likes.map(lid => {
+                const u = d.users[lid] || {};
+                return {
+                    uid: lid,
+                    name: u.spitzname || u.name || 'User',
+                    instagram: u.instagram || '',
+                    role: u.role || '',
+                };
+            });
             return {
                 id: p.id, uid: p.uid, url: p.url, caption: p.caption,
                 createdAt: p.createdAt, expiresAt: p.expiresAt,
                 remainingMs: Math.max(0, p.expiresAt - now),
                 likeCount: likes.length,
+                likers,
                 liked: callerUid ? likes.includes(callerUid) : false,
                 isSelf: callerUid && String(p.uid) === callerUid,
                 author: { uid: p.uid, name: author.spitzname || author.name || 'User', instagram: author.instagram || '' },

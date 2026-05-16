@@ -5962,6 +5962,32 @@ app.post('/admin-warn-user-api', async (req, res) => {
     res.json(result);
 });
 
+// Helper-Bot Chat-History persistent pro User (Server-seitig). Bleibt über Reload + Geräte.
+app.get('/helper-chat-history-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.query && req.query.uid) || '');
+    if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
+    if (!d.helperChats) d.helperChats = {};
+    const messages = Array.isArray(d.helperChats[uid]) ? d.helperChats[uid].slice(-100) : [];
+    res.json({ ok:true, messages });
+});
+
+app.post('/helper-chat-append-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const role = String((req.body && req.body.role) || '');
+    const text = String((req.body && req.body.text) || '').slice(0, 2000);
+    if (!uid || !text || (role !== 'user' && role !== 'bot')) {
+        return res.status(400).json({ ok:false, error:'uid+role(user|bot)+text erforderlich' });
+    }
+    if (!d.helperChats) d.helperChats = {};
+    if (!Array.isArray(d.helperChats[uid])) d.helperChats[uid] = [];
+    d.helperChats[uid].push({ role, text, ts: Date.now() });
+    if (d.helperChats[uid].length > 200) d.helperChats[uid] = d.helperChats[uid].slice(-200);
+    speichern();
+    res.json({ ok:true });
+});
+
 // Helper-Bot Q&A-Fallback: wenn User Frage stellt die der App-Bot nicht beantworten kann,
 // landet sie hier. Wird in d.helperQuestions persistiert + an Admin via Notification +
 // CreatorBoost-DM kopiert.
@@ -6032,7 +6058,13 @@ app.post('/admin-helper-answer-api', async (req, res) => {
     if (!q) return res.status(404).json({ ok:false, error:'Frage nicht gefunden' });
     q.answeredAt = Date.now();
     q.answer = answer;
-    sendInAppDM(q.uid, answer);
+    // 1. Als CreatorBoost-DM zum User (existing)
+    sendInAppDM(q.uid, '🤖 *Antwort vom Admin auf deine Frage*\n\n_' + (q.question||'').slice(0,100) + '_\n\n' + answer);
+    // 2. Auch in Helper-Chat-History pushen damit User die Antwort im Helper-Bot sieht
+    if (!d.helperChats) d.helperChats = {};
+    if (!Array.isArray(d.helperChats[q.uid])) d.helperChats[q.uid] = [];
+    d.helperChats[q.uid].push({ role:'bot', text:'📨 Admin-Antwort:\n\n' + answer, ts: Date.now(), fromAdmin:true });
+    if (d.helperChats[q.uid].length > 200) d.helperChats[q.uid] = d.helperChats[q.uid].slice(-200);
     speichern();
     res.json({ ok:true });
 });

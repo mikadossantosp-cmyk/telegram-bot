@@ -5652,6 +5652,135 @@ app.get('/user-data-export-api', (req, res) => {
     res.json(out);
 });
 
+// Admin Mission-Report: für gegebenes Datum (Default: gestern) listet jeden User mit
+// Posting/Liking/Mission-Status. Dashboard nutzt das für Compliance-Auswertung.
+app.get('/admin-mission-report-api', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    let dateStr = String((req.query && req.query.date) || '').trim();
+    if (!dateStr || dateStr === 'yesterday') {
+        const y = new Date(Date.now() - 86400000);
+        dateStr = y.toDateString();
+    } else if (dateStr === 'today') {
+        dateStr = new Date().toDateString();
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        dateStr = new Date(dateStr + 'T12:00:00').toDateString();
+    }
+    const adminIds = Array.isArray(d._adminIds) ? d._adminIds.map(Number) : [];
+    // Sammle alle Instagram-Links vom Stichtag
+    const dayLinks = Object.values(d.links || {}).filter(l =>
+        l && l.text && istInstagramLink(l.text) &&
+        new Date(l.timestamp).toDateString() === dateStr
+    );
+    const totalDayLinks = dayLinks.length;
+    // Build report per user
+    const users = [];
+    for (const [uid, u] of Object.entries(d.users || {})) {
+        if (!u || u.parent_uid) continue;
+        if (adminIds.includes(Number(uid))) continue;
+        if (!u.started || u.banned) continue;
+        const userPostsToday = dayLinks.filter(l => String(l.user_id) === String(uid)).length;
+        const userLikesToday = dayLinks.filter(l => {
+            if (String(l.user_id) === String(uid)) return false;
+            const likes = l.likes instanceof Set ? Array.from(l.likes) : (Array.isArray(l.likes) ? l.likes : []);
+            return likes.includes(String(uid)) || likes.includes(Number(uid));
+        }).length;
+        const othersDayLinks = totalDayLinks - userPostsToday;
+        const m1Done = userLikesToday >= 5;
+        const m2Done = othersDayLinks > 0 && (userLikesToday / othersDayLinks) >= 0.8;
+        const m3Done = othersDayLinks > 0 && userLikesToday >= Math.min(M3_CAP, othersDayLinks);
+        const wMission = (d.wochenMissionen && d.wochenMissionen[uid]) || { m1Tage:0, m2Tage:0, m3Tage:0 };
+        users.push({
+            uid,
+            name: u.spitzname || u.name || ('User '+uid),
+            instagram: u.instagram || '',
+            warnings: Number(u.warnings || 0),
+            xp: Number(u.xp || 0),
+            postedToday: userPostsToday,
+            likedToday: userLikesToday,
+            othersAvailable: othersDayLinks,
+            m1: m1Done,
+            m2: m2Done,
+            m3: m3Done,
+            weekM1: wMission.m1Tage || 0,
+            weekM2: wMission.m2Tage || 0,
+            weekM3: wMission.m3Tage || 0,
+            postSuspendedUntil: u.postSuspendedUntil || null,
+            postSuspendReason: u.postSuspendReason || null,
+            // Compliance-Flags
+            postedButFailedM1: userPostsToday > 0 && !m1Done,
+            onlyPoster: userPostsToday > 0 && userLikesToday === 0,
+            onlyLiker: userPostsToday === 0 && userLikesToday > 0,
+            inactive: userPostsToday === 0 && userLikesToday === 0,
+        });
+    }
+    // Aggregate
+    const summary = {
+        date: dateStr,
+        totalLinks: totalDayLinks,
+        totalUsers: users.length,
+        m1Done: users.filter(x => x.m1).length,
+        m2Done: users.filter(x => x.m2).length,
+        m3Done: users.filter(x => x.m3).length,
+        postedButFailedM1: users.filter(x => x.postedButFailedM1).length,
+        onlyPosters: users.filter(x => x.onlyPoster).length,
+        onlyLikers: users.filter(x => x.onlyLiker).length,
+        inactive: users.filter(x => x.inactive).length,
+        currentlyPostSuspended: users.filter(x => x.postSuspendedUntil && Number(x.postSuspendedUntil) > Date.now()).length,
+    };
+    res.json({ ok:true, summary, users });
+});
+
+// Admin Post-Suspension: sperrt User X Tage vom Posten. days=0 hebt Sperre auf.
+app.post('/admin-suspend-posting-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const days = Number((req.body && req.body.days) || 0);
+    const reason = String((req.body && req.body.reason) || '').slice(0, 200);
+    if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    if (Array.isArray(d._adminIds) && d._adminIds.map(Number).includes(Number(uid))) {
+        return res.status(400).json({ ok:false, error:'Admins können nicht gesperrt werden' });
+    }
+    if (days <= 0) {
+        delete u.postSuspendedUntil;
+        delete u.postSuspendReason;
+        speichern();
+        try { await dmUser(uid, '✅ *Posting-Sperre aufgehoben*\n\nDu kannst wieder posten.', { parse_mode:'Markdown' }); } catch(e) {}
+        return res.json({ ok:true, suspended:false });
+    }
+    if (days > 365) return res.status(400).json({ ok:false, error:'Max 365 Tage' });
+    u.postSuspendedUntil = Date.now() + days * 86400000;
+    u.postSuspendReason = reason || null;
+    speichern();
+    try {
+        await dmUser(uid, '🚫 *Posten gesperrt für ' + days + ' Tag' + (days===1?'':'e') + '*\n\n' +
+            (reason ? 'Grund: ' + reason + '\n\n' : '') +
+            'Liken geht weiter — Likes zählen für deinen XP/Mission-Status. Sperre endet ' +
+            new Date(u.postSuspendedUntil).toLocaleString('de-DE', {timeZone:'Europe/Berlin'}) + '.',
+            { parse_mode:'Markdown' });
+    } catch(e) {}
+    res.json({ ok:true, suspended:true, until: u.postSuspendedUntil });
+});
+
+// Admin Warn-User: setzt Warnung + DM (existing /warn-Command nur via Telegram möglich,
+// dieser Endpoint macht's vom Dashboard aus aufrufbar).
+app.post('/admin-warn-user-api', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const uid = String((req.body && req.body.uid) || '');
+    const reason = String((req.body && req.body.reason) || '').slice(0, 200);
+    if (!uid) return res.status(400).json({ ok:false, error:'uid fehlt' });
+    const u = d.users[uid];
+    if (!u) return res.status(404).json({ ok:false, error:'User nicht gefunden' });
+    u.warnings = (Number(u.warnings || 0)) + 1;
+    speichern();
+    try {
+        await dmUser(uid, '⚠️ *Verwarnung von Admin*' + (reason ? '\n\nGrund: ' + reason : '') + '\n\n⚠️ Warns: ' + u.warnings + '/5', { parse_mode:'Markdown' });
+    } catch(e) {}
+    addNotification(uid, '⚠️', 'Du wurdest verwarnt' + (reason ? ' (' + reason.slice(0,40) + ')' : '') + '. Warns: ' + u.warnings + '/5');
+    res.json({ ok:true, warnings: u.warnings });
+});
+
 app.post('/ban-user-api', async (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const uid = String((req.body && req.body.uid) || '');
@@ -6898,6 +7027,13 @@ app.post('/post-link-from-app', async (req, res) => {
 
     const u = d.users[uid];
     if (!u) return res.json({ok:false, error:'User nicht gefunden'});
+
+    // Post-Suspension Check (Admin hat User vom Posting gesperrt via Dashboard)
+    if (u.postSuspendedUntil && Number(u.postSuspendedUntil) > Date.now()) {
+        const daysLeft = Math.ceil((Number(u.postSuspendedUntil) - Date.now()) / 86400000);
+        const reason = u.postSuspendReason ? ' — Grund: ' + u.postSuspendReason : '';
+        return res.json({ok:false, error: '🚫 Posten gesperrt für noch ' + daysLeft + ' Tag' + (daysLeft===1?'':'e') + reason});
+    }
 
     // Duplikat Check
     const heute = new Date().toDateString();

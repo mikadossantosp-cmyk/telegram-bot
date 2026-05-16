@@ -12,7 +12,11 @@ if (!BOT_TOKEN) { console.error('❌ BOT TOKEN FEHLT!'); process.exit(1); }
 const DATA_FILE      = process.env.DATA_FILE || '/data/daten.json';
 const DASHBOARD_URL  = process.env.DASHBOARD_URL || '';
 const APP_URL        = process.env.APP_URL || 'https://web-production-7981d.up.railway.app';
-const BRIDGE_SECRET  = process.env.BRIDGE_SECRET || 'geheimer-key';
+const BRIDGE_SECRET  = process.env.BRIDGE_SECRET;
+if (!BRIDGE_SECRET) {
+    console.error('FATAL: BRIDGE_SECRET env-var nicht gesetzt. Mainbot weigert sich zu starten — Default-Wert wäre Security-Disaster (alle Bridge-Endpoints offen).');
+    process.exit(1);
+}
 const BRIDGE_BOT_URL = process.env.BRIDGE_BOT_URL || '';
 const ADMIN_IDS      = new Set((process.env.ADMIN_IDS || '').split(',').map(Number).filter(Boolean));
 const GROUP_A_ID       = Number(process.env.GROUP_A_ID);
@@ -4563,6 +4567,24 @@ app.get('/data', (req, res) => {
     refreshAdminIds();
     const out = Object.assign({}, d);
     out._adminIds = d._adminIds;
+    // SECURITY: User-Objects entstrippen von sensitiven Feldern.
+    // Vorher: /data leakte password_hash (PBKDF2 → offline crack), pending-Email-Tokens,
+    // emailLoginTokens etc. Selbst mit BRIDGE_SECRET sollte App-Bot keine Hashes brauchen.
+    if (out.users && typeof out.users === 'object') {
+        const safeUsers = {};
+        for (const [uid, u] of Object.entries(out.users)) {
+            if (!u || typeof u !== 'object') { safeUsers[uid] = u; continue; }
+            const { password_hash, password_salt, _password_hash, _password_salt, pendingEmailToken, emailLoginTokens, ...safe } = u;
+            safeUsers[uid] = safe;
+        }
+        out.users = safeUsers;
+    }
+    // Auch Top-Level Token-Maps weglassen
+    delete out.emailLoginTokens;
+    delete out.emailConfirmTokens;
+    delete out.pendingEmailConfirms;
+    delete out.accountUnlockTokens;
+    delete out.passwordResetTokens;
 
     // Likes nach URL zusammenführen - Bridge Bot Links bekommen alle Likes
     const likesByUrl = {};
@@ -7220,16 +7242,31 @@ app.post('/delete-subaccount-api', (req, res) => {
     if (d.dailyXP) delete d.dailyXP[sub_uid];
     if (d.weeklyXP) delete d.weeklyXP[sub_uid];
     // Orphans bereinigen: Links, Superlinks, Kommentare, Notifs und Likes des Subs vollständig löschen
-    if (Array.isArray(d.links)) {
-        d.links = d.links.filter(l => String(l.uid) !== sub_uid);
-        for (const l of d.links) {
+    // BUG-FIX: d.links und d.superlinks sind Objects (keyed by msgId/slId), nicht Arrays.
+    // Vorher prüfte Array.isArray (immer false) → Cleanup lief NIE. Plus: links nutzen `user_id`
+    // nicht `uid` als Owner-Field.
+    if (d.links && typeof d.links === 'object') {
+        for (const [k, l] of Object.entries(d.links)) {
+            if (!l) continue;
+            // Posts des Subs entfernen
+            if (String(l.user_id) === sub_uid) { delete d.links[k]; continue; }
+            // Likes des Subs aus anderen Posts entfernen
             if (l.likes && typeof l.likes.delete === 'function') l.likes.delete(sub_uid);
             else if (Array.isArray(l.likes)) l.likes = l.likes.filter(x => String(x) !== sub_uid);
+            else if (l.likes && typeof l.likes === 'object') delete l.likes[sub_uid];
+            // Kommentare des Subs entfernen
             if (Array.isArray(l.comments)) l.comments = l.comments.filter(c => String(c.uid) !== sub_uid);
         }
     }
-    if (Array.isArray(d.superlinks)) {
-        d.superlinks = d.superlinks.filter(s => String(s.uid) !== sub_uid);
+    if (d.superlinks && typeof d.superlinks === 'object') {
+        for (const [k, s] of Object.entries(d.superlinks)) {
+            if (s && String(s.uid) === sub_uid) delete d.superlinks[k];
+        }
+    }
+    if (d.diamondLinks && typeof d.diamondLinks === 'object') {
+        for (const [k, p] of Object.entries(d.diamondLinks)) {
+            if (p && String(p.uid) === sub_uid) delete d.diamondLinks[k];
+        }
     }
     if (d.notifications && typeof d.notifications === 'object') {
         delete d.notifications[sub_uid];
@@ -7580,10 +7617,13 @@ app.post('/send-message-api', async (req, res) => {
             // 2. Im Helper-Bot-Chat als Bot-Message (mit fromAdmin-Marker)
             if (!d.helperChats) d.helperChats = {};
             if (!Array.isArray(d.helperChats[targetTicket.uid])) d.helperChats[targetTicket.uid] = [];
+            // SECURITY: question + answerText escapen damit User-XSS nicht in Admin-Replies persistiert
+            // (App-Bot rendert helperChats-Texte mit innerHTML für role==='bot').
+            const _esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
             d.helperChats[targetTicket.uid].push({
                 role:'bot',
-                text:'📨 <b>Admin-Antwort</b> auf <i>"' + (targetTicket.question||'').slice(0,80) + '"</i>:<br><br>' +
-                     String(answerText).replace(/</g,'&lt;').replace(/\n/g,'<br>'),
+                text:'📨 <b>Admin-Antwort</b> auf <i>"' + _esc((targetTicket.question||'').slice(0,80)) + '"</i>:<br><br>' +
+                     _esc(String(answerText)).replace(/\n/g,'<br>'),
                 ts: Date.now(), fromAdmin: true, ticketId: targetTicket.id,
             });
             if (d.helperChats[targetTicket.uid].length > 200) d.helperChats[targetTicket.uid] = d.helperChats[targetTicket.uid].slice(-200);
@@ -9523,6 +9563,10 @@ app.post('/collab-like-post-api', async (req, res) => {
     if (!u) return res.json({ ok:false, error:'User nicht gefunden' });
     if (uid === String(p.uid) || uid === String(p.partnerUid)) {
         return res.json({ ok:false, error:'collaborator-self-like', message:'Kein Self-Like für Kollaboratoren' });
+    }
+    // Family-Tree-Check: Sub-Account darf nicht Parent's/Partner's Collab-Post liken (Diamond-Farming-Exploit)
+    if (getRootUid(uid) === getRootUid(p.uid) || getRootUid(uid) === getRootUid(p.partnerUid)) {
+        return res.json({ ok:false, error:'family-self-like', message:'Kein Like auf Collab-Posts aus eigener Account-Familie' });
     }
     if (!Array.isArray(p.likes)) p.likes = [];
     if (p.likes.includes(uid)) return res.json({ ok:true, liked:true, likeCount: p.likes.length, already:true });

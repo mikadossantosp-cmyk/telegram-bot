@@ -6623,6 +6623,12 @@ function loadBild(uid, type) {
 app.post('/update-profile-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { uid, bio, spitzname, banner, accentColor, profilePic } = req.body || {};
+    if (!uid || !d.users[uid]) {
+        // Vorher hat dieser Endpoint IMMER {ok:true} zurückgegeben, auch bei nicht
+        // existierender uid. App-Bot konnte silent failen (z.B. Email-Confirm hat
+        // confirmEmail gesetzt für invalid uid und User Erfolg gesehen).
+        return res.json({ ok:false, error:'User nicht gefunden: ' + String(uid||'(leer)') });
+    }
     if (d.users[uid]) {
         if (bio !== undefined) d.users[uid].bio = bio.slice(0,100);
         if (spitzname !== undefined) d.users[uid].spitzname = spitzname.slice(0,30);

@@ -6505,8 +6505,25 @@ app.post('/auth-email-password', (req, res) => {
 
 // Browser-facing alias for the app login form. The bridge endpoint above remains
 // available for server-to-server callers that still send x-bridge-secret.
+// Rate-Limit gegen Online-Brute-Force: max 5 fails pro Email/IP-Combo in 5 Min.
+// PBKDF2 100k bremst zwar pro Versuch, aber ohne Limit ist unlimited Wörterbuch-Attacke möglich.
+const _loginAttempts = new Map(); // key = email|ip → { fails: n, lockedUntil: ts }
 app.post('/api/auth/email-password', (req, res) => {
+    const email = String(req.body && req.body.email || '').toLowerCase().trim();
+    const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim().slice(0, 64);
+    const key = email + '|' + ip;
+    const rec = _loginAttempts.get(key) || { fails: 0, lockedUntil: 0 };
+    if (rec.lockedUntil > Date.now()) {
+        return res.status(429).json({ ok: false, error: 'Zu viele Login-Versuche — bitte 5 Minuten warten.' });
+    }
     const result = authenticateEmailPassword(req.body && req.body.email, req.body && req.body.password, { includeRedirect: true });
+    if (result.body && result.body.ok === false) {
+        rec.fails = (rec.fails || 0) + 1;
+        if (rec.fails >= 5) { rec.lockedUntil = Date.now() + 5 * 60 * 1000; rec.fails = 0; }
+        _loginAttempts.set(key, rec);
+    } else if (result.body && result.body.ok === true) {
+        _loginAttempts.delete(key);
+    }
     res.status(result.status).json(result.body);
 });
 
@@ -6522,6 +6539,7 @@ app.get('/auth/code-check', (req, res) => {
 
 
 app.get('/like-from-app', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const uid = req.query.uid;
     const msgId = req.query.msgId;
     if (!uid || !msgId) return res.json({ok:false});
@@ -6974,8 +6992,11 @@ app.post('/post-link-from-app', async (req, res) => {
         // Markiert den Link mit firstPostBonus=true + gibt Poster +20 XP Welcome-Bonus.
         // Liker bekommen während der 8h-Pin-Window zusätzlich +20 XP pro Like.
         const NEW_MEMBER_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+        // Sub-Account-Exploit-Schutz: First-Post-Bonus nur für Root-Account, nicht für Subs.
+        // Sonst konnte Admin via /admin-link-as-sub-api unlimited Subs anlegen → jeder bekommt +20 XP.
         const isFirstPostEver = Number(u.links) === 1
-            && u.joinDate && (Date.now() - u.joinDate) <= NEW_MEMBER_MAX_AGE_MS;
+            && u.joinDate && (Date.now() - u.joinDate) <= NEW_MEMBER_MAX_AGE_MS
+            && !u.parent_uid;
         if (isFirstPostEver) {
             linkData.firstPostBonus = true;
             linkData.firstPostBonusUntil = Date.now() + 8*3600*1000;
@@ -7701,6 +7722,7 @@ app.post('/mark-read', (req, res) => {
 // Storage: d.appChat = [{uid, name, text, image?, ts, deleted?}], FIFO max 1000.
 // Read-Tracking: d.appChatLastRead[uid] = ts.
 app.get('/app-chat', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const uid = String(req.query.uid || '');
     const since = Number(req.query.since || 0);
     if (!d.appChat) d.appChat = [];
@@ -8031,6 +8053,9 @@ app.post('/engage-pinned-post-api', (req, res) => {
     if (!checkBridgeSecret(req, res)) return;
     const { engagerUid, ownerUid } = req.body || {};
     if (!engagerUid || !ownerUid || engagerUid === ownerUid) return res.json({ok:false});
+    // Sub-Account-Exploit-Schutz: kein Self-Engagement über Family-Tree.
+    // Vorher konnte Parent pinnen, Sub engagieren → +1💎/Sub. Mit N Subs unlimited Diamonds.
+    if (getRootUid(engagerUid) === getRootUid(ownerUid)) return res.json({ok:false, error:'Eigener Account-Familie'});
     // Track per ENGAGER (nicht per Owner) — jeder User kann nur 1× pro Owner einen Diamant kriegen
     if (!d.pinnedEngages) d.pinnedEngages = {};
     if (!d.pinnedEngages[engagerUid]) d.pinnedEngages[engagerUid] = [];
@@ -8790,6 +8815,8 @@ app.post('/diamond-link-like-api', async (req, res) => {
     if (!p) return res.json({ ok:false, error:'Post nicht gefunden' });
     if (!_diamondActive(p)) return res.json({ ok:false, error:'Post abgelaufen oder gelöscht' });
     if (String(p.uid) === uid) return res.json({ ok:false, error:'collaborator-self-like', message:'Kein Self-Like für eigene Diamantlinks' });
+    // Sub-Account-Exploit-Schutz: kein Like über Family-Tree (Parent posted → Sub liked → +3💎/Sub).
+    if (getRootUid(uid) === getRootUid(p.uid)) return res.json({ ok:false, error:'family-self-like', message:'Kein Like auf Diamantlinks aus eigener Account-Familie' });
     if (!Array.isArray(p.likes)) p.likes = [];
     if (p.likes.includes(uid)) return res.json({ ok:true, liked:true, likeCount: p.likes.length, already:true });
     p.likes.push(uid);

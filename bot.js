@@ -47,9 +47,20 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Browser/App-Clients laufen teils auf einer anderen Domain als dieser Bot-Service.
-// Ohne Preflight-Antwort bleibt die App vor dem Login/Bootstrap im Browser hängen.
+// SECURITY: nur whitelisted Origins (vorher ACAO:* → drive-by-Aufrufe von beliebigen
+// Sites konnten /auth/code, /auth/code-check etc enumerieren).
+const ALLOWED_ORIGINS = new Set([
+    'https://www.creatorboostx.de',
+    'https://creatorboostx.de',
+    'https://web-production-7981d.up.railway.app',
+    process.env.APP_URL || '',
+].filter(Boolean));
 app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin;
+    if (origin && ALLOWED_ORIGINS.has(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bridge-secret');
     res.setHeader('Access-Control-Max-Age', '86400');
@@ -543,8 +554,13 @@ function getFullEngagementThreadUrl() {
 async function sendAppPush(targetUid, title, body, urlPath = '/feed') {
     if (!APP_URL || !targetUid || !body) return;
     try {
+        // SECURITY/BUG: Push-Subscriptions sind im App-Bot per session.uid (=PARENT-UID)
+        // gespeichert. Wenn Mainbot mit Sub-UID feuert (z.B. lnk.user_id = Sub), findet
+        // App-Bot keine Subscription. → Auf Root-UID resolven damit Push den parent-Push
+        // erreicht (der User loggt sich nur als Parent ein für Web-Push).
+        const _rootUid = (typeof getRootUid === 'function') ? getRootUid(targetUid) : targetUid;
         const fullUrl = APP_URL.replace(/\/$/, '') + '/api/push-notify';
-        const data = JSON.stringify({ uid: String(targetUid), title, body, url: urlPath });
+        const data = JSON.stringify({ uid: String(_rootUid), title, body, url: urlPath });
         const lib = fullUrl.startsWith('https') ? https : http;
         const u = new URL(fullUrl);
         await new Promise(resolve => {
@@ -7420,6 +7436,12 @@ app.post('/post-link-from-app', async (req, res) => {
     if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({ok:false, error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check - Admins haben kein Limit
+    // Slot-System: User darf posten wenn (a) Standard-Slot (1/Tag) frei, ODER
+    // (b) Bonus-Link gekauft, ODER (c) Badge-Bonus noch nicht verwendet.
+    // WICHTIG: maxLinks darf NICHT als "1 + bonusAvail" berechnet werden — bonusAvail
+    // ist der AKTUELLE Bestand, schließt aber schon verbrauchte (decrement) Slots aus.
+    // Sonst Bug: User postet 2 Links mit Bonus, kauft 2. Bonus → maxLinks=2, todayLinks=2 → blockiert,
+    // obwohl 5 💎 für Slot 3 abgezogen wurden.
     let usedBonusLink = false;
     let usedBadgeBonus = false;
     if (!istAdminId(uid)) {
@@ -7427,12 +7449,16 @@ app.post('/post-link-from-app', async (req, res) => {
             String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute
         ).length;
         const bonusAvail = d.bonusLinks?.[uid] || 0;
-        const badgeBonus = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
-        const maxLinks = 1 + bonusAvail + badgeBonus;
-        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({ok:false, error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
-        if (todayLinks >= 1) {
+        const badgeAvailable = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute);
+        const standardUsed = todayLinks > 0;
+        const canPost = !standardUsed || bonusAvail > 0 || badgeAvailable;
+        if (!canPost) {
+            console.log('[APP-LINK] Limit erreicht — todayLinks:', todayLinks, 'bonusAvail:', bonusAvail, 'badge:', badgeAvailable);
+            return res.json({ok:false, error:'Limit erreicht! Du hast heute schon gepostet. Kaufe einen Extra-Link im Shop (5 💎).'});
+        }
+        if (standardUsed) {
             if (bonusAvail > 0) usedBonusLink = true;
-            else usedBadgeBonus = true;
+            else if (badgeAvailable) usedBadgeBonus = true;
         }
     }
     console.log('[APP-LINK] Checks OK - sende Link...');
@@ -8210,8 +8236,12 @@ app.get('/link-status-api', (req, res) => {
     const isAdmin = istAdminId(Number(uid));
     const u = d.users[uid];
     const badgeBonus = !isAdmin && badgeBonusLinks(u?.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
-    const maxLinks = isAdmin ? 999 : 1 + bonusLinks + badgeBonus;
-    const canPost = isAdmin || todayCount < maxLinks;
+    // Slot-System (analog zu /post-link-from-app): Standard 1/Tag + Bonus (gekaufter Bestand) + Badge.
+    // canPost prüft VERFÜGBARKEIT, nicht ein statisches Tageslimit.
+    const standardUsed = todayCount > 0;
+    const canPost = isAdmin || !standardUsed || bonusLinks > 0 || badgeBonus > 0;
+    // maxLinks für UI: gesamt nutzbare Slots heute = bereits verbrauchte + noch verfügbare.
+    const maxLinks = isAdmin ? 999 : todayCount + (standardUsed ? 0 : 1) + bonusLinks + badgeBonus;
     res.json({ ok: true, todayCount, bonusLinks, badgeBonus, maxLinks, canPost, isAdmin });
 });
 
@@ -8266,10 +8296,19 @@ app.get('/mission-status-api', (req, res) => {
     });
 });
 
+// SECURITY: Vorher 302-redirect mit BOT_TOKEN in URL → Token leakte in Browser-Location,
+// Referer-Header, Logs. Jetzt: server-side proxy + Auth-Check.
 app.get('/tg-file/:fileId', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     try {
         const file = await bot.telegram.getFile(req.params.fileId);
-        res.redirect(`https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`);
+        const tgUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+        const https = require('https');
+        https.get(tgUrl, tgRes => {
+            res.setHeader('Content-Type', tgRes.headers['content-type'] || 'application/octet-stream');
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            tgRes.pipe(res);
+        }).on('error', () => res.status(502).end('upstream error'));
     } catch (e) { res.status(404).json({ error: 'Datei nicht gefunden' }); }
 });
 
@@ -8290,6 +8329,7 @@ app.post('/rename-thread', (req, res) => {
 });
 
 app.post('/mark-read', (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
     const { uid, thread_id } = req.body || {};
     if (!uid || !thread_id) return res.json({ ok: false });
     if (!d.threadLastRead[uid]) d.threadLastRead[uid] = {};

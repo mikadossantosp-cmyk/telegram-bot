@@ -7436,6 +7436,12 @@ app.post('/post-link-from-app', async (req, res) => {
     if (isDuplicate) { console.log('[APP-LINK] Duplikat!'); return res.json({ok:false, error:'Dieser Link wurde bereits gepostet!'}); }
 
     // Daily Limit Check - Admins haben kein Limit
+    // Slot-System: User darf posten wenn (a) Standard-Slot (1/Tag) frei, ODER
+    // (b) Bonus-Link gekauft, ODER (c) Badge-Bonus noch nicht verwendet.
+    // WICHTIG: maxLinks darf NICHT als "1 + bonusAvail" berechnet werden — bonusAvail
+    // ist der AKTUELLE Bestand, schließt aber schon verbrauchte (decrement) Slots aus.
+    // Sonst Bug: User postet 2 Links mit Bonus, kauft 2. Bonus → maxLinks=2, todayLinks=2 → blockiert,
+    // obwohl 5 💎 für Slot 3 abgezogen wurden.
     let usedBonusLink = false;
     let usedBadgeBonus = false;
     if (!istAdminId(uid)) {
@@ -7443,12 +7449,16 @@ app.post('/post-link-from-app', async (req, res) => {
             String(l.user_id) === String(uid) && new Date(l.timestamp).toDateString() === heute
         ).length;
         const bonusAvail = d.bonusLinks?.[uid] || 0;
-        const badgeBonus = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
-        const maxLinks = 1 + bonusAvail + badgeBonus;
-        if (todayLinks >= maxLinks) { console.log('[APP-LINK] Limit erreicht:', todayLinks, '/', maxLinks); return res.json({ok:false, error:'Limit erreicht! Max ' + maxLinks + ' Link(s) pro Tag'}); }
-        if (todayLinks >= 1) {
+        const badgeAvailable = badgeBonusLinks(u.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute);
+        const standardUsed = todayLinks > 0;
+        const canPost = !standardUsed || bonusAvail > 0 || badgeAvailable;
+        if (!canPost) {
+            console.log('[APP-LINK] Limit erreicht — todayLinks:', todayLinks, 'bonusAvail:', bonusAvail, 'badge:', badgeAvailable);
+            return res.json({ok:false, error:'Limit erreicht! Du hast heute schon gepostet. Kaufe einen Extra-Link im Shop (5 💎).'});
+        }
+        if (standardUsed) {
             if (bonusAvail > 0) usedBonusLink = true;
-            else usedBadgeBonus = true;
+            else if (badgeAvailable) usedBadgeBonus = true;
         }
     }
     console.log('[APP-LINK] Checks OK - sende Link...');
@@ -8226,8 +8236,12 @@ app.get('/link-status-api', (req, res) => {
     const isAdmin = istAdminId(Number(uid));
     const u = d.users[uid];
     const badgeBonus = !isAdmin && badgeBonusLinks(u?.xp||0) > 0 && (!d.badgeTracker?.[uid] || d.badgeTracker[uid] !== heute) ? 1 : 0;
-    const maxLinks = isAdmin ? 999 : 1 + bonusLinks + badgeBonus;
-    const canPost = isAdmin || todayCount < maxLinks;
+    // Slot-System (analog zu /post-link-from-app): Standard 1/Tag + Bonus (gekaufter Bestand) + Badge.
+    // canPost prüft VERFÜGBARKEIT, nicht ein statisches Tageslimit.
+    const standardUsed = todayCount > 0;
+    const canPost = isAdmin || !standardUsed || bonusLinks > 0 || badgeBonus > 0;
+    // maxLinks für UI: gesamt nutzbare Slots heute = bereits verbrauchte + noch verfügbare.
+    const maxLinks = isAdmin ? 999 : todayCount + (standardUsed ? 0 : 1) + bonusLinks + badgeBonus;
     res.json({ ok: true, todayCount, bonusLinks, badgeBonus, maxLinks, canPost, isAdmin });
 });
 
